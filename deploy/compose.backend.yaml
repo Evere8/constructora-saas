@@ -1,0 +1,39 @@
+services:
+  api:
+    build:
+      context: ./app/backend
+      dockerfile: Dockerfile
+    container_name: constructora-api
+    restart: unless-stopped
+    env_file:
+      - mysql.env
+      - app.env
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - data
+      - edge
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/ready', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  edge:
+    driver: bridge
+

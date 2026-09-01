@@ -1,0 +1,36 @@
+# Arquitectura inicial
+
+## Flujo de autenticación
+
+1. El frontend inicia sesión con Supabase Auth usando la clave publicable.
+2. Supabase entrega un access token JWT.
+3. El frontend envía `Authorization: Bearer <token>` a FastAPI.
+4. FastAPI verifica firma, emisor, audiencia y vencimiento usando JWKS.
+5. El `sub` se vincula con `app_users.supabase_user_id`.
+6. Roles, empresa activa y permisos se consultan siempre en MySQL.
+
+La clave secreta o `service_role` solo puede residir en el VPS y se reservará para altas, bloqueos y tareas administrativas de Auth.
+
+## Aislamiento multiempresa
+
+Todas las tablas operativas contienen `company_id`. La API obtiene la empresa desde una membresía activa y nunca acepta un `company_id` del frontend sin validarlo.
+
+## Almacenamiento
+
+- Archivos activos: disco privado del VPS, fuera del repositorio.
+- Metadatos y permisos: MySQL.
+- Entrega: endpoint autenticado o URL temporal generada por la API.
+- Google Drive: copia cifrada y respaldo; no base principal de archivos activos.
+
+## Módulos previstos
+
+- Plataforma: constructoras, planes, activación y superadministración.
+- Obras: activas, inactivas, niveles, cronograma y avance.
+- Planos: PDF vectorial, versiones, anotaciones y exportación.
+- Checklist: estados, responsables, evidencia y resumen.
+- Tareas: trabajo y transporte, ubicación, personal y materiales requeridos.
+- Inventario: máquinas, herramientas, materiales y movimientos diarios.
+- Alertas: faltantes para tareas del día siguiente.
+- Elongaciones: PDF/foto, revisión humana y generación de Excel.
+- Auditoría: actividad, actor, fecha y entidad modificada.
+
