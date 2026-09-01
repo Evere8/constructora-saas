@@ -15,6 +15,15 @@ La clave secreta o `service_role` solo puede residir en el VPS y se reservará p
 
 Todas las tablas operativas contienen `company_id`. La API obtiene la empresa desde una membresía activa y nunca acepta un `company_id` del frontend sin validarlo.
 
+## Autorización implementada
+
+- El JWT solo demuestra identidad; no concede acceso empresarial por sí mismo.
+- `app_users.status` debe ser `active` para utilizar la API.
+- `is_platform_admin` habilita únicamente las rutas globales `/api/v1/platform`.
+- Cada membresía guarda su propio rol y estado por constructora.
+- Crear o modificar planes, constructoras y membresías genera un `activity_log`.
+- Los roles no se toman de `user_metadata`, porque el usuario puede modificarlo.
+
 ## Almacenamiento
 
 - Archivos activos: disco privado del VPS, fuera del repositorio.
@@ -33,4 +42,3 @@ Todas las tablas operativas contienen `company_id`. La API obtiene la empresa de
 - Alertas: faltantes para tareas del día siguiente.
 - Elongaciones: PDF/foto, revisión humana y generación de Excel.
 - Auditoría: actividad, actor, fecha y entidad modificada.
-
