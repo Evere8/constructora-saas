@@ -1,11 +1,16 @@
+from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.security import SupabaseTokenVerifier, TokenClaims, TokenVerificationError
+from app.db.models import AppUser
+from app.db.session import get_db
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -29,3 +34,58 @@ async def get_token_claims(
 
 
 CurrentClaims = Annotated[TokenClaims, Depends(get_token_claims)]
+
+
+@dataclass(frozen=True)
+class CurrentUserContext:
+    id: str
+    supabase_user_id: str
+    email: str
+    full_name: str | None
+    status: str
+    is_platform_admin: bool
+    claims: TokenClaims
+
+
+DbSession = Annotated[AsyncSession, Depends(get_db)]
+
+
+async def get_current_user(claims: CurrentClaims, db: DbSession) -> CurrentUserContext:
+    result = await db.execute(
+        select(AppUser).where(AppUser.supabase_user_id == claims.subject)
+    )
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="El usuario no está habilitado en la plataforma",
+        )
+    if user.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="El usuario está bloqueado o pendiente",
+        )
+    return CurrentUserContext(
+        id=user.id,
+        supabase_user_id=user.supabase_user_id,
+        email=user.email,
+        full_name=user.full_name,
+        status=user.status,
+        is_platform_admin=user.is_platform_admin,
+        claims=claims,
+    )
+
+
+CurrentUser = Annotated[CurrentUserContext, Depends(get_current_user)]
+
+
+async def require_platform_admin(user: CurrentUser) -> CurrentUserContext:
+    if not user.is_platform_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Se requiere acceso de administrador de plataforma",
+        )
+    return user
+
+
+CurrentPlatformAdmin = Annotated[CurrentUserContext, Depends(require_platform_admin)]

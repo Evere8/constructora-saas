@@ -100,3 +100,21 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     actual_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     company: Mapped[Company] = relationship(back_populates="projects")
+
+
+class ActivityLog(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "activity_logs"
+
+    company_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=True
+    )
+    user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="SET NULL"), nullable=True
+    )
+    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    entity_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    entity_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
