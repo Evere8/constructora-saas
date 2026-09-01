@@ -9,12 +9,15 @@ RUN groupadd --system --gid 10001 app \
 
 WORKDIR /app
 
-COPY pyproject.toml ./
-COPY app ./app
-COPY alembic.ini ./
-COPY alembic ./alembic
+COPY --chown=app:app pyproject.toml ./
+COPY --chown=app:app app ./app
+COPY --chown=app:app alembic.ini ./
+COPY --chown=app:app alembic ./alembic
 
-RUN pip install --upgrade "pip==25.2" \
+# The deployment host uses a restrictive umask. Normalize copied source modes so
+# the non-root runtime user can always import the application and migrations.
+RUN chmod -R u=rwX,go=rX /app \
+    && pip install --upgrade "pip==25.2" \
     && pip install .
 
 USER app
@@ -22,4 +25,3 @@ USER app
 EXPOSE 8000
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]
-
