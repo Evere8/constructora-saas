@@ -106,7 +106,7 @@ class ActivityLog(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "activity_logs"
 
     company_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("companies.id", ondelete="SET NULL"), nullable=True
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=True
     )
     user_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("app_users.id", ondelete="SET NULL"), nullable=True
