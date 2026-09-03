@@ -22,7 +22,18 @@ Todas las tablas operativas contienen `company_id`. La API obtiene la empresa de
 - `is_platform_admin` habilita únicamente las rutas globales `/api/v1/platform`.
 - Cada membresía guarda su propio rol y estado por constructora.
 - Crear o modificar planes, constructoras y membresías genera un `activity_log`.
+- Crear o modificar obras, niveles y tareas genera un `activity_log`.
 - Los roles no se toman de `user_metadata`, porque el usuario puede modificarlo.
+
+## Operaciones de obra implementadas
+
+- Listado paginado y filtrado de obras por constructora.
+- Alta y modificación de obras con control de fechas y códigos únicos por empresa.
+- Niveles ordenables y únicos dentro de cada obra.
+- Tareas de trabajo o transporte filtrables por estado, nivel y responsable.
+- Validación de que nivel, obra y responsable pertenecen a la misma constructora.
+- Roles `owner`, `admin`, `engineer` y `supervisor` administran el trabajo.
+- Roles `worker` y `transport` solo cambian el estado de tareas propias.
 
 ## Almacenamiento
 

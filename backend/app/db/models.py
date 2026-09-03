@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -100,6 +101,49 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     actual_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     company: Mapped[Company] = relationship(back_populates="projects")
+
+
+class ProjectLevel(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "project_levels"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_project_level_name"),
+    )
+
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class Task(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "tasks"
+    __table_args__ = (
+        Index("ix_tasks_company_project_status", "company_id", "project_id", "status"),
+    )
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    level_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("project_levels.id", ondelete="SET NULL"), nullable=True
+    )
+    task_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(25), nullable=False, default="pending")
+    priority: Mapped[str] = mapped_column(String(15), nullable=False, default="normal")
+    assigned_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="SET NULL"), nullable=True
+    )
+    due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id"), nullable=False
+    )
 
 
 class ActivityLog(UUIDPrimaryKeyMixin, Base):
