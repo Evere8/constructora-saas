@@ -1,0 +1,89 @@
+# Contrato de API para el frontend
+
+## Conexión
+
+- Producción: `https://api.obrixapy.online/api`
+- Autenticación: `Authorization: Bearer <Supabase access_token>`
+- Formato: JSON
+- Zona horaria de fechas: ISO 8601; mostrar en la zona local del usuario.
+- El frontend no accede directamente a tablas de Supabase ni a MySQL.
+
+Ante un `401`, refrescar una sola vez la sesión de Supabase y repetir la petición.
+Si vuelve a fallar, cerrar la sesión. Un `403` es falta de acceso empresarial y no
+debe provocar reintentos. Los errores normales usan `{"detail":"mensaje"}`.
+
+## Identidad y navegación
+
+| Método | Ruta | Uso |
+|---|---|---|
+| GET | `/v1/auth/me` | Perfil, estado, administrador de plataforma y membresías |
+
+`/v1/auth/me` devuelve `memberships[]` con `company_id`, nombre, slug, estado,
+rol y estado de membresía. La constructora activa se elige siempre de esa lista.
+
+## Administración de plataforma
+
+Solo disponible cuando `is_platform_admin` es verdadero.
+
+| Método | Ruta |
+|---|---|
+| GET, POST | `/v1/platform/plans` |
+| PATCH | `/v1/platform/plans/{plan_id}` |
+| GET, POST | `/v1/platform/companies` |
+| GET, PATCH | `/v1/platform/companies/{company_id}` |
+| GET, POST | `/v1/platform/companies/{company_id}/memberships` |
+| PATCH | `/v1/platform/memberships/{membership_id}` |
+
+## Obras
+
+| Método | Ruta | Filtros o cuerpo principal |
+|---|---|---|
+| GET, POST | `/v1/companies/{company_id}/projects` | `status`, `search`, `limit`, `offset` |
+| GET, PATCH | `/v1/companies/{company_id}/projects/{project_id}` | Datos de la obra |
+| GET, POST | `/v1/companies/{company_id}/projects/{project_id}/levels` | Niveles |
+| PATCH | `/v1/companies/{company_id}/projects/{project_id}/levels/{level_id}` | Nivel |
+| GET, POST | `/v1/companies/{company_id}/projects/{project_id}/tasks` | `status`, `task_type`, `assigned_user_id`, `level_id`, paginación |
+| PATCH | `/v1/companies/{company_id}/projects/{project_id}/tasks/{task_id}` | Tarea |
+
+Estados de obra: `active`, `inactive`, `completed`, `archived`.
+
+Tipos de tarea: `work`, `transport`. Estados: `pending`, `in_progress`, `review`,
+`completed`, `cancelled`. Prioridades: `low`, `normal`, `high`, `urgent`.
+
+## Checklist
+
+| Método | Ruta | Uso |
+|---|---|---|
+| GET, POST | `/v1/companies/{company_id}/projects/{project_id}/checklist` | Lista o crea controles |
+| PATCH | `/v1/companies/{company_id}/projects/{project_id}/checklist/{item_id}` | Modifica un control |
+| GET | `/v1/companies/{company_id}/projects/{project_id}/checklist/progress` | Resumen y porcentaje |
+
+Filtros de checklist: `status`, `process_stage`, `assigned_user_id`, `limit`,
+`offset`. Estados: `pending`, `in_progress`, `blocked`, `completed`,
+`not_applicable`.
+
+## Roles
+
+| Rol | Capacidades del MVP |
+|---|---|
+| `platform_admin` | Administración global y soporte en cualquier empresa |
+| `owner`, `admin`, `engineer` | Administran obras y trabajo |
+| `supervisor` | Administra niveles, tareas y checklist |
+| `warehouse` | Lectura actual; inventario cuando su API esté disponible |
+| `worker`, `transport` | Solo actualizan estados de tareas o controles propios |
+| `viewer` | Solo lectura |
+
+La UI puede ocultar acciones que el rol no permite, pero FastAPI es siempre la
+autoridad final. Nunca derivar permisos de `user_metadata` de Supabase.
+
+## Paginación y estados de interfaz
+
+Las listas paginadas devuelven `items`, `total`, `limit` y `offset`. Cada pantalla
+debe implementar carga, vacío, error, reintento y actualización optimista solo
+cuando sea segura. Después de una mutación, invalidar las consultas relacionadas.
+
+## Funciones todavía sin API
+
+No inventar endpoints ni usar datos simulados en producción para inventario,
+planos, archivos, personal, elongaciones, reportes o notificaciones. Mostrar estas
+secciones como `Próximamente` hasta que el contrato del backend se publique.

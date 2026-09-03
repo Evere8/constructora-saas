@@ -13,6 +13,9 @@ Backend inicial para el SaaS de constructoras. Está preparado para:
 - Auditoría de operaciones administrativas.
 - Gestión operativa de obras, niveles y tareas con aislamiento multiempresa.
 - Checklist por obra con responsables, etapas, vencimientos y porcentaje de avance.
+- CI automático para lint y pruebas del backend.
+- Respaldo diario cifrado de MySQL hacia Google Drive mediante rclone.
+- Contrato y encargo versionado para generar el frontend con Emergent.
 
 ## Estructura
 
@@ -29,6 +32,10 @@ deploy/
   compose.backend.yaml
 docs/
   ARCHITECTURE.md
+  BACKUPS_GOOGLE_DRIVE.md
+  EMERGENT_FRONTEND.md
+  FRONTEND_API_CONTRACT.md
+  SAAS_ROADMAP.md
 ```
 
 ## Variables requeridas
@@ -53,7 +60,14 @@ sudo docker compose -f compose.yaml -f app/deploy/compose.backend.yaml exec api 
 curl http://127.0.0.1:8000/api/health/ready
 ```
 
-La API queda enlazada solo a `127.0.0.1:8000`. Caddy será el único servicio público.
+La API queda enlazada solo a `127.0.0.1:8000`. Nginx es el único servicio público.
+
+## Operación y frontend
+
+- `docs/BACKUPS_GOOGLE_DRIVE.md`: configuración y verificación del respaldo.
+- `docs/EMERGENT_FRONTEND.md`: prompt y criterios para que Emergent genere el MVP.
+- `docs/FRONTEND_API_CONTRACT.md`: rutas, autenticación y permisos del cliente.
+- `docs/SAAS_ROADMAP.md`: módulos terminados y orden de implementación restante.
 
 ## API disponible
 

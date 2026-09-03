@@ -1,0 +1,11 @@
+[Unit]
+Description=Respaldo diario de Obrixapy
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 UTC
+RandomizedDelaySec=15m
+Persistent=true
+Unit=constructora-backup.service
+
+[Install]
+WantedBy=timers.target
