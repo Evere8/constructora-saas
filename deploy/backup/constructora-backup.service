@@ -1,0 +1,21 @@
+[Unit]
+Description=Respaldo cifrado de MySQL de Obrixapy
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+Environment=BACKUP_ENV_FILE=/etc/constructora/backup.env
+ExecStart=/usr/bin/bash /opt/constructora/app/deploy/backup/mysql-backup.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
