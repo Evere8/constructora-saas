@@ -12,6 +12,7 @@ Backend inicial para el SaaS de constructoras. Está preparado para:
 - Panel de plataforma para administrar planes, constructoras y membresías.
 - Auditoría de operaciones administrativas.
 - Gestión operativa de obras, niveles y tareas con aislamiento multiempresa.
+- Checklist por obra con responsables, etapas, vencimientos y porcentaje de avance.
 
 ## Estructura
 
@@ -64,6 +65,8 @@ La API queda enlazada solo a `127.0.0.1:8000`. Caddy será el único servicio p�
 - `GET/POST/PATCH /api/v1/companies/{company_id}/projects`: obras de la constructora.
 - `GET/POST/PATCH /api/v1/companies/{company_id}/projects/{project_id}/levels`: niveles.
 - `GET/POST/PATCH /api/v1/companies/{company_id}/projects/{project_id}/tasks`: tareas.
+- `GET/POST/PATCH /api/v1/companies/{company_id}/projects/{project_id}/checklist`: controles.
+- `GET /api/v1/companies/{company_id}/projects/{project_id}/checklist/progress`: avance.
 
 Las rutas `/platform` requieren `is_platform_admin = 1`. La migración
 `0002_seed_plans` carga los planes Inicial, Profesional y Empresa.
