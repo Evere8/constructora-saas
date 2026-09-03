@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.security import SupabaseTokenVerifier, TokenClaims, TokenVerificationError
-from app.db.models import AppUser
+from app.db.models import AppUser, Company, CompanyMembership
 from app.db.session import get_db
 
 bearer = HTTPBearer(auto_error=False)
@@ -89,3 +89,57 @@ async def require_platform_admin(user: CurrentUser) -> CurrentUserContext:
 
 
 CurrentPlatformAdmin = Annotated[CurrentUserContext, Depends(require_platform_admin)]
+
+
+@dataclass(frozen=True)
+class CompanyAccessContext:
+    company_id: str
+    company_status: str
+    role: str
+    user: CurrentUserContext
+
+
+async def get_company_access(
+    company_id: str, user: CurrentUser, db: DbSession
+) -> CompanyAccessContext:
+    company = await db.get(Company, company_id)
+    if company is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Constructora no encontrada"
+        )
+
+    if user.is_platform_admin:
+        return CompanyAccessContext(
+            company_id=company.id,
+            company_status=company.status,
+            role="platform_admin",
+            user=user,
+        )
+
+    result = await db.execute(
+        select(CompanyMembership).where(
+            CompanyMembership.company_id == company.id,
+            CompanyMembership.user_id == user.id,
+            CompanyMembership.status == "active",
+        )
+    )
+    membership = result.scalar_one_or_none()
+    if membership is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tiene acceso a esta constructora",
+        )
+    if company.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="La constructora no está activa",
+        )
+    return CompanyAccessContext(
+        company_id=company.id,
+        company_status=company.status,
+        role=membership.role,
+        user=user,
+    )
+
+
+CurrentCompanyAccess = Annotated[CompanyAccessContext, Depends(get_company_access)]
