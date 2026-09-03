@@ -42,6 +42,14 @@ Todas las tablas operativas contienen `company_id`. La API obtiene la empresa de
 - Entrega: endpoint autenticado o URL temporal generada por la API.
 - Google Drive: copia cifrada y respaldo; no base principal de archivos activos.
 
+## Checklist implementado
+
+- Puntos de control vinculados siempre a constructora y obra.
+- Etapa del proceso, responsable, vencimiento y estados operativos.
+- Resumen de avance que excluye elementos marcados como no aplicables.
+- Supervisores administran controles; trabajadores asignados solo actualizan su estado.
+- Cambios importantes registrados en la auditoría de la constructora.
+
 ## Módulos previstos
 
 - Plataforma: constructoras, planes, activación y superadministración.
