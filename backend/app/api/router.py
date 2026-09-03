@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.routes import auth, health, operations, platform
+from app.api.routes import auth, checklists, health, operations, platform
 
 api_router = APIRouter()
 api_router.include_router(health.router, prefix="/health", tags=["health"])
@@ -10,4 +10,9 @@ api_router.include_router(
     operations.router,
     prefix="/v1/companies/{company_id}",
     tags=["operations"],
+)
+api_router.include_router(
+    checklists.router,
+    prefix="/v1/companies/{company_id}",
+    tags=["checklists"],
 )
