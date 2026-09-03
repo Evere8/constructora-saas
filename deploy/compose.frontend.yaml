@@ -1,0 +1,29 @@
+services:
+  frontend:
+    build:
+      context: ./app/frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_APP_NAME: ${VITE_APP_NAME:-Obrixapy}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://api.obrixapy.online/api}
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:?Define VITE_SUPABASE_URL in frontend.env}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:?Define VITE_SUPABASE_PUBLISHABLE_KEY in frontend.env}
+    container_name: constructora-frontend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - edge
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  edge:
+    driver: bridge

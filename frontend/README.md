@@ -21,7 +21,7 @@ constructoras y obras. Construido siguiendo `docs/EMERGENT_FRONTEND.md`,
 
 ## Requisitos
 
-- Node.js 20+
+- Node.js 22+ (el contenedor de producción usa Node.js 24 LTS)
 - npm 10+
 
 ## Instalación
@@ -110,6 +110,10 @@ final** y los `403` se manejan de forma explícita.
 | `/inventario`, `/planos`, `/elongaciones`, `/personal`, `/reportes`, `/configuracion` | `Próximamente`. |
 
 ## Despliegue
+
+El despliegue reproducible para el VPS está documentado en
+`docs/FRONTEND_DEPLOYMENT.md`. Usa un build multi-stage con Node.js 24 LTS y
+Nginx no privilegiado enlazado únicamente a `127.0.0.1:8080`.
 
 1. `npm run build` genera `dist/` (estático).
 2. Servir `dist/` con cualquier hosting estático o Nginx.
