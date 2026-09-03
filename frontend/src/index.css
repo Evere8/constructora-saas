@@ -1,0 +1,21 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body,
+  #root {
+    @apply h-full;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
