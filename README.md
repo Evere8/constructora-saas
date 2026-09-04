@@ -14,8 +14,13 @@ Backend inicial para el SaaS de constructoras. Está preparado para:
 - Gestión operativa de obras, niveles y tareas con aislamiento multiempresa.
 - Checklist dentro de cada tarea, con responsables, etapas, vencimientos y porcentaje de avance.
 - Evidencias privadas de checklist mediante fotos, PDF y observaciones, aisladas por constructora.
+- Planos privados por obra con versiones y anotaciones auditadas.
+- Documentación técnica desde PDF o fotografía, OCR local, revisión humana y exportación Excel.
+- Inventario de máquinas, herramientas y materiales con movimientos entre depósito y obras.
+- Personal de la constructora con invitaciones, roles y asignación a tareas y controles.
+- Reporte consolidado de obras, avance, inventario y personal.
 - CI automático para lint y pruebas del backend.
-- Respaldo diario cifrado de MySQL hacia Google Drive mediante rclone.
+- Respaldo diario cifrado de MySQL y archivos privados hacia Google Drive mediante rclone.
 - Contrato y encargo versionado para generar el frontend con Emergent.
 
 ## Estructura
@@ -49,6 +54,7 @@ Copiar `.env.example` como `/opt/constructora/app.env` y completar solo en el VP
 - `SUPABASE_SECRET_KEY` (solo si se usan funciones administrativas)
 - `SUPABASE_INVITE_REDIRECT_URL` (por ejemplo, `https://app.obrixapy.online/restablecer`)
 - `CORS_ORIGINS`
+- `DOCUMENT_MAX_BYTES` y `OCR_MAX_PDF_PAGES` (límites del procesamiento local)
 
 Nunca subir esos archivos a GitHub.
 
@@ -87,6 +93,13 @@ La API queda enlazada solo a `127.0.0.1:8000`. Nginx es el único servicio públ
 - `GET /api/v1/companies/{company_id}/projects/{project_id}/checklist/progress`: avance.
 - `GET/POST /api/v1/companies/{company_id}/projects/{project_id}/checklist/{item_id}/evidence`: evidencias.
 - `GET /api/v1/companies/{company_id}/projects/{project_id}/checklist/{item_id}/evidence/{evidence_id}/file`: descarga autenticada.
+- `GET/POST /api/v1/companies/{company_id}/projects/{project_id}/plans`: planos privados y sus versiones.
+- `GET/POST /api/v1/companies/{company_id}/projects/{project_id}/documents`: PDF/fotos, OCR y filas revisables.
+- `GET /api/v1/companies/{company_id}/projects/{project_id}/documents/{job_id}/excel`: Excel generado.
+- `GET/POST/PATCH /api/v1/companies/{company_id}/inventory`: herramientas y movimientos.
+- `GET/POST/PATCH /api/v1/companies/{company_id}/members`: personal empresarial.
+- `GET /api/v1/companies/{company_id}/reports/overview`: indicadores consolidados.
+- `GET/PATCH /api/v1/companies/{company_id}/settings`: configuración general de la constructora.
 
 Las rutas `/platform` requieren `is_platform_admin = 1`. La migración
 `0002_seed_plans` carga los planes Inicial, Profesional y Empresa.
@@ -101,7 +114,8 @@ que tengan asignadas.
 
 - No se publica `3306`.
 - El frontend nunca recibe la contraseña de MySQL ni la clave secreta de Supabase.
-- Las evidencias se guardan fuera del directorio público y se descargan solo por la API autenticada.
+- Las evidencias, planos y documentos se guardan fuera del directorio público y se descargan solo por la API autenticada.
+- El OCR usa Poppler y Tesseract dentro del contenedor; no envía documentos a servicios externos.
 - Cada consulta empresarial debe filtrar por `company_id` obtenido de la membresía.
 - El campo `sub` del JWT se vincula con `app_users.supabase_user_id`.
 - `user_metadata` no se usa para autorizar roles.

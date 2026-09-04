@@ -73,9 +73,10 @@ o PDF y tiene un máximo de 10 MB por archivo.
 | Rol | Capacidades del MVP |
 |---|---|
 | `platform_admin` | Administración global; sin acceso operativo a empresas |
-| `owner`, `admin`, `engineer` | Administran obras y trabajo |
-| `supervisor` | Administra niveles, tareas y checklist |
-| `warehouse` | Lectura actual; inventario cuando su API esté disponible |
+| `owner`, `admin` | Administran obras, trabajo, inventario y personal |
+| `engineer` | Administra obras, trabajo, planos y documentos |
+| `supervisor` | Administra niveles, tareas, checklist, planos y movimientos |
+| `warehouse` | Administra inventario y movimientos |
 | `worker`, `transport` | Solo actualizan estados de tareas o controles propios |
 | `viewer` | Solo lectura |
 
@@ -93,8 +94,27 @@ Las listas paginadas devuelven `items`, `total`, `limit` y `offset`. Cada pantal
 debe implementar carga, vacío, error, reintento y actualización optimista solo
 cuando sea segura. Después de una mutación, invalidar las consultas relacionadas.
 
-## Funciones todavía sin API
+## Módulos operativos adicionales
 
-No inventar endpoints ni usar datos simulados en producción para inventario,
-planos, documentación/OCR, herramientas, personal, reportes o notificaciones. Mostrar estas
-secciones como `Próximamente` hasta que el contrato del backend se publique.
+| Método | Ruta | Uso |
+|---|---|---|
+| GET, POST | `/v1/companies/{company_id}/projects/{project_id}/plans` | Planos y primera versión |
+| POST | `/v1/companies/{company_id}/projects/{project_id}/plans/{document_id}/versions` | Nueva versión |
+| GET | `/v1/companies/{company_id}/projects/{project_id}/plans/versions/{version_id}/download` | Descarga privada |
+| GET, POST | `/v1/companies/{company_id}/projects/{project_id}/plans/versions/{version_id}/annotations` | Anotaciones |
+| GET, POST | `/v1/companies/{company_id}/projects/{project_id}/documents` | Procesamiento PDF/foto |
+| GET | `/v1/companies/{company_id}/projects/{project_id}/documents/{job_id}` | Filas detectadas |
+| POST | `/v1/companies/{company_id}/projects/{project_id}/documents/{job_id}/items` | Agrega fila manual |
+| PATCH | `/v1/companies/{company_id}/projects/{project_id}/documents/{job_id}/items/{item_id}` | Revisa o corrige fila |
+| GET | `/v1/companies/{company_id}/projects/{project_id}/documents/{job_id}/excel` | Exportación Excel |
+| GET, POST | `/v1/companies/{company_id}/inventory` | Lista o crea inventario |
+| PATCH | `/v1/companies/{company_id}/inventory/{item_id}` | Actualiza inventario |
+| GET, POST | `/v1/companies/{company_id}/inventory/movements` | Movimientos por obra |
+| GET, POST | `/v1/companies/{company_id}/members` | Personal e invitación |
+| PATCH | `/v1/companies/{company_id}/members/{membership_id}` | Rol o estado del miembro |
+| GET | `/v1/companies/{company_id}/reports/overview` | Resumen consolidado |
+| GET, PATCH | `/v1/companies/{company_id}/settings` | Datos generales de la constructora |
+
+Los archivos se guardan en almacenamiento privado. El OCR se ejecuta localmente
+con Poppler y Tesseract; su resultado siempre requiere revisión humana antes de
+usar el Excel. Notificaciones y facturación continúan como módulos posteriores.
