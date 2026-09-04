@@ -1,7 +1,13 @@
 import pytest
 from pydantic import ValidationError
 
-from app.api.schemas.platform import CompanyCreate, CompanyPatch, MembershipCreate, PlanPatch
+from app.api.schemas.platform import (
+    CompanyCreate,
+    CompanyOnboardingCreate,
+    CompanyPatch,
+    MembershipCreate,
+    PlanPatch,
+)
 
 
 def test_company_slug_must_be_url_safe() -> None:
@@ -21,4 +27,19 @@ def test_patch_requires_at_least_one_change() -> None:
 
 def test_membership_rejects_unknown_role() -> None:
     with pytest.raises(ValidationError):
-        MembershipCreate(user_id="a" * 36, role="platform_admin")
+        MembershipCreate(email="owner@example.com", role="platform_admin")
+
+
+def test_onboarding_normalizes_owner_email() -> None:
+    payload = CompanyOnboardingCreate(
+        name="Constructora Uno",
+        slug="constructora-uno",
+        owner_email="  OWNER@Example.COM ",
+        owner_full_name="Ana Propietaria",
+    )
+    assert payload.owner_email == "owner@example.com"
+
+
+def test_membership_requires_valid_email() -> None:
+    with pytest.raises(ValidationError, match="correo válido"):
+        MembershipCreate(email="correo-invalido", role="viewer")

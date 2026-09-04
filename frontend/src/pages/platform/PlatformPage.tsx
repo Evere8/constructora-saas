@@ -1,10 +1,15 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pencil, Plus, ShieldAlert } from 'lucide-react';
+import { Pencil, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { platformApi } from '@/lib/api/platform';
-import type { Company, Plan, PlatformMembership, Role } from '@/types/api';
-import { useMe } from '@/auth/useMe';
+import type {
+  Company,
+  CompanyOnboardingResult,
+  Plan,
+  PlatformMembership,
+  Role,
+} from '@/types/api';
 import { asItems } from '@/lib/collection';
 import { roleLabel } from '@/auth/permissions';
 import { ApiError } from '@/lib/http';
@@ -49,6 +54,7 @@ const MEMBERSHIP_ROLES: Role[] = [
   'viewer',
 ];
 const STATUS_OPTIONS = ['active', 'inactive', 'suspended'];
+const MEMBERSHIP_STATUS_OPTIONS = ['active', 'invited', 'blocked'];
 
 function statusVariant(status: string): 'success' | 'muted' | 'destructive' {
   if (status === 'active') return 'success';
@@ -66,23 +72,35 @@ function PlanDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
+  const [code, setCode] = useState(plan?.code ?? '');
   const [name, setName] = useState(plan?.name ?? '');
-  const [price, setPrice] = useState(plan?.price?.toString() ?? '');
-  const [maxProjects, setMaxProjects] = useState(plan?.max_projects?.toString() ?? '');
-  const [maxUsers, setMaxUsers] = useState(plan?.max_users?.toString() ?? '');
+  const [maxProjects, setMaxProjects] = useState(
+    plan?.limits_json.active_projects?.toString() ?? '',
+  );
+  const [maxUsers, setMaxUsers] = useState(plan?.limits_json.users?.toString() ?? '');
+  const [storageGb, setStorageGb] = useState(plan?.limits_json.storage_gb?.toString() ?? '');
+  const [monthlyUploads, setMonthlyUploads] = useState(
+    plan?.limits_json.monthly_plan_uploads?.toString() ?? '',
+  );
   const [active, setActive] = useState(plan?.is_active === false ? 'no' : 'yes');
   const [error, setError] = useState<string | null>(null);
 
   const mutation = useMutation({
     mutationFn: () => {
-      const payload: Partial<Plan> = {
+      const limits_json = {
+        active_projects: Number(maxProjects),
+        users: Number(maxUsers),
+        storage_gb: Number(storageGb),
+        monthly_plan_uploads: Number(monthlyUploads),
+      };
+      const payload = {
         name,
-        price: price ? Number(price) : null,
-        max_projects: maxProjects ? Number(maxProjects) : null,
-        max_users: maxUsers ? Number(maxUsers) : null,
+        limits_json,
         is_active: active === 'yes',
       };
-      return plan ? platformApi.updatePlan(plan.id, payload) : platformApi.createPlan(payload);
+      return plan
+        ? platformApi.updatePlan(plan.id, payload)
+        : platformApi.createPlan({ code, ...payload });
     },
     onSuccess: () => {
       toast.success(plan ? 'Plan actualizado' : 'Plan creado');
@@ -99,15 +117,21 @@ function PlanDialog({
           <DialogTitle>{plan ? 'Editar plan' : 'Nuevo plan'}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
+          {!plan ? (
+            <div className="space-y-2">
+              <Label>Código</Label>
+              <Input
+                value={code}
+                onChange={(e) => setCode(e.target.value.toLowerCase())}
+                placeholder="profesional"
+              />
+            </div>
+          ) : null}
           <div className="space-y-2">
             <Label>Nombre</Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} />
           </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div className="space-y-2">
-              <Label>Precio</Label>
-              <Input type="number" value={price} onChange={(e) => setPrice(e.target.value)} />
-            </div>
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>Max. obras</Label>
               <Input type="number" value={maxProjects} onChange={(e) => setMaxProjects(e.target.value)} />
@@ -115,6 +139,14 @@ function PlanDialog({
             <div className="space-y-2">
               <Label>Max. usuarios</Label>
               <Input type="number" value={maxUsers} onChange={(e) => setMaxUsers(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Almacenamiento (GB)</Label>
+              <Input type="number" value={storageGb} onChange={(e) => setStorageGb(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Planos por mes</Label>
+              <Input type="number" value={monthlyUploads} onChange={(e) => setMonthlyUploads(e.target.value)} />
             </div>
           </div>
           <div className="space-y-2">
@@ -131,7 +163,18 @@ function PlanDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
-          <Button disabled={!name || mutation.isPending} onClick={() => { setError(null); mutation.mutate(); }}>
+          <Button
+            disabled={
+              !name ||
+              (!plan && !code) ||
+              !maxProjects ||
+              !maxUsers ||
+              !storageGb ||
+              !monthlyUploads ||
+              mutation.isPending
+            }
+            onClick={() => { setError(null); mutation.mutate(); }}
+          >
             Guardar
           </Button>
         </DialogFooter>
@@ -164,9 +207,10 @@ function PlansTab() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Plan</TableHead>
-                  <TableHead>Precio</TableHead>
+                  <TableHead>Código</TableHead>
                   <TableHead>Obras</TableHead>
                   <TableHead>Usuarios</TableHead>
+                  <TableHead>Almacenamiento</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead className="text-right">Acciones</TableHead>
                 </TableRow>
@@ -175,9 +219,10 @@ function PlansTab() {
                 {plans.map((plan) => (
                   <TableRow key={plan.id}>
                     <TableCell className="font-medium">{plan.name}</TableCell>
-                    <TableCell>{plan.price ?? '\u2014'}</TableCell>
-                    <TableCell>{plan.max_projects ?? '\u2014'}</TableCell>
-                    <TableCell>{plan.max_users ?? '\u2014'}</TableCell>
+                    <TableCell>{plan.code}</TableCell>
+                    <TableCell>{plan.limits_json.active_projects ?? '\u2014'}</TableCell>
+                    <TableCell>{plan.limits_json.users ?? '\u2014'}</TableCell>
+                    <TableCell>{plan.limits_json.storage_gb ?? '\u2014'} GB</TableCell>
                     <TableCell>
                       <Badge variant={plan.is_active === false ? 'muted' : 'success'}>
                         {plan.is_active === false ? 'Inactivo' : 'Activo'}
@@ -210,19 +255,49 @@ function CompanyDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
+  const plansQuery = useQuery({
+    queryKey: ['platform-plans'],
+    queryFn: ({ signal }) => platformApi.listPlans(signal),
+  });
+  const plans = asItems(plansQuery.data).filter(
+    (plan) => plan.is_active || plan.id === company?.plan_id,
+  );
   const [name, setName] = useState(company?.name ?? '');
   const [slug, setSlug] = useState(company?.slug ?? '');
+  const [planId, setPlanId] = useState(company?.plan_id ?? '');
   const [status, setStatus] = useState(company?.status ?? 'active');
+  const [ownerName, setOwnerName] = useState('');
+  const [ownerEmail, setOwnerEmail] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const mutation = useMutation({
+  const mutation = useMutation<Company | CompanyOnboardingResult>({
     mutationFn: () =>
       company
-        ? platformApi.updateCompany(company.id, { name, slug: slug || null, status })
-        : platformApi.createCompany({ name, slug: slug || undefined, status }),
-    onSuccess: () => {
-      toast.success(company ? 'Constructora actualizada' : 'Constructora creada');
+        ? platformApi.updateCompany(company.id, {
+            name,
+            slug: slug || null,
+            plan_id: planId || null,
+            status,
+          })
+        : platformApi.onboardCompany({
+            name,
+            slug,
+            plan_id: planId || undefined,
+            status,
+            owner_email: ownerEmail,
+            owner_full_name: ownerName,
+          }),
+    onSuccess: (result) => {
+      const invited = 'owner' in result && result.owner.invitation_sent;
+      toast.success(
+        company
+          ? 'Constructora actualizada'
+          : invited
+            ? 'Constructora creada. Enviamos la invitación al propietario.'
+            : 'Constructora creada y propietario asignado.',
+      );
       void queryClient.invalidateQueries({ queryKey: ['platform-companies'] });
+      void queryClient.invalidateQueries({ queryKey: ['platform-memberships'] });
       onOpenChange(false);
     },
     onError: (e) => setError(e instanceof ApiError ? e.detail : 'No se pudo guardar.'),
@@ -241,7 +316,22 @@ function CompanyDialog({
           </div>
           <div className="space-y-2">
             <Label>Slug</Label>
-            <Input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="mi-constructora" />
+            <Input
+              value={slug}
+              onChange={(e) => setSlug(e.target.value.toLowerCase())}
+              placeholder="mi-constructora"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Plan</Label>
+            <Select value={planId} onValueChange={setPlanId}>
+              <SelectTrigger><SelectValue placeholder="Selecciona un plan" /></SelectTrigger>
+              <SelectContent>
+                {plans.map((plan) => (
+                  <SelectItem key={plan.id} value={plan.id}>{plan.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-2">
             <Label>Estado</Label>
@@ -252,11 +342,43 @@ function CompanyDialog({
               </SelectContent>
             </Select>
           </div>
+          {!company ? (
+            <div className="rounded-lg border bg-muted/30 p-4">
+              <p className="mb-3 text-sm font-semibold">Propietario de la constructora</p>
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label>Nombre completo</Label>
+                  <Input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Correo</Label>
+                  <Input
+                    type="email"
+                    value={ownerEmail}
+                    onChange={(e) => setOwnerEmail(e.target.value)}
+                    placeholder="propietario@constructora.com"
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Si la cuenta no existe, recibirá un correo para definir su contraseña.
+                </p>
+              </div>
+            </div>
+          ) : null}
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
-          <Button disabled={!name || mutation.isPending} onClick={() => { setError(null); mutation.mutate(); }}>
+          <Button
+            disabled={
+              !name ||
+              !slug ||
+              !planId ||
+              (!company && (!ownerName || !ownerEmail)) ||
+              mutation.isPending
+            }
+            onClick={() => { setError(null); mutation.mutate(); }}
+          >
             Guardar
           </Button>
         </DialogFooter>
@@ -331,6 +453,7 @@ function MembershipDialog({
   const queryClient = useQueryClient();
   const isEdit = Boolean(membership);
   const [email, setEmail] = useState(membership?.email ?? '');
+  const [fullName, setFullName] = useState(membership?.full_name ?? '');
   const [role, setRole] = useState<Role>(membership?.role ?? 'viewer');
   const [status, setStatus] = useState(membership?.status ?? 'active');
   const [error, setError] = useState<string | null>(null);
@@ -339,9 +462,20 @@ function MembershipDialog({
     mutationFn: () =>
       isEdit && membership
         ? platformApi.updateMembership(membership.id, { role, status })
-        : platformApi.createMembership(companyId, { email, role, status }),
-    onSuccess: () => {
-      toast.success(isEdit ? 'Membresia actualizada' : 'Membresia creada');
+        : platformApi.createMembership(companyId, {
+            email,
+            full_name: fullName || undefined,
+            role,
+            status,
+          }),
+    onSuccess: (result) => {
+      toast.success(
+        isEdit
+          ? 'Membresía actualizada'
+          : result.invitation_sent
+            ? 'Usuario invitado y membresía creada'
+            : 'Membresía creada',
+      );
       void queryClient.invalidateQueries({ queryKey: ['platform-memberships', companyId] });
       onOpenChange(false);
     },
@@ -356,10 +490,16 @@ function MembershipDialog({
         </DialogHeader>
         <div className="space-y-4">
           {!isEdit ? (
-            <div className="space-y-2">
-              <Label>Correo del usuario</Label>
-              <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-            </div>
+            <>
+              <div className="space-y-2">
+                <Label>Nombre completo</Label>
+                <Input value={fullName} onChange={(e) => setFullName(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Correo del usuario</Label>
+                <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+              </div>
+            </>
           ) : null}
           <div className="space-y-2">
             <Label>Rol</Label>
@@ -375,7 +515,9 @@ function MembershipDialog({
             <Select value={status} onValueChange={setStatus}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                {STATUS_OPTIONS.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                {MEMBERSHIP_STATUS_OPTIONS.map((s) => (
+                  <SelectItem key={s} value={s}>{s}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -483,18 +625,6 @@ function MembershipsTab() {
 }
 
 export function PlatformPage() {
-  const { data: me } = useMe();
-
-  if (me && !me.is_platform_admin) {
-    return (
-      <EmptyState
-        title="Acceso restringido"
-        description="Esta seccion es solo para administradores de plataforma."
-        icon={<ShieldAlert className="h-6 w-6" />}
-      />
-    );
-  }
-
   return (
     <div className="space-y-6">
       <PageHeader title="Plataforma" description="Administra planes, constructoras y membresias." />

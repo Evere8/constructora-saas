@@ -20,7 +20,11 @@ Todas las tablas operativas contienen `company_id`. La API obtiene la empresa de
 - El JWT solo demuestra identidad; no concede acceso empresarial por sí mismo.
 - `app_users.status` debe ser `active` para utilizar la API.
 - `is_platform_admin` habilita únicamente las rutas globales `/api/v1/platform`.
+- El administrador de plataforma no puede operar rutas de una constructora ni
+  saltarse una membresía. Un futuro acceso de soporte deberá ser temporal y auditado.
 - Cada membresía guarda su propio rol y estado por constructora.
+- El alta de una constructora crea su propietario en MySQL y, si la identidad no
+  existe, usa Supabase Auth Admin desde el backend para enviar una invitación.
 - Crear o modificar planes, constructoras y membresías genera un `activity_log`.
 - Crear o modificar obras, niveles y tareas genera un `activity_log`.
 - Los roles no se toman de `user_metadata`, porque el usuario puede modificarlo.

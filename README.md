@@ -46,6 +46,7 @@ Copiar `.env.example` como `/opt/constructora/app.env` y completar solo en el VP
 - `SUPABASE_URL`
 - `SUPABASE_PUBLISHABLE_KEY`
 - `SUPABASE_SECRET_KEY` (solo si se usan funciones administrativas)
+- `SUPABASE_INVITE_REDIRECT_URL` (por ejemplo, `https://app.obrixapy.online/restablecer`)
 - `CORS_ORIGINS`
 
 Nunca subir esos archivos a GitHub.
@@ -74,6 +75,8 @@ La API queda enlazada solo a `127.0.0.1:8000`. Nginx es el único servicio públ
 - `GET /api/v1/auth/me`: perfil MySQL, estado, permiso de plataforma y membresías.
 - `GET/POST/PATCH /api/v1/platform/plans`: administración de planes.
 - `GET/POST/PATCH /api/v1/platform/companies`: constructoras y sus estados.
+- `POST /api/v1/platform/companies/onboard`: crea la constructora, asigna su
+  propietario e invita su cuenta por correo cuando todavía no existe.
 - `GET/POST /api/v1/platform/companies/{id}/memberships`: usuarios y roles.
 - `PATCH /api/v1/platform/memberships/{id}`: rol o estado de una membresía.
 - `GET/POST/PATCH /api/v1/companies/{company_id}/projects`: obras de la constructora.
@@ -86,9 +89,10 @@ Las rutas `/platform` requieren `is_platform_admin = 1`. La migración
 `0002_seed_plans` carga los planes Inicial, Profesional y Empresa.
 
 Las rutas operativas obtienen la constructora desde la URL y comprueban una
-membresía activa en cada petición. Un administrador de plataforma puede acceder
-para soporte; los demás usuarios quedan limitados por su rol. Los trabajadores y
-transportistas solamente pueden actualizar el estado de tareas que tengan asignadas.
+membresía activa en cada petición. El administrador de plataforma no puede entrar
+en rutas empresariales; un futuro modo de soporte deberá ser explícito y auditado.
+Los trabajadores y transportistas solamente pueden actualizar el estado de tareas
+que tengan asignadas.
 
 ## Seguridad
 

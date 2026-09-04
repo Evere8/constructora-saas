@@ -4,8 +4,15 @@ import { queryClient } from '@/lib/queryClient';
 import { AuthProvider } from '@/auth/AuthProvider';
 import { CompanyProvider } from '@/context/CompanyProvider';
 import { Toaster } from '@/components/ui/sonner';
-import { AccountGate, ProtectedRoute, PublicOnly } from '@/routes/guards';
+import {
+  AccountGate,
+  CompanyRoute,
+  PlatformRoute,
+  ProtectedRoute,
+  PublicOnly,
+} from '@/routes/guards';
 import { AppLayout } from '@/components/layout/AppLayout';
+import { PlatformLayout } from '@/components/layout/PlatformLayout';
 import { LoginPage } from '@/pages/LoginPage';
 import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage';
 import { ResetPasswordPage } from '@/pages/ResetPasswordPage';
@@ -32,21 +39,28 @@ export default function App() {
 
               <Route element={<ProtectedRoute />}>
                 <Route element={<AccountGate />}>
-                  <Route element={<AppLayout />}>
-                    <Route index element={<DashboardPage />} />
-                    <Route path="obras" element={<ProjectsListPage />} />
-                    <Route path="obras/:projectId" element={<ProjectDetailPage />} />
-                    <Route path="tareas" element={<ProjectPickerPage title="Tareas" tab="tareas" />} />
-                    <Route path="checklist" element={<ProjectPickerPage title="Checklist" tab="checklist" />} />
-                    <Route path="mas" element={<MorePage />} />
-                    <Route path="perfil" element={<ProfilePage />} />
-                    <Route path="plataforma" element={<PlatformPage />} />
-                    <Route path="inventario" element={<ComingSoonPage title="Inventario" />} />
-                    <Route path="planos" element={<ComingSoonPage title="Planos" />} />
-                    <Route path="elongaciones" element={<ComingSoonPage title="Elongaciones" />} />
-                    <Route path="personal" element={<ComingSoonPage title="Personal" />} />
-                    <Route path="reportes" element={<ComingSoonPage title="Reportes" />} />
-                    <Route path="configuracion" element={<ComingSoonPage title="Configuracion" />} />
+                  <Route element={<PlatformRoute />}>
+                    <Route element={<PlatformLayout />}>
+                      <Route path="plataforma" element={<PlatformPage />} />
+                      <Route path="plataforma/perfil" element={<ProfilePage />} />
+                    </Route>
+                  </Route>
+                  <Route element={<CompanyRoute />}>
+                    <Route element={<AppLayout />}>
+                      <Route index element={<DashboardPage />} />
+                      <Route path="obras" element={<ProjectsListPage />} />
+                      <Route path="obras/:projectId" element={<ProjectDetailPage />} />
+                      <Route path="tareas" element={<ProjectPickerPage title="Tareas" tab="tareas" />} />
+                      <Route path="checklist" element={<ProjectPickerPage title="Checklist" tab="checklist" />} />
+                      <Route path="mas" element={<MorePage />} />
+                      <Route path="perfil" element={<ProfilePage />} />
+                      <Route path="inventario" element={<ComingSoonPage title="Inventario" />} />
+                      <Route path="planos" element={<ComingSoonPage title="Planos" />} />
+                      <Route path="elongaciones" element={<ComingSoonPage title="Elongaciones" />} />
+                      <Route path="personal" element={<ComingSoonPage title="Personal" />} />
+                      <Route path="reportes" element={<ComingSoonPage title="Reportes" />} />
+                      <Route path="configuracion" element={<ComingSoonPage title="Configuracion" />} />
+                    </Route>
                   </Route>
                 </Route>
               </Route>

@@ -33,7 +33,7 @@ export function CompanySelector() {
         {memberships.map((m) => (
           <SelectItem key={m.company_id} value={m.company_id}>
             <div className="flex flex-col">
-              <span className="font-medium">{m.name}</span>
+              <span className="font-medium">{m.company_name}</span>
               <span className="text-xs text-muted-foreground">{roleLabel(m.role)}</span>
             </div>
           </SelectItem>

@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     supabase_url: str | None = None
     supabase_publishable_key: str | None = None
     supabase_secret_key: str | None = None
+    supabase_invite_redirect_url: str | None = None
     supabase_audience: str = "authenticated"
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
 
@@ -49,6 +50,16 @@ class Settings(BaseSettings):
         if not self.supabase_issuer:
             return None
         return f"{self.supabase_issuer}/.well-known/jwks.json"
+
+    @property
+    def invite_redirect_url(self) -> str | None:
+        if self.supabase_invite_redirect_url:
+            return self.supabase_invite_redirect_url
+        origin = next(
+            (origin for origin in self.cors_origin_list if origin.startswith("https://")),
+            None,
+        )
+        return f"{origin.rstrip('/')}/restablecer" if origin else None
 
 
 @lru_cache

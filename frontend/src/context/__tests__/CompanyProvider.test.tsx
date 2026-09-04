@@ -30,9 +30,9 @@ describe('CompanyProvider (selector de empresa)', () => {
         status: 'active',
         is_platform_admin: false,
         memberships: [
-          { company_id: 'c1', name: 'Uno', slug: 'uno', status: 'active', role: 'owner', membership_status: 'active' },
-          { company_id: 'c2', name: 'Dos', slug: 'dos', status: 'inactive', role: 'owner', membership_status: 'active' },
-          { company_id: 'c3', name: 'Tres', slug: 'tres', status: 'active', role: 'owner', membership_status: 'inactive' },
+          { company_id: 'c1', company_name: 'Uno', company_slug: 'uno', company_status: 'active', role: 'owner', membership_status: 'active' },
+          { company_id: 'c2', company_name: 'Dos', company_slug: 'dos', company_status: 'inactive', role: 'owner', membership_status: 'active' },
+          { company_id: 'c3', company_name: 'Tres', company_slug: 'tres', company_status: 'active', role: 'owner', membership_status: 'inactive' },
         ],
       },
     } as unknown as ReturnType<typeof useMe>);
