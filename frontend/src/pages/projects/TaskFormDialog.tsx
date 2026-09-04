@@ -41,7 +41,7 @@ const schema = z.object({
   status: z.enum(['pending', 'in_progress', 'review', 'completed', 'cancelled']),
   priority: z.enum(['low', 'normal', 'high', 'urgent']),
   level_id: z.string().optional(),
-  due_date: z.string().optional(),
+  due_at: z.string().optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -80,7 +80,7 @@ export function TaskFormDialog({
       status: (task?.status ?? 'pending') as TaskStatus,
       priority: (task?.priority ?? 'normal') as TaskPriority,
       level_id: task?.level_id ?? NONE,
-      due_date: task?.due_date?.slice(0, 10) ?? '',
+      due_at: task?.due_at?.slice(0, 10) ?? '',
     },
   });
 
@@ -93,7 +93,7 @@ export function TaskFormDialog({
         status: values.status,
         priority: values.priority,
         level_id: values.level_id && values.level_id !== NONE ? values.level_id : null,
-        due_date: values.due_date || null,
+        due_at: values.due_at || null,
       };
       return isEdit && task
         ? projectsApi.updateTask(companyId, projectId, task.id, payload)
@@ -197,7 +197,7 @@ export function TaskFormDialog({
           </div>
           <div className="space-y-2">
             <Label htmlFor="task-due">Fecha limite</Label>
-            <Input id="task-due" type="date" {...register('due_date')} />
+            <Input id="task-due" type="date" {...register('due_at')} />
           </div>
           <div className="space-y-2">
             <Label htmlFor="task-desc">Descripcion</Label>

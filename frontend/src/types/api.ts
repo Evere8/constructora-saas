@@ -55,7 +55,8 @@ export interface Project {
   status: ProjectStatus;
   address?: string | null;
   start_date?: string | null;
-  end_date?: string | null;
+  planned_end_date?: string | null;
+  actual_end_date?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -64,9 +65,7 @@ export interface Level {
   id: string;
   project_id: string;
   name: string;
-  order?: number | null;
-  description?: string | null;
-  created_at?: string | null;
+  sort_order: number;
 }
 
 export interface Task {
@@ -79,19 +78,25 @@ export interface Task {
   status: TaskStatus;
   priority: TaskPriority;
   assigned_user_id?: string | null;
-  due_date?: string | null;
+  due_at?: string | null;
+  completed_at?: string | null;
   created_at?: string | null;
 }
 
 export interface ChecklistItem {
   id: string;
+  company_id: string;
   project_id: string;
+  task_id?: string | null;
+  plan_version_id?: string | null;
+  annotation_id?: string | null;
   title: string;
   description?: string | null;
   process_stage: string;
   status: ChecklistStatus;
   assigned_user_id?: string | null;
-  due_date?: string | null;
+  due_at?: string | null;
+  completed_at?: string | null;
   created_at?: string | null;
 }
 
@@ -102,7 +107,22 @@ export interface ChecklistProgress {
   pending?: number;
   blocked?: number;
   not_applicable?: number;
-  percent: number;
+  completion_percent: number;
+}
+
+export interface ChecklistEvidence {
+  id: string;
+  company_id: string;
+  project_id: string;
+  task_id: string;
+  checklist_item_id: string;
+  evidence_type: 'photo' | 'document' | 'note';
+  note?: string | null;
+  original_filename?: string | null;
+  mime_type?: string | null;
+  size_bytes?: number | null;
+  uploaded_by_user_id: string;
+  created_at: string;
 }
 
 export interface Plan {

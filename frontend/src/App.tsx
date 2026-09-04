@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '@/lib/queryClient';
 import { AuthProvider } from '@/auth/AuthProvider';
@@ -19,7 +19,6 @@ import { ResetPasswordPage } from '@/pages/ResetPasswordPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { ProjectsListPage } from '@/pages/projects/ProjectsListPage';
 import { ProjectDetailPage } from '@/pages/projects/ProjectDetailPage';
-import { ProjectPickerPage } from '@/pages/ProjectPickerPage';
 import { MorePage } from '@/pages/MorePage';
 import { ProfilePage } from '@/pages/ProfilePage';
 import { PlatformPage } from '@/pages/platform/PlatformPage';
@@ -50,8 +49,8 @@ export default function App() {
                       <Route index element={<DashboardPage />} />
                       <Route path="obras" element={<ProjectsListPage />} />
                       <Route path="obras/:projectId" element={<ProjectDetailPage />} />
-                      <Route path="tareas" element={<ProjectPickerPage title="Tareas" tab="tareas" />} />
-                      <Route path="checklist" element={<ProjectPickerPage title="Checklist" tab="checklist" />} />
+                      <Route path="tareas" element={<Navigate to="/obras" replace />} />
+                      <Route path="checklist" element={<Navigate to="/obras" replace />} />
                       <Route path="mas" element={<MorePage />} />
                       <Route path="perfil" element={<ProfilePage />} />
                       <Route path="inventario" element={<ComingSoonPage title="Inventario" />} />

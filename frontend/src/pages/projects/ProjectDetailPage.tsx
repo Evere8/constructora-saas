@@ -18,7 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const ENABLED_TABS = ['resumen', 'niveles', 'tareas', 'checklist'];
-const DISABLED_TABS = ['planos', 'inventario', 'personal', 'archivos', 'reportes', 'historial'];
+const DISABLED_TABS = ['planos', 'documentacion', 'historial'];
 
 export function ProjectDetailPage() {
   const { projectId = '' } = useParams();
@@ -87,7 +87,7 @@ export function ProjectDetailPage() {
             <TabsTrigger value="resumen">Resumen</TabsTrigger>
             <TabsTrigger value="niveles">Niveles</TabsTrigger>
             <TabsTrigger value="tareas">Tareas</TabsTrigger>
-            <TabsTrigger value="checklist">Checklist</TabsTrigger>
+            <TabsTrigger value="checklist">Avance</TabsTrigger>
             {DISABLED_TABS.map((tab) => (
               <TabsTrigger key={tab} value={tab} disabled className="capitalize">
                 {tab}

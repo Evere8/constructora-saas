@@ -76,7 +76,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       updatePassword: async (password: string) => {
         const { error } = await supabase.auth.updateUser({ password });
-        if (error) throw new Error(error.message);
+        if (error) throw new Error(mapAuthError(error.message));
       },
     }),
     [session, initialized],

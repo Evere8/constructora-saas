@@ -33,7 +33,7 @@ const schema = z.object({
   process_stage: z.string().min(1, 'La etapa es obligatoria'),
   status: z.enum(['pending', 'in_progress', 'blocked', 'completed', 'not_applicable']),
   description: z.string().optional(),
-  due_date: z.string().optional(),
+  due_at: z.string().optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -41,12 +41,14 @@ type FormValues = z.infer<typeof schema>;
 export function ChecklistFormDialog({
   companyId,
   projectId,
+  taskId,
   item,
   open,
   onOpenChange,
 }: {
   companyId: string;
   projectId: string;
+  taskId?: string;
   item?: ChecklistItem;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -68,18 +70,19 @@ export function ChecklistFormDialog({
       process_stage: item?.process_stage ?? '',
       status: (item?.status ?? 'pending') as ChecklistStatus,
       description: item?.description ?? '',
-      due_date: item?.due_date?.slice(0, 10) ?? '',
+      due_at: item?.due_at?.slice(0, 10) ?? '',
     },
   });
 
   const mutation = useMutation({
     mutationFn: (values: FormValues) => {
       const payload: ChecklistInput = {
+        task_id: taskId ?? item?.task_id ?? null,
         title: values.title,
         process_stage: values.process_stage,
         status: values.status,
         description: values.description || null,
-        due_date: values.due_date || null,
+        due_at: values.due_at || null,
       };
       return isEdit && item
         ? checklistApi.update(companyId, projectId, item.id, payload)
@@ -140,7 +143,7 @@ export function ChecklistFormDialog({
           </div>
           <div className="space-y-2">
             <Label htmlFor="cl-due">Vencimiento</Label>
-            <Input id="cl-due" type="date" {...register('due_date')} />
+            <Input id="cl-due" type="date" {...register('due_at')} />
           </div>
           <div className="space-y-2">
             <Label htmlFor="cl-desc">Descripcion</Label>

@@ -21,7 +21,7 @@ function Fact({ label, value }: { label: string; value: string }) {
 export function ResumenTab({ companyId, project }: { companyId: string; project: Project }) {
   const progressQuery = useQuery({
     queryKey: ['checklist-progress', companyId, project.id],
-    queryFn: ({ signal }) => checklistApi.progress(companyId, project.id, signal),
+    queryFn: ({ signal }) => checklistApi.progress(companyId, project.id, {}, signal),
   });
 
   const levelsQuery = useQuery({
@@ -35,7 +35,7 @@ export function ResumenTab({ companyId, project }: { companyId: string; project:
   });
 
   const status = PROJECT_STATUS[project.status];
-  const percent = Math.round(progressQuery.data?.percent ?? 0);
+  const percent = Math.round(progressQuery.data?.completion_percent ?? 0);
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -53,7 +53,7 @@ export function ResumenTab({ companyId, project }: { companyId: string; project:
               </dd>
             </div>
             <Fact label="Inicio" value={formatDate(project.start_date)} />
-            <Fact label="Fin" value={formatDate(project.end_date)} />
+            <Fact label="Fin previsto" value={formatDate(project.planned_end_date)} />
             <Fact label="Direccion" value={project.address || '\u2014'} />
           </dl>
           {project.description ? (

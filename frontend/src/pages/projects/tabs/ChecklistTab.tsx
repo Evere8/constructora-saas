@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ClipboardCheck, Pencil, Plus } from 'lucide-react';
+import { ClipboardCheck, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { checklistApi, type ChecklistFilters } from '@/lib/api/checklist';
+import { projectsApi } from '@/lib/api/projects';
 import type { ChecklistItem, ChecklistStatus } from '@/types/api';
-import { useCan } from '@/auth/useCan';
+import { useCan, useCanAssigned } from '@/auth/useCan';
 import { asItems } from '@/lib/collection';
 import { CHECKLIST_STATUS, CHECKLIST_STATUS_OPTIONS } from '@/lib/labels';
 import { formatDate } from '@/lib/utils';
@@ -26,7 +27,7 @@ const ALL = 'all';
 
 export function ChecklistTab({ companyId, projectId }: { companyId: string; projectId: string }) {
   const canEdit = useCan('checklist.edit');
-  const canStatus = useCan('checklist.status');
+  const canChangeStatus = useCanAssigned('checklist.status');
   const queryClient = useQueryClient();
 
   const [statusFilter, setStatusFilter] = useState<ChecklistStatus | typeof ALL>(ALL);
@@ -40,12 +41,17 @@ export function ChecklistTab({ companyId, projectId }: { companyId: string; proj
 
   const progressQuery = useQuery({
     queryKey: ['checklist-progress', companyId, projectId],
-    queryFn: ({ signal }) => checklistApi.progress(companyId, projectId, signal),
+    queryFn: ({ signal }) => checklistApi.progress(companyId, projectId, {}, signal),
   });
 
   const query = useQuery({
     queryKey: ['checklist', companyId, projectId, filters],
     queryFn: ({ signal }) => checklistApi.list(companyId, projectId, filters, signal),
+  });
+
+  const tasksQuery = useQuery({
+    queryKey: ['tasks', companyId, projectId, { limit: 100 }],
+    queryFn: ({ signal }) => projectsApi.listTasks(companyId, projectId, { limit: 100 }, signal),
   });
 
   const statusMutation = useMutation({
@@ -59,24 +65,24 @@ export function ChecklistTab({ companyId, projectId }: { companyId: string; proj
     onError: () => toast.error('No se pudo actualizar el estado'),
   });
 
-  const items = asItems(query.data);
+  const items = useMemo(() => asItems(query.data), [query.data]);
   const grouped = useMemo(() => {
-    const map = new Map<string, ChecklistItem[]>();
+    const taskNames = new Map(asItems(tasksQuery.data).map((task) => [task.id, task.title]));
+    const map = new Map<string, { label: string; items: ChecklistItem[] }>();
     for (const item of items) {
-      const stage = item.process_stage || 'Sin etapa';
-      const list = map.get(stage) ?? [];
-      list.push(item);
-      map.set(stage, list);
+      const key = item.task_id || 'legacy';
+      const group = map.get(key) ?? {
+        label: item.task_id ? taskNames.get(item.task_id) || 'Tarea no disponible' : 'Controles sin tarea',
+        items: [],
+      };
+      group.items.push(item);
+      map.set(key, group);
     }
     return Array.from(map.entries());
-  }, [items]);
+  }, [items, tasksQuery.data]);
 
-  const percent = Math.round(progressQuery.data?.percent ?? 0);
+  const percent = Math.round(progressQuery.data?.completion_percent ?? 0);
 
-  const openCreate = () => {
-    setEditing(undefined);
-    setDialogOpen(true);
-  };
   const openEdit = (item: ChecklistItem) => {
     setEditing(item);
     setDialogOpen(true);
@@ -107,11 +113,7 @@ export function ChecklistTab({ companyId, projectId }: { companyId: string; proj
             {CHECKLIST_STATUS_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
           </SelectContent>
         </Select>
-        {canEdit ? (
-          <Button size="sm" onClick={openCreate}>
-            <Plus className="h-4 w-4" /> Nuevo control
-          </Button>
-        ) : null}
+        <p className="text-sm text-muted-foreground">Los controles se crean dentro de cada tarea.</p>
       </div>
 
       {query.isLoading ? (
@@ -121,34 +123,37 @@ export function ChecklistTab({ companyId, projectId }: { companyId: string; proj
       ) : items.length === 0 ? (
         <EmptyState
           title="Sin controles"
-          description="Agrega puntos de control agrupados por etapa del proceso."
+          description="Abre una tarea y crea allí sus puntos de control."
           icon={<ClipboardCheck className="h-6 w-6" />}
-          action={canEdit ? <Button size="sm" onClick={openCreate}><Plus className="h-4 w-4" /> Nuevo control</Button> : undefined}
         />
       ) : (
         <div className="space-y-5">
-          {grouped.map(([stage, stageItems]) => (
-            <div key={stage} className="space-y-2">
+          {grouped.map(([taskId, group]) => (
+            <div key={taskId} className="space-y-2">
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-semibold">{stage}</h3>
-                <Badge variant="muted">{stageItems.length}</Badge>
+                <h3 className="text-sm font-semibold">{group.label}</h3>
+                <Badge variant="muted">{group.items.length}</Badge>
               </div>
               <Card>
                 <CardContent className="divide-y p-0">
-                  {stageItems.map((item) => {
+                  {group.items.map((item) => {
                     const status = CHECKLIST_STATUS[item.status];
                     return (
                       <div key={item.id} className="flex items-center justify-between gap-3 p-4">
                         <div className="min-w-0">
                           <p className="truncate font-medium">{item.title}</p>
-                          {item.due_date ? (
-                            <p className="text-xs text-muted-foreground">Vence {formatDate(item.due_date)}</p>
+                          {item.process_stage ? (
+                            <p className="text-xs text-muted-foreground">Etapa: {item.process_stage}</p>
+                          ) : null}
+                          {item.due_at ? (
+                            <p className="text-xs text-muted-foreground">Vence {formatDate(item.due_at)}</p>
                           ) : null}
                         </div>
                         <div className="flex items-center gap-2">
-                          {canStatus ? (
+                          {canChangeStatus(item.assigned_user_id) ? (
                             <Select
                               value={item.status}
+                              disabled={statusMutation.isPending}
                               onValueChange={(v) => statusMutation.mutate({ itemId: item.id, status: v as ChecklistStatus })}
                             >
                               <SelectTrigger className="h-8 w-[150px]"><SelectValue /></SelectTrigger>
@@ -160,8 +165,14 @@ export function ChecklistTab({ companyId, projectId }: { companyId: string; proj
                             <Badge variant={status?.variant ?? 'muted'}>{status?.label ?? item.status}</Badge>
                           )}
                           {canEdit ? (
-                            <Button variant="ghost" size="icon" onClick={() => openEdit(item)}>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => openEdit(item)}
+                            >
                               <Pencil className="h-4 w-4" />
+                              <span className="sr-only">Editar {item.title}</span>
                             </Button>
                           ) : null}
                         </div>

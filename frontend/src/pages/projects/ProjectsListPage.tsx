@@ -195,7 +195,7 @@ export function ProjectsListPage() {
                         {formatDate(project.start_date)}
                       </TableCell>
                       <TableCell className="hidden text-sm text-muted-foreground sm:table-cell">
-                        {formatDate(project.end_date)}
+                        {formatDate(project.planned_end_date)}
                       </TableCell>
                       <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                         {canEdit ? (

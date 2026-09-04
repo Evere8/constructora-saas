@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ListChecks, Pencil, Plus } from 'lucide-react';
+import { Eye, ListChecks, Pencil, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { projectsApi, type TaskFilters } from '@/lib/api/projects';
 import type { Task, TaskStatus, TaskType } from '@/types/api';
-import { useCan } from '@/auth/useCan';
+import { useCan, useCanAssigned } from '@/auth/useCan';
 import { asItems, asTotal } from '@/lib/collection';
 import {
   TASK_PRIORITY,
@@ -16,6 +16,7 @@ import {
 import { formatDate } from '@/lib/utils';
 import { EmptyState, ErrorState, LoadingState } from '@/components/common/states';
 import { TaskFormDialog } from '@/pages/projects/TaskFormDialog';
+import { TaskWorkspaceDialog } from '@/pages/projects/TaskWorkspaceDialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -40,7 +41,7 @@ const ALL = 'all';
 
 export function TareasTab({ companyId, projectId }: { companyId: string; projectId: string }) {
   const canEdit = useCan('tasks.edit');
-  const canStatus = useCan('tasks.status');
+  const canChangeStatus = useCanAssigned('tasks.status');
   const queryClient = useQueryClient();
 
   const [statusFilter, setStatusFilter] = useState<TaskStatus | typeof ALL>(ALL);
@@ -49,6 +50,7 @@ export function TareasTab({ companyId, projectId }: { companyId: string; project
   const [page, setPage] = useState(0);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Task | undefined>(undefined);
+  const [workspaceTask, setWorkspaceTask] = useState<Task | undefined>(undefined);
 
   const levelsQuery = useQuery({
     queryKey: ['levels', companyId, projectId],
@@ -154,7 +156,7 @@ export function TareasTab({ companyId, projectId }: { companyId: string; project
                   <TableHead className="hidden md:table-cell">Nivel</TableHead>
                   <TableHead className="hidden md:table-cell">Prioridad</TableHead>
                   <TableHead>Estado</TableHead>
-                  {canEdit ? <TableHead className="text-right">Acciones</TableHead> : null}
+                  <TableHead className="text-right">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -165,8 +167,8 @@ export function TareasTab({ companyId, projectId }: { companyId: string; project
                     <TableRow key={task.id}>
                       <TableCell>
                         <p className="font-medium">{task.title}</p>
-                        {task.due_date ? (
-                          <p className="text-xs text-muted-foreground">Vence {formatDate(task.due_date)}</p>
+                        {task.due_at ? (
+                          <p className="text-xs text-muted-foreground">Vence {formatDate(task.due_at)}</p>
                         ) : null}
                       </TableCell>
                       <TableCell className="hidden sm:table-cell text-sm">{TASK_TYPE[task.task_type]}</TableCell>
@@ -175,7 +177,7 @@ export function TareasTab({ companyId, projectId }: { companyId: string; project
                         <Badge variant={priority?.variant ?? 'muted'}>{priority?.label ?? task.priority}</Badge>
                       </TableCell>
                       <TableCell>
-                        {canStatus ? (
+                        {canChangeStatus(task.assigned_user_id) ? (
                           <Select
                             value={task.status}
                             onValueChange={(v) => statusMutation.mutate({ taskId: task.id, status: v as TaskStatus })}
@@ -189,13 +191,18 @@ export function TareasTab({ companyId, projectId }: { companyId: string; project
                           <Badge variant={status?.variant ?? 'muted'}>{status?.label ?? task.status}</Badge>
                         )}
                       </TableCell>
-                      {canEdit ? (
-                        <TableCell className="text-right">
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1">
+                          <Button variant="ghost" size="sm" onClick={() => setWorkspaceTask(task)}>
+                            <Eye className="h-4 w-4" /> Abrir
+                          </Button>
+                          {canEdit ? (
                           <Button variant="ghost" size="sm" onClick={() => openEdit(task)}>
                             <Pencil className="h-4 w-4" /> Editar
                           </Button>
-                        </TableCell>
-                      ) : null}
+                          ) : null}
+                        </div>
+                      </TableCell>
                     </TableRow>
                   );
                 })}
@@ -224,6 +231,17 @@ export function TareasTab({ companyId, projectId }: { companyId: string; project
           task={editing}
           open={dialogOpen}
           onOpenChange={setDialogOpen}
+        />
+      ) : null}
+
+      {workspaceTask ? (
+        <TaskWorkspaceDialog
+          companyId={companyId}
+          projectId={projectId}
+          task={workspaceTask}
+          levelName={levelName(workspaceTask.level_id)}
+          open={Boolean(workspaceTask)}
+          onOpenChange={(nextOpen) => { if (!nextOpen) setWorkspaceTask(undefined); }}
         />
       ) : null}
     </div>
