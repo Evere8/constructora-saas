@@ -4,6 +4,7 @@ from datetime import date, datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     Date,
     DateTime,
@@ -95,6 +96,7 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     code: Mapped[str | None] = mapped_column(String(50), nullable=True)
     name: Mapped[str] = mapped_column(String(180), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    address: Mapped[str | None] = mapped_column(String(300), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     planned_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -105,9 +107,7 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class ProjectLevel(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "project_levels"
-    __table_args__ = (
-        UniqueConstraint("project_id", "name", name="uq_project_level_name"),
-    )
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_project_level_name"),)
 
     project_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
@@ -155,6 +155,12 @@ class ChecklistItem(UUIDPrimaryKeyMixin, Base):
             "project_id",
             "status",
         ),
+        Index(
+            "ix_checklists_company_task_status",
+            "company_id",
+            "task_id",
+            "status",
+        ),
     )
 
     company_id: Mapped[str] = mapped_column(
@@ -162,6 +168,9 @@ class ChecklistItem(UUIDPrimaryKeyMixin, Base):
     )
     project_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    task_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True
     )
     plan_version_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("plan_versions.id", ondelete="SET NULL"), nullable=True
@@ -178,6 +187,39 @@ class ChecklistItem(UUIDPrimaryKeyMixin, Base):
     )
     due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+
+class ChecklistEvidence(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "checklist_evidence"
+    __table_args__ = (
+        Index("ix_evidence_company_item_created", "company_id", "checklist_item_id", "created_at"),
+    )
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    task_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    checklist_item_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("checklist_items.id", ondelete="CASCADE"), nullable=False
+    )
+    evidence_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    storage_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    mime_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    uploaded_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id"), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
     )

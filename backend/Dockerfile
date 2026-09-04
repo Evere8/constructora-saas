@@ -17,6 +17,8 @@ COPY --chown=app:app alembic ./alembic
 # The deployment host uses a restrictive umask. Normalize copied source modes so
 # the non-root runtime user can always import the application and migrations.
 RUN chmod -R u=rwX,go=rX /app \
+    && mkdir -p /data/uploads \
+    && chown app:app /data/uploads \
     && pip install --upgrade "pip==25.2" \
     && pip install .
 

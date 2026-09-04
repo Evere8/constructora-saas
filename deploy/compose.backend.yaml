@@ -19,6 +19,8 @@ services:
       - edge
     ports:
       - "127.0.0.1:8000:8000"
+    volumes:
+      - app_uploads:/data/uploads
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/ready', timeout=3)"]
       interval: 20s
@@ -37,3 +39,5 @@ networks:
   edge:
     driver: bridge
 
+volumes:
+  app_uploads:

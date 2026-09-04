@@ -15,6 +15,16 @@ def test_project_rejects_invalid_date_range() -> None:
         )
 
 
+def test_project_accepts_address_and_planned_end_date() -> None:
+    project = ProjectCreate(
+        name="Edificio Centro",
+        address="Avda. Principal 123",
+        planned_end_date=date(2026, 12, 20),
+    )
+    assert project.address == "Avda. Principal 123"
+    assert project.planned_end_date == date(2026, 12, 20)
+
+
 def test_operation_patches_require_a_change() -> None:
     with pytest.raises(ValidationError, match="al menos un campo"):
         ProjectPatch()
@@ -34,4 +44,3 @@ def test_task_defaults_are_safe() -> None:
     assert task.task_type == "work"
     assert task.status == "pending"
     assert task.priority == "normal"
-

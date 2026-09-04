@@ -13,6 +13,7 @@ class ProjectCreate(BaseModel):
     code: str | None = Field(default=None, min_length=1, max_length=50)
     name: str = Field(min_length=2, max_length=180)
     description: str | None = Field(default=None, max_length=5000)
+    address: str | None = Field(default=None, max_length=300)
     status: ProjectStatus = "active"
     start_date: date | None = None
     planned_end_date: date | None = None
@@ -28,6 +29,7 @@ class ProjectPatch(BaseModel):
     code: str | None = Field(default=None, min_length=1, max_length=50)
     name: str | None = Field(default=None, min_length=2, max_length=180)
     description: str | None = Field(default=None, max_length=5000)
+    address: str | None = Field(default=None, max_length=300)
     status: ProjectStatus | None = None
     start_date: date | None = None
     planned_end_date: date | None = None
@@ -50,6 +52,7 @@ class ProjectResponse(BaseModel):
     code: str | None
     name: str
     description: str | None
+    address: str | None
     status: str
     start_date: date | None
     planned_end_date: date | None
