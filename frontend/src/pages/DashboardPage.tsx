@@ -78,7 +78,7 @@ export function DashboardPage() {
         <img src={BANNER} alt="" className="absolute inset-0 h-full w-full object-cover opacity-30" />
         <div className="relative z-10 flex flex-col gap-1 p-6 sm:p-8">
           <p className="text-sm text-white/70">Hola, {greetingName}</p>
-          <h1 className="text-2xl font-semibold sm:text-3xl">{activeMembership?.name ?? 'Tu constructora'}</h1>
+          <h1 className="text-2xl font-semibold sm:text-3xl">{activeMembership?.company_name ?? 'Tu constructora'}</h1>
           <div className="mt-1 flex items-center gap-2 text-sm text-white/80">
             <Badge variant="warning">{roleLabel(activeMembership?.role)}</Badge>
           </div>

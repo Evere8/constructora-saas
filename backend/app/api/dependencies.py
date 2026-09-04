@@ -109,11 +109,9 @@ async def get_company_access(
         )
 
     if user.is_platform_admin:
-        return CompanyAccessContext(
-            company_id=company.id,
-            company_status=company.status,
-            role="platform_admin",
-            user=user,
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="El administrador de plataforma no opera dentro de constructoras",
         )
 
     result = await db.execute(

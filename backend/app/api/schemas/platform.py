@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 CompanyStatus = Literal["active", "inactive", "suspended"]
 MembershipRole = Literal[
@@ -95,10 +95,34 @@ class CompanyListResponse(BaseModel):
     offset: int
 
 
+class CompanyOnboardingCreate(CompanyCreate):
+    owner_email: str = Field(min_length=5, max_length=254)
+    owner_full_name: str = Field(min_length=2, max_length=180)
+
+    @field_validator("owner_email")
+    @classmethod
+    def normalize_owner_email(cls, value: str) -> str:
+        email = value.strip().lower()
+        local, separator, domain = email.partition("@")
+        if not separator or not local or "." not in domain:
+            raise ValueError("Debe indicar un correo válido")
+        return email
+
+
 class MembershipCreate(BaseModel):
-    user_id: str = Field(min_length=36, max_length=36)
+    email: str = Field(min_length=5, max_length=254)
+    full_name: str | None = Field(default=None, min_length=2, max_length=180)
     role: MembershipRole
     status: MembershipStatus = "active"
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        email = value.strip().lower()
+        local, separator, domain = email.partition("@")
+        if not separator or not local or "." not in domain:
+            raise ValueError("Debe indicar un correo válido")
+        return email
 
 
 class MembershipPatch(BaseModel):
@@ -121,3 +145,9 @@ class MembershipResponse(BaseModel):
     role: str
     status: str
     created_at: datetime
+    invitation_sent: bool = False
+
+
+class CompanyOnboardingResponse(BaseModel):
+    company: CompanyResponse
+    owner: MembershipResponse

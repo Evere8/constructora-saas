@@ -23,13 +23,19 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   const memberships = useMemo<Membership[]>(
     () =>
       (me?.memberships ?? []).filter(
-        (m) => m.membership_status === 'active' && m.status === 'active',
+        (m) => m.membership_status === 'active' && m.company_status === 'active',
       ),
     [me],
   );
 
   useEffect(() => {
-    if (memberships.length === 0) return;
+    if (memberships.length === 0) {
+      if (activeCompanyId !== null) {
+        setActive(null);
+        window.localStorage.removeItem(STORAGE_KEY);
+      }
+      return;
+    }
     const exists = activeCompanyId && memberships.some((m) => m.company_id === activeCompanyId);
     if (!exists) {
       const first = memberships[0].company_id;

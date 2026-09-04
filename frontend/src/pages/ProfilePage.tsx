@@ -28,7 +28,7 @@ export function ProfilePage() {
         }
       />
 
-      <Card>
+      {!me?.is_platform_admin ? <Card>
         <CardContent className="flex items-center gap-4 p-6">
           <Avatar className="h-16 w-16">
             <AvatarFallback className="text-lg">{initials}</AvatarFallback>
@@ -47,9 +47,9 @@ export function ProfilePage() {
             </div>
           </div>
         </CardContent>
-      </Card>
+      </Card> : null}
 
-      <Card>
+      {!me?.is_platform_admin ? <Card>
         <CardHeader>
           <CardTitle className="text-base">Constructora activa</CardTitle>
         </CardHeader>
@@ -57,7 +57,7 @@ export function ProfilePage() {
           {activeMembership ? (
             <div className="flex items-center justify-between">
               <div>
-                <p className="font-medium">{activeMembership.name}</p>
+                <p className="font-medium">{activeMembership.company_name}</p>
                 <p className="text-sm text-muted-foreground">{roleLabel(activeMembership.role)}</p>
               </div>
               <Badge variant="success">Activa</Badge>
@@ -66,7 +66,7 @@ export function ProfilePage() {
             <p className="text-sm text-muted-foreground">Sin constructora activa.</p>
           )}
         </CardContent>
-      </Card>
+      </Card> : null}
 
       <Card>
         <CardHeader>
@@ -79,7 +79,7 @@ export function ProfilePage() {
             memberships.map((m) => (
               <div key={m.company_id} className="flex items-center justify-between p-4">
                 <div>
-                  <p className="font-medium">{m.name}</p>
+                  <p className="font-medium">{m.company_name}</p>
                   <p className="text-xs text-muted-foreground">{roleLabel(m.role)}</p>
                 </div>
                 <Badge variant="muted">{m.membership_status}</Badge>

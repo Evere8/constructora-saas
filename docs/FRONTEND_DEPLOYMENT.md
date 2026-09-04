@@ -133,7 +133,29 @@ En Supabase, abrir **Authentication → URL Configuration** y definir:
 
 Usar rutas exactas en producción.
 
-## 9. Validación final
+## 9. Invitaciones de propietarios y usuarios
+
+El alta desde **Plataforma** usa Supabase Auth Admin únicamente en FastAPI.
+Completar estas variables en el archivo privado `/opt/constructora/app.env`:
+
+```dotenv
+SUPABASE_SECRET_KEY=REEMPLAZAR_EN_EL_VPS
+SUPABASE_INVITE_REDIRECT_URL=https://app.obrixapy.online/restablecer
+```
+
+La secret key se obtiene en el panel del proyecto correcto de Supabase y nunca
+debe copiarse al frontend, GitHub, registros ni conversaciones. Después de
+guardarla, recrear solamente la API:
+
+```bash
+cd /opt/constructora
+sudo docker compose \
+  -f compose.yaml \
+  -f app/deploy/compose.backend.yaml \
+  up -d --force-recreate api
+```
+
+## 10. Validación final
 
 ```bash
 curl -fsS https://api.obrixapy.online/api/health/ready

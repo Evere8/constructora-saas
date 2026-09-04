@@ -5,6 +5,7 @@ import { useMe } from '@/auth/useMe';
 import { FullScreenLoader } from '@/components/common/states';
 import { AccessPendingPage } from '@/pages/AccessPendingPage';
 import { ApiError } from '@/lib/http';
+import { useCompany } from '@/context/CompanyProvider';
 
 export function ProtectedRoute() {
   const { status } = useAuth();
@@ -41,5 +42,30 @@ export function AccountGate() {
     return <AccessPendingPage variant={me.status === 'blocked' ? 'blocked' : 'pending'} />;
   }
 
+  return <Outlet />;
+}
+
+export function PlatformRoute() {
+  const { data: me, isLoading } = useMe();
+
+  if (isLoading) return <FullScreenLoader label="Verificando acceso de plataforma..." />;
+  if (!me?.is_platform_admin) return <Navigate to="/" replace />;
+  return <Outlet />;
+}
+
+export function CompanyRoute() {
+  const { data: me, isLoading } = useMe();
+  const { activeMembership } = useCompany();
+
+  if (isLoading) return <FullScreenLoader label="Verificando tu constructora..." />;
+  if (me?.is_platform_admin) return <Navigate to="/plataforma" replace />;
+  if (!activeMembership) {
+    return (
+      <AccessPendingPage
+        variant="pending"
+        message="Tu cuenta está activa, pero todavía no tiene una constructora habilitada. Pide al administrador de plataforma que complete tu asignación."
+      />
+    );
+  }
   return <Outlet />;
 }

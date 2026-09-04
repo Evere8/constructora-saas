@@ -1,42 +1,19 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet } from 'react-router-dom';
 import {
   HardHat,
-  LogOut,
-  User,
-  ShieldCheck,
   MoreHorizontal,
   Home,
   Building2,
   ListChecks,
   ClipboardCheck,
 } from 'lucide-react';
-import { useMe } from '@/auth/useMe';
-import { useAuth } from '@/auth/AuthProvider';
 import { roleLabel } from '@/auth/permissions';
 import { useCompany } from '@/context/CompanyProvider';
 import { CompanySelector } from '@/components/layout/CompanySelector';
 import { PRIMARY_NAV, SECONDARY_NAV } from '@/components/layout/nav';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { UserMenu } from '@/components/layout/UserMenu';
 import { cn } from '@/lib/utils';
-
-function initials(name?: string | null, email?: string | null): string {
-  const source = name || email || 'U';
-  return source
-    .split(/[\s@.]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? '')
-    .join('');
-}
 
 function navLinkClass({ isActive }: { isActive: boolean }): string {
   return cn(
@@ -49,8 +26,6 @@ function navLinkClass({ isActive }: { isActive: boolean }): string {
 
 function Sidebar() {
   const { activeMembership } = useCompany();
-  const { data: me } = useMe();
-  const showPlatform = Boolean(me?.is_platform_admin);
 
   return (
     <aside className="hidden w-64 shrink-0 flex-col bg-sidebar text-sidebar-foreground lg:flex">
@@ -87,66 +62,15 @@ function Sidebar() {
           </NavLink>
         ))}
 
-        {showPlatform ? (
-          <>
-            <p className="px-3 pb-1 pt-4 text-xs font-semibold uppercase tracking-wide text-sidebar-foreground/40">
-              Plataforma
-            </p>
-            <NavLink to="/plataforma" className={navLinkClass}>
-              <ShieldCheck className="h-4 w-4" />
-              Plataforma
-            </NavLink>
-          </>
-        ) : null}
       </nav>
 
       {activeMembership ? (
         <div className="border-t border-sidebar-border px-4 py-3 text-xs text-sidebar-foreground/70">
-          <p className="font-medium text-sidebar-foreground">{activeMembership.name}</p>
+          <p className="font-medium text-sidebar-foreground">{activeMembership.company_name}</p>
           <p>{roleLabel(activeMembership.role)}</p>
         </div>
       ) : null}
     </aside>
-  );
-}
-
-function UserMenu() {
-  const { data: me } = useMe();
-  const { signOut } = useAuth();
-  const navigate = useNavigate();
-  const name = me?.full_name || me?.name || me?.email;
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button className="flex items-center gap-2 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring">
-          <Avatar className="h-9 w-9">
-            <AvatarFallback>{initials(me?.full_name || me?.name, me?.email)}</AvatarFallback>
-          </Avatar>
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel>
-          <div className="flex flex-col">
-            <span className="truncate">{name ?? 'Usuario'}</span>
-            <span className="truncate text-xs font-normal text-muted-foreground">{me?.email}</span>
-          </div>
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => navigate('/perfil')}>
-          <User className="h-4 w-4" /> Perfil
-        </DropdownMenuItem>
-        {me?.is_platform_admin ? (
-          <DropdownMenuItem onClick={() => navigate('/plataforma')}>
-            <ShieldCheck className="h-4 w-4" /> Plataforma
-          </DropdownMenuItem>
-        ) : null}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => void signOut()} className="text-destructive focus:text-destructive">
-          <LogOut className="h-4 w-4" /> Cerrar sesion
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }
 

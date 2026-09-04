@@ -22,9 +22,9 @@ export type Role =
 
 export interface Membership {
   company_id: string;
-  name: string;
-  slug: string;
-  status: string;
+  company_name: string;
+  company_slug: string;
+  company_status: string;
   role: Role;
   membership_status: string;
 }
@@ -107,13 +107,17 @@ export interface ChecklistProgress {
 
 export interface Plan {
   id: string;
+  code: string;
   name: string;
-  slug?: string | null;
-  description?: string | null;
-  price?: number | null;
-  max_projects?: number | null;
-  max_users?: number | null;
-  is_active?: boolean;
+  limits_json: {
+    active_projects?: number;
+    users?: number;
+    storage_gb?: number;
+    monthly_plan_uploads?: number;
+    [key: string]: number | string | boolean | undefined;
+  };
+  is_active: boolean;
+  created_at?: string | null;
 }
 
 export interface Company {
@@ -130,6 +134,13 @@ export interface PlatformMembership {
   company_id: string;
   user_id?: string | null;
   email?: string | null;
+  full_name?: string | null;
   role: Role;
   status: string;
+  invitation_sent?: boolean;
+}
+
+export interface CompanyOnboardingResult {
+  company: Company;
+  owner: PlatformMembership;
 }

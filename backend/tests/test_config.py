@@ -11,3 +11,4 @@ def test_database_url_encodes_password() -> None:
 def test_cors_origins_are_split() -> None:
     settings = Settings(mysql_password="test", cors_origins="https://a.test, https://b.test")
     assert settings.cors_origin_list == ["https://a.test", "https://b.test"]
+    assert settings.invite_redirect_url == "https://a.test/restablecer"

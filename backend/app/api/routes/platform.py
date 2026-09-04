@@ -6,6 +6,8 @@ from app.api.dependencies import CurrentPlatformAdmin, DbSession
 from app.api.schemas.platform import (
     CompanyCreate,
     CompanyListResponse,
+    CompanyOnboardingCreate,
+    CompanyOnboardingResponse,
     CompanyPatch,
     CompanyResponse,
     MembershipCreate,
@@ -15,7 +17,13 @@ from app.api.schemas.platform import (
     PlanPatch,
     PlanResponse,
 )
+from app.core.config import get_settings
 from app.db.models import ActivityLog, AppUser, Company, CompanyMembership, Plan
+from app.services.supabase_admin import (
+    SupabaseAdminClient,
+    SupabaseAdminError,
+    SupabaseAdminUnavailable,
+)
 
 router = APIRouter()
 
@@ -44,6 +52,58 @@ async def require_plan(db: DbSession, plan_id: str | None) -> None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Plan inválido"
         )
+
+
+async def resolve_or_invite_user(
+    db: DbSession,
+    email: str,
+    full_name: str | None,
+) -> tuple[AppUser, bool]:
+    result = await db.execute(
+        select(AppUser).where(func.lower(AppUser.email) == email.lower()).limit(1)
+    )
+    user = result.scalar_one_or_none()
+    if user is not None:
+        if user.is_platform_admin:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Un administrador de plataforma no puede ser miembro de una constructora",
+            )
+        if user.status != "active":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="El usuario existe, pero su cuenta no está activa",
+            )
+        if full_name and not user.full_name:
+            user.full_name = full_name
+        return user, False
+
+    try:
+        auth_user = await SupabaseAdminClient(get_settings()).find_or_invite_user(
+            email,
+            full_name,
+        )
+    except SupabaseAdminUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except SupabaseAdminError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+
+    user = AppUser(
+        supabase_user_id=auth_user.id,
+        email=auth_user.email,
+        full_name=full_name,
+        status="active",
+        is_platform_admin=False,
+    )
+    db.add(user)
+    await flush_or_conflict(db, "No fue posible registrar el usuario invitado")
+    return user, auth_user.invitation_sent
 
 
 def add_activity(
@@ -151,6 +211,74 @@ async def create_company(
     return company
 
 
+@router.post(
+    "/companies/onboard",
+    response_model=CompanyOnboardingResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def onboard_company(
+    payload: CompanyOnboardingCreate,
+    admin: CurrentPlatformAdmin,
+    db: DbSession,
+) -> CompanyOnboardingResponse:
+    await require_plan(db, payload.plan_id)
+    existing_company = await db.scalar(select(Company.id).where(Company.slug == payload.slug))
+    if existing_company:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ya existe una constructora con ese identificador",
+        )
+
+    owner, invitation_sent = await resolve_or_invite_user(
+        db,
+        payload.owner_email,
+        payload.owner_full_name,
+    )
+    company = Company(
+        name=payload.name,
+        slug=payload.slug,
+        plan_id=payload.plan_id,
+        status=payload.status,
+    )
+    db.add(company)
+    await flush_or_conflict(db, "Ya existe una constructora con ese identificador")
+
+    membership = CompanyMembership(
+        company_id=company.id,
+        user_id=owner.id,
+        role="owner",
+        status="active",
+    )
+    db.add(membership)
+    await flush_or_conflict(db, "El propietario ya pertenece a esta constructora")
+    add_activity(
+        db,
+        admin.id,
+        "platform.company.onboarded",
+        "company",
+        company.id,
+        company_id=company.id,
+        metadata={"owner_user_id": owner.id, "invitation_sent": invitation_sent},
+    )
+    await commit_or_conflict(db, "No fue posible completar el alta de la constructora")
+    await db.refresh(company)
+    await db.refresh(membership)
+    return CompanyOnboardingResponse(
+        company=CompanyResponse.model_validate(company),
+        owner=MembershipResponse(
+            id=membership.id,
+            company_id=membership.company_id,
+            user_id=owner.id,
+            email=owner.email,
+            full_name=owner.full_name,
+            role=membership.role,
+            status=membership.status,
+            created_at=membership.created_at,
+            invitation_sent=invitation_sent,
+        ),
+    )
+
+
 @router.get("/companies/{company_id}", response_model=CompanyResponse)
 async def get_company(
     company_id: str, _: CurrentPlatformAdmin, db: DbSession
@@ -237,14 +365,21 @@ async def create_membership(
     db: DbSession,
 ) -> MembershipResponse:
     company = await db.get(Company, company_id)
-    user = await db.get(AppUser, payload.user_id)
     if company is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Constructora no encontrada"
         )
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
-    membership = CompanyMembership(company_id=company_id, **payload.model_dump())
+    user, invitation_sent = await resolve_or_invite_user(
+        db,
+        payload.email,
+        payload.full_name,
+    )
+    membership = CompanyMembership(
+        company_id=company_id,
+        user_id=user.id,
+        role=payload.role,
+        status=payload.status,
+    )
     db.add(membership)
     await flush_or_conflict(db, "El usuario ya pertenece a esta constructora")
     add_activity(
@@ -267,6 +402,7 @@ async def create_membership(
         role=membership.role,
         status=membership.status,
         created_at=membership.created_at,
+        invitation_sent=invitation_sent,
     )
 
 

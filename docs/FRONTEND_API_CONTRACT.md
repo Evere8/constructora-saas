@@ -30,6 +30,7 @@ Solo disponible cuando `is_platform_admin` es verdadero.
 | GET, POST | `/v1/platform/plans` |
 | PATCH | `/v1/platform/plans/{plan_id}` |
 | GET, POST | `/v1/platform/companies` |
+| POST | `/v1/platform/companies/onboard` |
 | GET, PATCH | `/v1/platform/companies/{company_id}` |
 | GET, POST | `/v1/platform/companies/{company_id}/memberships` |
 | PATCH | `/v1/platform/memberships/{membership_id}` |
@@ -66,7 +67,7 @@ Filtros de checklist: `status`, `process_stage`, `assigned_user_id`, `limit`,
 
 | Rol | Capacidades del MVP |
 |---|---|
-| `platform_admin` | Administración global y soporte en cualquier empresa |
+| `platform_admin` | Administración global; sin acceso operativo a empresas |
 | `owner`, `admin`, `engineer` | Administran obras y trabajo |
 | `supervisor` | Administra niveles, tareas y checklist |
 | `warehouse` | Lectura actual; inventario cuando su API esté disponible |
@@ -75,6 +76,11 @@ Filtros de checklist: `status`, `process_stage`, `assigned_user_id`, `limit`,
 
 La UI puede ocultar acciones que el rol no permite, pero FastAPI es siempre la
 autoridad final. Nunca derivar permisos de `user_metadata` de Supabase.
+
+`POST /v1/platform/companies/onboard` recibe nombre, slug, plan, estado,
+`owner_email` y `owner_full_name`. Devuelve la constructora y la membresía del
+propietario. Si el usuario todavía no existe en Supabase, el backend envía la
+invitación; ninguna clave secreta se entrega al navegador.
 
 ## Paginación y estados de interfaz
 
