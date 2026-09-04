@@ -2,10 +2,12 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { projectsApi, type TaskInput } from '@/lib/api/projects';
+import { membersApi } from '@/lib/api/modules';
+import { roleLabel } from '@/auth/permissions';
 import type { Level, Task, TaskPriority, TaskStatus, TaskType } from '@/types/api';
 import { ApiError } from '@/lib/http';
 import {
@@ -42,6 +44,7 @@ const schema = z.object({
   priority: z.enum(['low', 'normal', 'high', 'urgent']),
   level_id: z.string().optional(),
   due_at: z.string().optional(),
+  assigned_user_id: z.string().optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -81,7 +84,14 @@ export function TaskFormDialog({
       priority: (task?.priority ?? 'normal') as TaskPriority,
       level_id: task?.level_id ?? NONE,
       due_at: task?.due_at?.slice(0, 10) ?? '',
+      assigned_user_id: task?.assigned_user_id ?? NONE,
     },
+  });
+
+  const membersQuery = useQuery({
+    queryKey: ['members', companyId],
+    queryFn: ({ signal }) => membersApi.list(companyId, signal),
+    enabled: open,
   });
 
   const mutation = useMutation({
@@ -94,6 +104,10 @@ export function TaskFormDialog({
         priority: values.priority,
         level_id: values.level_id && values.level_id !== NONE ? values.level_id : null,
         due_at: values.due_at || null,
+        assigned_user_id:
+          values.assigned_user_id && values.assigned_user_id !== NONE
+            ? values.assigned_user_id
+            : null,
       };
       return isEdit && task
         ? projectsApi.updateTask(companyId, projectId, task.id, payload)
@@ -117,6 +131,7 @@ export function TaskFormDialog({
   const status = watch('status');
   const priority = watch('priority');
   const levelId = watch('level_id');
+  const assigneeId = watch('assigned_user_id');
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -198,6 +213,20 @@ export function TaskFormDialog({
           <div className="space-y-2">
             <Label htmlFor="task-due">Fecha limite</Label>
             <Input id="task-due" type="date" {...register('due_at')} />
+          </div>
+          <div className="space-y-2">
+            <Label>Responsable</Label>
+            <Select value={assigneeId} onValueChange={(v) => setValue('assigned_user_id', v)}>
+              <SelectTrigger><SelectValue placeholder="Sin responsable" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NONE}>Sin responsable</SelectItem>
+                {(membersQuery.data ?? []).filter((member) => member.status === 'active').map((member) => (
+                  <SelectItem key={member.user_id} value={member.user_id}>
+                    {member.full_name || member.email} · {roleLabel(member.role)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-2">
             <Label htmlFor="task-desc">Descripcion</Label>

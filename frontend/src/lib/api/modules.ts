@@ -1,0 +1,129 @@
+import { api } from '@/lib/http';
+import type {
+  CompanyMember,
+  CompanySettings,
+  DocumentItem,
+  DocumentJob,
+  InventoryItem,
+  InventoryMovement,
+  PlanDocument,
+  ReportOverview,
+  Role,
+} from '@/types/api';
+
+const companyBase = (companyId: string) => `/v1/companies/${companyId}`;
+const projectBase = (companyId: string, projectId: string) =>
+  `${companyBase(companyId)}/projects/${projectId}`;
+
+function planForm(title: string, file: File, levelId?: string | null): FormData {
+  const body = new FormData();
+  body.set('title', title);
+  body.set('file', file);
+  if (levelId) body.set('level_id', levelId);
+  return body;
+}
+
+function documentForm(title: string, file: File, tolerancePercent: number): FormData {
+  const body = new FormData();
+  body.set('title', title);
+  body.set('file', file);
+  body.set('tolerance_percent', String(tolerancePercent));
+  return body;
+}
+
+export const plansApi = {
+  list: (companyId: string, projectId: string, signal?: AbortSignal) =>
+    api.get<PlanDocument[]>(`${projectBase(companyId, projectId)}/plans`, undefined, signal),
+  create: (companyId: string, projectId: string, title: string, file: File, levelId?: string | null) =>
+    api.upload<PlanDocument>(`${projectBase(companyId, projectId)}/plans`, planForm(title, file, levelId)),
+  addVersion: (companyId: string, projectId: string, documentId: string, file: File) => {
+    const body = new FormData();
+    body.set('file', file);
+    return api.upload(`${projectBase(companyId, projectId)}/plans/${documentId}/versions`, body);
+  },
+  download: (companyId: string, projectId: string, versionId: string) =>
+    api.blob(`${projectBase(companyId, projectId)}/plans/versions/${versionId}/download`),
+};
+
+export const documentsApi = {
+  list: (companyId: string, projectId: string, signal?: AbortSignal) =>
+    api.get<DocumentJob[]>(`${projectBase(companyId, projectId)}/documents`, undefined, signal),
+  process: (companyId: string, projectId: string, title: string, file: File, tolerancePercent = 7) =>
+    api.upload<DocumentJob>(
+      `${projectBase(companyId, projectId)}/documents`,
+      documentForm(title, file, tolerancePercent),
+    ),
+  get: (companyId: string, projectId: string, jobId: string, signal?: AbortSignal) =>
+    api.get<DocumentJob>(`${projectBase(companyId, projectId)}/documents/${jobId}`, undefined, signal),
+  createItem: (
+    companyId: string,
+    projectId: string,
+    jobId: string,
+    input: {
+      label: string;
+      classification: 'band' | 'distributed';
+      length_m: number;
+      strand_count: number;
+      calculated_elongation: number;
+    },
+  ) => api.post<DocumentItem>(`${projectBase(companyId, projectId)}/documents/${jobId}/items`, input),
+  updateItem: (
+    companyId: string,
+    projectId: string,
+    jobId: string,
+    itemId: string,
+    input: Partial<DocumentItem>,
+  ) => api.patch<DocumentItem>(`${projectBase(companyId, projectId)}/documents/${jobId}/items/${itemId}`, input),
+  source: (companyId: string, projectId: string, jobId: string) =>
+    api.blob(`${projectBase(companyId, projectId)}/documents/${jobId}/source`),
+  excel: (companyId: string, projectId: string, jobId: string) =>
+    api.blob(`${projectBase(companyId, projectId)}/documents/${jobId}/excel`),
+};
+
+export interface InventoryInput {
+  code: string;
+  name: string;
+  item_type: InventoryItem['item_type'];
+  unit: string;
+  serial_number?: string | null;
+  quantity: number;
+}
+
+export const inventoryApi = {
+  list: (companyId: string, signal?: AbortSignal) =>
+    api.get<InventoryItem[]>(`${companyBase(companyId)}/inventory`, undefined, signal),
+  create: (companyId: string, input: InventoryInput) =>
+    api.post<InventoryItem>(`${companyBase(companyId)}/inventory`, input),
+  move: (companyId: string, input: { item_id: string; to_project_id?: string | null; quantity: number; notes?: string }) =>
+    api.post<InventoryMovement>(`${companyBase(companyId)}/inventory/movements`, input),
+};
+
+export const membersApi = {
+  list: (companyId: string, signal?: AbortSignal) =>
+    api.get<CompanyMember[]>(`${companyBase(companyId)}/members`, undefined, signal),
+  create: (companyId: string, input: { email: string; full_name?: string; role: Role }) =>
+    api.post<CompanyMember>(`${companyBase(companyId)}/members`, input),
+  update: (companyId: string, membershipId: string, input: { role?: Role; status?: string }) =>
+    api.patch<CompanyMember>(`${companyBase(companyId)}/members/${membershipId}`, input),
+};
+
+export const reportsApi = {
+  overview: (companyId: string, signal?: AbortSignal) =>
+    api.get<ReportOverview>(`${companyBase(companyId)}/reports/overview`, undefined, signal),
+};
+
+export const settingsApi = {
+  get: (companyId: string, signal?: AbortSignal) =>
+    api.get<CompanySettings>(`${companyBase(companyId)}/settings`, undefined, signal),
+  update: (companyId: string, input: { name: string }) =>
+    api.patch<CompanySettings>(`${companyBase(companyId)}/settings`, input),
+};
+
+export function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
