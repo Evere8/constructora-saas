@@ -18,3 +18,5 @@ def test_evidence_storage_defaults_are_safe() -> None:
     settings = Settings(mysql_password="test")
     assert str(settings.upload_root) == "/data/uploads"
     assert settings.evidence_max_bytes == 10 * 1024 * 1024
+    assert settings.document_max_bytes == 50 * 1024 * 1024
+    assert settings.ocr_max_pdf_pages == 25

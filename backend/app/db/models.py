@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     JSON,
@@ -11,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -223,6 +225,181 @@ class ChecklistEvidence(UUIDPrimaryKeyMixin, Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
     )
+
+
+class InventoryItem(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "inventory_items"
+    __table_args__ = (
+        UniqueConstraint("company_id", "code", name="uq_inventory_company_code"),
+        Index("ix_inventory_company_project", "company_id", "current_project_id"),
+    )
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    code: Mapped[str] = mapped_column(String(80), nullable=False)
+    name: Mapped[str] = mapped_column(String(180), nullable=False)
+    item_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    unit: Mapped[str] = mapped_column(String(30), nullable=False, default="unit")
+    serial_number: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    status: Mapped[str] = mapped_column(String(25), nullable=False, default="available")
+    current_project_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True
+    )
+    quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+
+class InventoryMovement(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "inventory_movements"
+    __table_args__ = (
+        Index("ix_movements_company_date", "company_id", "moved_at"),
+        Index("ix_movements_item_date", "item_id", "moved_at"),
+    )
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    item_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("inventory_items.id", ondelete="RESTRICT"), nullable=False
+    )
+    from_project_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True
+    )
+    to_project_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True
+    )
+    quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False)
+    condition_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    moved_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id"), nullable=False
+    )
+    moved_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+
+
+class PlanDocument(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "plan_documents"
+    __table_args__ = (Index("ix_plans_company_project", "company_id", "project_id"),)
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    level_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("project_levels.id", ondelete="SET NULL"), nullable=True
+    )
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    created_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+
+class PlanVersion(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "plan_versions"
+    __table_args__ = (
+        UniqueConstraint("document_id", "version_number", name="uq_plan_version_number"),
+    )
+
+    document_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("plan_documents.id", ondelete="CASCADE"), nullable=False
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+
+class Annotation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "annotations"
+    __table_args__ = (Index("ix_annotations_plan_page", "plan_version_id", "page_number"),)
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    plan_version_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("plan_versions.id", ondelete="CASCADE"), nullable=False
+    )
+    page_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    annotation_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    geometry_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    style_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    created_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id"), nullable=False
+    )
+
+
+class ElongationJob(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "elongation_jobs"
+    __table_args__ = (
+        Index("ix_elongation_company_project_created", "company_id", "project_id", "created_at"),
+    )
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    plan_version_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("plan_versions.id", ondelete="SET NULL"), nullable=True
+    )
+    title: Mapped[str] = mapped_column(String(220), nullable=False, default="Documento técnico")
+    source_kind: Mapped[str] = mapped_column(String(20), nullable=False, default="document")
+    source_storage_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    mime_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    status: Mapped[str] = mapped_column(String(25), nullable=False, default="uploaded")
+    tolerance_percent: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), nullable=False, default=Decimal("7.00")
+    )
+    created_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id"), nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+
+class ElongationItem(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "elongation_items"
+    __table_args__ = (UniqueConstraint("job_id", "label", name="uq_elongation_job_label"),)
+
+    job_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("elongation_jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    label: Mapped[str] = mapped_column(String(50), nullable=False)
+    classification: Mapped[str] = mapped_column(String(20), nullable=False)
+    length_m: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
+    strand_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    calculated_elongation: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
+    measured_elongation: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
+    confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+    review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    source_location_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class ActivityLog(UUIDPrimaryKeyMixin, Base):

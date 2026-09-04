@@ -17,13 +17,8 @@ from app.api.schemas.platform import (
     PlanPatch,
     PlanResponse,
 )
-from app.core.config import get_settings
 from app.db.models import ActivityLog, AppUser, Company, CompanyMembership, Plan
-from app.services.supabase_admin import (
-    SupabaseAdminClient,
-    SupabaseAdminError,
-    SupabaseAdminUnavailable,
-)
+from app.services.user_provisioning import resolve_or_invite_user
 
 router = APIRouter()
 
@@ -54,58 +49,6 @@ async def require_plan(db: DbSession, plan_id: str | None) -> None:
         )
 
 
-async def resolve_or_invite_user(
-    db: DbSession,
-    email: str,
-    full_name: str | None,
-) -> tuple[AppUser, bool]:
-    result = await db.execute(
-        select(AppUser).where(func.lower(AppUser.email) == email.lower()).limit(1)
-    )
-    user = result.scalar_one_or_none()
-    if user is not None:
-        if user.is_platform_admin:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Un administrador de plataforma no puede ser miembro de una constructora",
-            )
-        if user.status != "active":
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="El usuario existe, pero su cuenta no está activa",
-            )
-        if full_name and not user.full_name:
-            user.full_name = full_name
-        return user, False
-
-    try:
-        auth_user = await SupabaseAdminClient(get_settings()).find_or_invite_user(
-            email,
-            full_name,
-        )
-    except SupabaseAdminUnavailable as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
-    except SupabaseAdminError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
-        ) from exc
-
-    user = AppUser(
-        supabase_user_id=auth_user.id,
-        email=auth_user.email,
-        full_name=full_name,
-        status="active",
-        is_platform_admin=False,
-    )
-    db.add(user)
-    await flush_or_conflict(db, "No fue posible registrar el usuario invitado")
-    return user, auth_user.invitation_sent
-
-
 def add_activity(
     db: DbSession,
     actor_id: str,
@@ -134,9 +77,7 @@ async def list_plans(_: CurrentPlatformAdmin, db: DbSession) -> list[Plan]:
 
 
 @router.post("/plans", response_model=PlanResponse, status_code=status.HTTP_201_CREATED)
-async def create_plan(
-    payload: PlanCreate, admin: CurrentPlatformAdmin, db: DbSession
-) -> Plan:
+async def create_plan(payload: PlanCreate, admin: CurrentPlatformAdmin, db: DbSession) -> Plan:
     plan = Plan(**payload.model_dump())
     db.add(plan)
     await flush_or_conflict(db, "Ya existe un plan con ese código")
@@ -280,9 +221,7 @@ async def onboard_company(
 
 
 @router.get("/companies/{company_id}", response_model=CompanyResponse)
-async def get_company(
-    company_id: str, _: CurrentPlatformAdmin, db: DbSession
-) -> Company:
+async def get_company(company_id: str, _: CurrentPlatformAdmin, db: DbSession) -> Company:
     company = await db.get(Company, company_id)
     if company is None:
         raise HTTPException(
@@ -322,9 +261,7 @@ async def update_company(
     return company
 
 
-@router.get(
-    "/companies/{company_id}/memberships", response_model=list[MembershipResponse]
-)
+@router.get("/companies/{company_id}/memberships", response_model=list[MembershipResponse])
 async def list_memberships(
     company_id: str, _: CurrentPlatformAdmin, db: DbSession
 ) -> list[MembershipResponse]:
