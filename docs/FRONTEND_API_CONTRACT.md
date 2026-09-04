@@ -58,10 +58,15 @@ Tipos de tarea: `work`, `transport`. Estados: `pending`, `in_progress`, `review`
 | GET, POST | `/v1/companies/{company_id}/projects/{project_id}/checklist` | Lista o crea controles |
 | PATCH | `/v1/companies/{company_id}/projects/{project_id}/checklist/{item_id}` | Modifica un control |
 | GET | `/v1/companies/{company_id}/projects/{project_id}/checklist/progress` | Resumen y porcentaje |
+| GET, POST | `/v1/companies/{company_id}/projects/{project_id}/checklist/{item_id}/evidence` | Lista o agrega foto, PDF u observación |
+| GET | `/v1/companies/{company_id}/projects/{project_id}/checklist/{item_id}/evidence/{evidence_id}/file` | Descarga autenticada |
 
-Filtros de checklist: `status`, `process_stage`, `assigned_user_id`, `limit`,
+Cada control nuevo se crea desde una tarea y envía su `task_id`. Los controles
+anteriores sin tarea siguen siendo visibles para poder reasignarlos. Filtros de
+checklist: `task_id`, `status`, `process_stage`, `assigned_user_id`, `limit`,
 `offset`. Estados: `pending`, `in_progress`, `blocked`, `completed`,
-`not_applicable`.
+`not_applicable`. La evidencia usa `multipart/form-data`, admite JPG, PNG, WEBP
+o PDF y tiene un máximo de 10 MB por archivo.
 
 ## Roles
 
@@ -91,5 +96,5 @@ cuando sea segura. Después de una mutación, invalidar las consultas relacionad
 ## Funciones todavía sin API
 
 No inventar endpoints ni usar datos simulados en producción para inventario,
-planos, archivos, personal, elongaciones, reportes o notificaciones. Mostrar estas
+planos, documentación/OCR, herramientas, personal, reportes o notificaciones. Mostrar estas
 secciones como `Próximamente` hasta que el contrato del backend se publique.
