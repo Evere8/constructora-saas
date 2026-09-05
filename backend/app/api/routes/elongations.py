@@ -269,6 +269,18 @@ async def response_for_job(db: DbSession, job: ElongationJob) -> ElongationJobV2
     return _job_response(job, items, measurements, files, zones)
 
 
+def _resume_queued_theory_job(background_tasks: BackgroundTasks, job: ElongationJob) -> None:
+    """Recover a persisted job when an earlier HTTP response was interrupted.
+
+    FastAPI runs BackgroundTasks only after a successful response.  If a job
+    was committed but that first response failed, the idempotent re-submit must
+    resume its queued theory work instead of leaving it permanently queued.
+    """
+
+    if job.workflow_status == "queued_theory":
+        background_tasks.add_task(process_theory_job, job.id)
+
+
 async def _next_file_version(db: DbSession, job_id: str, kind: str) -> int:
     latest = await db.scalar(
         select(ElongationJobFile.version_number)
@@ -438,6 +450,7 @@ async def create_elongation_job(
         if existing is not None:
             for storage_key in uploaded_keys:
                 await remove_stored_file(storage_key)
+            _resume_queued_theory_job(background_tasks, existing)
             return await response_for_job(db, existing)
         job = ElongationJob(
             company_id=access.company_id,
