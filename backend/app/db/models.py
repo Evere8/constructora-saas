@@ -371,6 +371,12 @@ class ElongationJob(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "elongation_jobs"
     __table_args__ = (
         Index("ix_elongation_company_project_created", "company_id", "project_id", "created_at"),
+        UniqueConstraint(
+            "company_id",
+            "project_id",
+            "idempotency_key",
+            name="uq_elongation_job_source_template_sha",
+        ),
     )
 
     company_id: Mapped[str] = mapped_column(
@@ -382,6 +388,12 @@ class ElongationJob(UUIDPrimaryKeyMixin, Base):
     plan_version_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("plan_versions.id", ondelete="SET NULL"), nullable=True
     )
+    level_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("project_levels.id", ondelete="SET NULL"), nullable=True
+    )
+    responsible_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="SET NULL"), nullable=True
+    )
     title: Mapped[str] = mapped_column(String(220), nullable=False, default="Documento técnico")
     source_kind: Mapped[str] = mapped_column(String(20), nullable=False, default="document")
     source_storage_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -389,14 +401,31 @@ class ElongationJob(UUIDPrimaryKeyMixin, Base):
     mime_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
     size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(130), nullable=True)
     extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
     status: Mapped[str] = mapped_column(String(25), nullable=False, default="uploaded")
+    workflow_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="draft", server_default="draft"
+    )
+    template_mapping_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    processing_summary_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     tolerance_percent: Mapped[Decimal] = mapped_column(
         Numeric(5, 2), nullable=False, default=Decimal("7.00")
     )
     created_by_user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("app_users.id"), nullable=False
+    )
+    theory_approved_by_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="SET NULL"), nullable=True
+    )
+    theory_approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    approved_by_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="SET NULL"), nullable=True
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    version_number: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -412,14 +441,149 @@ class ElongationItem(UUIDPrimaryKeyMixin, Base):
         String(36), ForeignKey("elongation_jobs.id", ondelete="CASCADE"), nullable=False
     )
     label: Mapped[str] = mapped_column(String(50), nullable=False)
-    classification: Mapped[str] = mapped_column(String(20), nullable=False)
+    label_number: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    raw_label: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    classification: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="unknown", server_default="unknown"
+    )
     length_m: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
     strand_count: Mapped[int] = mapped_column(Integer, nullable=False)
     calculated_elongation: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
     measured_elongation: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
     confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
     review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    theory_review_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending", server_default="pending"
+    )
+    field_confidence_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    reviewed_by_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    source_file_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("elongation_job_files.id", ondelete="SET NULL"), nullable=True
+    )
+    source_page: Mapped[int | None] = mapped_column(Integer, nullable=True)
     source_location_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class ElongationJobFile(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "elongation_job_files"
+    __table_args__ = (
+        UniqueConstraint(
+            "job_id", "kind", "version_number", name="uq_elongation_file_job_kind_ver"
+        ),
+        Index("ix_elongation_files_job_kind", "job_id", "kind"),
+    )
+
+    job_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("elongation_jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    storage_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    processing_status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="uploaded", server_default="uploaded"
+    )
+    processing_summary_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    uploaded_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+
+class ElongationClassificationZone(UUIDPrimaryKeyMixin, Base):
+    """A reviewer-defined normalized region used to apply a technical class in bulk."""
+
+    __tablename__ = "elongation_classification_zones"
+    __table_args__ = (Index("ix_elongation_zones_job", "job_id", "created_at"),)
+
+    job_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("elongation_jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    classification: Mapped[str] = mapped_column(String(20), nullable=False)
+    name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    geometry_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+
+class ElongationMeasurement(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "elongation_measurements"
+    __table_args__ = (
+        UniqueConstraint("item_id", "ordinal", name="uq_elongation_measurement_item_ordinal"),
+        Index("ix_elongation_measurements_job_item", "job_id", "item_id"),
+    )
+
+    job_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("elongation_jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    item_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("elongation_items.id", ondelete="CASCADE"), nullable=False
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    measured_elongation: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
+    raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+    match_method: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    review_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending", server_default="pending"
+    )
+    override_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_file_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("elongation_job_files.id", ondelete="SET NULL"), nullable=True
+    )
+    source_page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_location_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    reviewed_by_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+
+class ElongationExport(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "elongation_exports"
+    __table_args__ = (
+        UniqueConstraint(
+            "job_id", "kind", "version_number", name="uq_elongation_export_job_kind_ver"
+        ),
+        Index("ix_elongation_exports_job_kind", "job_id", "kind"),
+    )
+
+    job_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("elongation_jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    file_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("elongation_job_files.id", ondelete="RESTRICT"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    snapshot_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
 
 
 class Notification(UUIDPrimaryKeyMixin, TimestampMixin, Base):

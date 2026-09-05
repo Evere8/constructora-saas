@@ -6,6 +6,7 @@ from app.api.routes import (
     checklists,
     company_admin,
     documents,
+    elongations,
     health,
     inventory,
     operations,
@@ -37,6 +38,11 @@ api_router.include_router(
     documents.router,
     prefix="/v1/companies/{company_id}",
     tags=["documents"],
+)
+api_router.include_router(
+    elongations.router,
+    prefix="/v1/companies/{company_id}",
+    tags=["elongations"],
 )
 api_router.include_router(
     inventory.router,

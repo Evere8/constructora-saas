@@ -194,7 +194,7 @@ export interface DocumentItem {
   id: string;
   job_id: string;
   label: string;
-  classification: 'band' | 'distributed';
+  classification: 'band' | 'distributed' | 'unknown';
   length_m: string;
   strand_count: number;
   calculated_elongation: string;
@@ -219,6 +219,123 @@ export interface DocumentJob {
   created_at: string;
   item_count: number;
   items: DocumentItem[];
+}
+
+export type ElongationClassification = 'band' | 'distributed' | 'unknown';
+export type ElongationReviewStatus = 'pending' | 'approved' | 'rejected' | 'conflict';
+
+export interface ElongationMeasurement {
+  id: string;
+  job_id: string;
+  item_id: string;
+  ordinal: number;
+  measured_elongation: string | null;
+  raw_text: string | null;
+  confidence: string | null;
+  match_method: 'label_anchor' | 'spatial' | 'manual' | null;
+  review_status: ElongationReviewStatus;
+  override_reason: string | null;
+  source_file_id: string | null;
+  source_page: number | null;
+  source_location_json: Record<string, unknown> | null;
+  reviewed_by_user_id: string | null;
+  reviewed_at: string | null;
+  maximum_elongation: string | null;
+  minimum_elongation: string | null;
+  tolerance_status: 'within' | 'outside' | 'missing' | 'unresolved';
+}
+
+export interface ElongationItemV2 {
+  id: string;
+  job_id: string;
+  label: string;
+  label_number: number;
+  raw_label: string | null;
+  raw_text: string | null;
+  sort_order: number;
+  classification: ElongationClassification;
+  length_m: string;
+  strand_count: number;
+  calculated_elongation: string;
+  confidence: string | null;
+  theory_review_status: ElongationReviewStatus;
+  field_confidence_json: Record<string, unknown> | null;
+  source_file_id: string | null;
+  source_page: number | null;
+  source_location_json: Record<string, unknown> | null;
+  reviewed_by_user_id: string | null;
+  reviewed_at: string | null;
+  measurements: ElongationMeasurement[];
+}
+
+export interface ElongationJobFile {
+  id: string;
+  job_id: string;
+  kind: 'plan' | 'template' | 'measurement_scan' | 'theoretical_export' | 'final_export' | string;
+  version_number: number;
+  original_filename: string;
+  mime_type: string;
+  size_bytes: number;
+  sha256: string;
+  page_count: number | null;
+  processing_status: string;
+  processing_summary_json: Record<string, unknown> | null;
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface ElongationClassificationZone {
+  id: string;
+  job_id: string;
+  classification: Exclude<ElongationClassification, 'unknown'>;
+  name: string | null;
+  geometry_json: {
+    page?: number;
+    x: string | number;
+    y: string | number;
+    width: string | number;
+    height: string | number;
+  };
+  created_by_user_id: string;
+  created_at: string;
+}
+
+export interface ElongationProgress {
+  groups_total: number;
+  groups_pending: number;
+  measurements_expected: number;
+  measurements_detected: number;
+  measurements_pending: number;
+  outside_tolerance: number;
+  unresolved_conflicts: number;
+  can_approve_theory: boolean;
+  can_approve_final: boolean;
+  approval_blockers: string[];
+}
+
+export interface ElongationJobV2 {
+  id: string;
+  company_id: string;
+  project_id: string;
+  level_id: string | null;
+  responsible_user_id: string | null;
+  plan_version_id: string | null;
+  title: string;
+  workflow_status: string;
+  tolerance_percent: string;
+  template_mapping_json: Record<string, unknown> | null;
+  processing_summary_json: Record<string, unknown> | null;
+  error_message: string | null;
+  theory_approved_by_user_id: string | null;
+  theory_approved_at: string | null;
+  approved_by_user_id: string | null;
+  approved_at: string | null;
+  version_number: number;
+  created_at: string;
+  progress: ElongationProgress;
+  files: ElongationJobFile[];
+  zones: ElongationClassificationZone[];
+  items: ElongationItemV2[];
 }
 
 export interface InventoryItem {

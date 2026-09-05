@@ -1,8 +1,8 @@
 from decimal import Decimal
 from io import BytesIO
-from zipfile import ZipFile
 
 import pytest
+from openpyxl import load_workbook
 from pydantic import ValidationError
 
 from app.api.schemas.modules import CompanyMemberCreate, InventoryItemCreate
@@ -27,15 +27,16 @@ def test_openapi_exposes_operational_modules() -> None:
         assert path in paths
 
 
-def test_parser_extracts_candidate_rows_and_ignores_noise() -> None:
+def test_legacy_parser_delegates_to_semantic_candidates_and_ignores_noise() -> None:
     rows = parse_elongation_rows(
-        "Encabezado sin números\nCable A banda 12,5 7 85,2\nCable B 20.000 9 101.5\n"
+        "Encabezado 20/02/2026 3 2 1\n"
+        "Tendon 8; S=2; L=11,880; Elong=7,9\n"
+        "Cable A banda 12,5 7 85,2\n"
     )
-    assert len(rows) == 2
-    assert rows[0]["label"] == "Cable A banda"
-    assert rows[0]["classification"] == "band"
-    assert rows[0]["length_m"] == Decimal("12.5")
-    assert rows[1]["classification"] == "distributed"
+    assert len(rows) == 1
+    assert rows[0]["label"] == "T8"
+    assert rows[0]["classification"] == "unknown"
+    assert rows[0]["length_m"] == Decimal("11.880")
 
 
 def test_xlsx_contains_valid_workbook_and_rows() -> None:
@@ -52,11 +53,10 @@ def test_xlsx_contains_valid_workbook_and_rows() -> None:
             }
         ]
     )
-    with ZipFile(BytesIO(content)) as workbook:
-        assert "xl/worksheets/sheet1.xml" in workbook.namelist()
-        sheet = workbook.read("xl/worksheets/sheet1.xml").decode()
-        assert "Cable A" in sheet
-        assert "Elongación calculada" in sheet
+    workbook = load_workbook(BytesIO(content), data_only=False)
+    sheet = workbook["Elongaciones"]
+    assert sheet["A2"].value == "Cable A"
+    assert sheet["F2"].value == "=E2+(E2*0.07)"
 
 
 @pytest.mark.parametrize(
