@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -24,7 +24,7 @@ const schema = z
 type FormValues = z.infer<typeof schema>;
 
 export function ResetPasswordPage() {
-  const { updatePassword } = useAuth();
+  const { status, updatePassword } = useAuth();
   const navigate = useNavigate();
   const [done, setDone] = useState(false);
 
@@ -44,6 +44,31 @@ export function ResetPasswordPage() {
       toast.error(err instanceof Error ? err.message : 'No se pudo actualizar la contrasena.');
     }
   });
+
+  if (status === 'loading') {
+    return (
+      <AuthShell title="Verificando enlace" subtitle="Estamos validando tu invitacion.">
+        <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+          <Loader2 className="h-5 w-5 animate-spin" /> Preparando tu cuenta...
+        </div>
+      </AuthShell>
+    );
+  }
+
+  if (status === 'unauthenticated') {
+    return (
+      <AuthShell title="Enlace no valido" subtitle="La invitacion vencio o ya fue utilizada.">
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Solicita un nuevo enlace para establecer tu contrasena de forma segura.
+          </p>
+          <Button asChild size="lg" className="w-full">
+            <Link to="/recuperar">Solicitar nuevo enlace</Link>
+          </Button>
+        </div>
+      </AuthShell>
+    );
+  }
 
   return (
     <AuthShell

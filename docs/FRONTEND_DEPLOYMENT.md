@@ -170,3 +170,21 @@ Luego validar en el navegador:
 3. Consulta de `/api/v1/auth/me`.
 4. Selector de empresa.
 5. Cierre de sesión.
+
+## 11. Migración y almacenamiento de evidencias
+
+La versión que incorpora **Obra → Tarea → Checklist → Evidencia** requiere ejecutar
+la migración después de actualizar el código y antes de probar la función:
+
+```bash
+cd /opt/constructora
+sudo docker compose \
+  -f compose.yaml \
+  -f app/deploy/compose.backend.yaml \
+  exec api alembic upgrade head
+```
+
+Las fotos y PDF se guardan en el volumen Docker `app_uploads`, montado en
+`/data/uploads`. MySQL conserva los metadatos y el SHA-256, pero el contenido del
+archivo no forma parte del respaldo SQL. Antes de usar evidencias con datos reales,
+incorporar ese volumen al procedimiento de respaldo y restauración.

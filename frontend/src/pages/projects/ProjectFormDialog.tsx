@@ -36,7 +36,7 @@ const schema = z.object({
   status: z.enum(['active', 'inactive', 'completed', 'archived']),
   address: z.string().optional(),
   start_date: z.string().optional(),
-  end_date: z.string().optional(),
+  planned_end_date: z.string().optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -72,7 +72,7 @@ export function ProjectFormDialog({
       status: (project?.status ?? 'active') as ProjectStatus,
       address: project?.address ?? '',
       start_date: project?.start_date?.slice(0, 10) ?? '',
-      end_date: project?.end_date?.slice(0, 10) ?? '',
+      planned_end_date: project?.planned_end_date?.slice(0, 10) ?? '',
     },
   });
 
@@ -85,7 +85,7 @@ export function ProjectFormDialog({
         status: values.status,
         address: values.address || null,
         start_date: values.start_date || null,
-        end_date: values.end_date || null,
+        planned_end_date: values.planned_end_date || null,
       };
       return isEdit && project
         ? projectsApi.update(companyId, project.id, payload)
@@ -156,8 +156,8 @@ export function ProjectFormDialog({
               <Input id="start_date" type="date" {...register('start_date')} />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="end_date">Fecha de fin</Label>
-              <Input id="end_date" type="date" {...register('end_date')} />
+              <Label htmlFor="planned_end_date">Fecha prevista de fin</Label>
+              <Input id="planned_end_date" type="date" {...register('planned_end_date')} />
             </div>
           </div>
           <div className="space-y-2">

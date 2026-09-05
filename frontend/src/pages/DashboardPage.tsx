@@ -3,10 +3,10 @@ import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   Building2,
-  ListChecks,
-  QrCode,
-  PackagePlus,
-  ClipboardCheck,
+  FileSpreadsheet,
+  Map,
+  Users,
+  Wrench,
   ArrowRight,
   CalendarClock,
 } from 'lucide-react';
@@ -22,6 +22,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 const BANNER = 'https://images.pexels.com/photos/18078304/pexels-photo-18078304.jpeg?auto=compress&cs=tinysrgb&w=1400';
+const QUICK_ACTIONS = [
+  { label: 'Obras y tareas', icon: Building2, to: '/obras', soon: false },
+  { label: 'Planos por obra', icon: Map, to: '#', soon: true },
+  { label: 'PDF a Excel', icon: FileSpreadsheet, to: '#', soon: true },
+  { label: 'Herramientas', icon: Wrench, to: '/inventario', soon: true },
+  { label: 'Personal', icon: Users, to: '/personal', soon: true },
+] as const;
 
 function StatCard({ label, value }: { label: string; value: number }) {
   return (
@@ -53,14 +60,6 @@ export function DashboardPage() {
   };
   const recent = projects.slice(0, 5);
   const greetingName = me?.full_name || me?.name || me?.email || 'de nuevo';
-
-  const quickActions = [
-    { label: 'Mis tareas', icon: ListChecks, to: '/tareas', soon: false },
-    { label: 'Abrir obra', icon: Building2, to: '/obras', soon: false },
-    { label: 'Cierre diario', icon: ClipboardCheck, to: '/checklist', soon: false },
-    { label: 'Escanear QR', icon: QrCode, to: '#', soon: true },
-    { label: 'Registrar movimiento', icon: PackagePlus, to: '#', soon: true },
-  ];
 
   if (!activeCompanyId) {
     return (
@@ -97,11 +96,12 @@ export function DashboardPage() {
           Accesos rapidos
         </h2>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          {quickActions.map((action) =>
+          {QUICK_ACTIONS.map((action) =>
             action.soon ? (
               <button
+                type="button"
                 key={action.label}
-                onClick={() => toast.info('Proximamente: esta accion aun no tiene API disponible.')}
+                onClick={() => toast.info('Proximamente: este modulo se habilitara en la siguiente fase.')}
                 className="flex flex-col items-center gap-2 rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground transition-colors hover:bg-muted"
               >
                 <action.icon className="h-6 w-6" />

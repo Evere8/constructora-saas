@@ -30,9 +30,22 @@ const ROLE_CAPS: Record<Role, Capability[]> = {
   viewer: [],
 };
 
+const ASSIGNMENT_SCOPED_ROLES = new Set<Role>(['worker', 'transport']);
+
 export function can(role: Role | null | undefined, capability: Capability): boolean {
   if (!role) return false;
   return ROLE_CAPS[role]?.includes(capability) ?? false;
+}
+
+export function canForAssignment(
+  role: Role | null | undefined,
+  capability: Capability,
+  assignedUserId: string | null | undefined,
+  currentUserId: string | null | undefined,
+): boolean {
+  if (!can(role, capability)) return false;
+  if (!role || !ASSIGNMENT_SCOPED_ROLES.has(role)) return true;
+  return Boolean(currentUserId && assignedUserId === currentUserId);
 }
 
 export const ROLE_LABELS: Record<Role, string> = {

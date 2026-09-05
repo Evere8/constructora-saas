@@ -87,6 +87,19 @@ describe('apiRequest', () => {
     });
   });
 
+  it('envia FormData sin fijar Content-Type para conservar el boundary', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+    const form = new FormData();
+    form.set('note', 'Hormigon verificado');
+
+    await apiRequest('POST', '/v1/evidence', { body: form });
+
+    const options = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(options.body).toBe(form);
+    expect(options.headers).not.toHaveProperty('Content-Type');
+  });
+
   it('convierte errores de red en ApiError con status 0', async () => {
     const fetchMock = vi.fn().mockRejectedValue(new TypeError('network down'));
     vi.stubGlobal('fetch', fetchMock);

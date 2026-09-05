@@ -13,6 +13,7 @@ ChecklistStatus = Literal[
 
 
 class ChecklistCreate(BaseModel):
+    task_id: str | None = Field(default=None, min_length=36, max_length=36)
     title: str = Field(min_length=2, max_length=220)
     description: str | None = Field(default=None, max_length=5000)
     process_stage: str | None = Field(default=None, min_length=1, max_length=80)
@@ -22,6 +23,7 @@ class ChecklistCreate(BaseModel):
 
 
 class ChecklistPatch(BaseModel):
+    task_id: str | None = Field(default=None, min_length=36, max_length=36)
     title: str | None = Field(default=None, min_length=2, max_length=220)
     description: str | None = Field(default=None, max_length=5000)
     process_stage: str | None = Field(default=None, min_length=1, max_length=80)
@@ -42,6 +44,7 @@ class ChecklistResponse(BaseModel):
     id: str
     company_id: str
     project_id: str
+    task_id: str | None
     plan_version_id: str | None
     annotation_id: str | None
     title: str
@@ -69,3 +72,20 @@ class ChecklistProgressResponse(BaseModel):
     completed: int
     not_applicable: int
     completion_percent: float
+
+
+class ChecklistEvidenceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    company_id: str
+    project_id: str
+    task_id: str
+    checklist_item_id: str
+    evidence_type: str
+    note: str | None
+    original_filename: str | None
+    mime_type: str | None
+    size_bytes: int | None
+    uploaded_by_user_id: str
+    created_at: datetime

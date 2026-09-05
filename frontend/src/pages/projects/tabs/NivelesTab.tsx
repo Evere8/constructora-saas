@@ -20,7 +20,7 @@ export function NivelesTab({ companyId, projectId }: { companyId: string; projec
     queryFn: ({ signal }) => projectsApi.listLevels(companyId, projectId, signal),
   });
 
-  const levels = [...asItems(query.data)].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const levels = [...asItems(query.data)].sort((a, b) => a.sort_order - b.sort_order);
 
   const openCreate = () => {
     setEditing(undefined);
@@ -68,13 +68,10 @@ export function NivelesTab({ companyId, projectId }: { companyId: string; projec
               <CardContent className="flex items-center justify-between p-4">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 font-semibold text-primary">
-                    {level.order ?? '-'}
+                    {level.sort_order}
                   </div>
                   <div>
                     <p className="font-medium">{level.name}</p>
-                    {level.description ? (
-                      <p className="text-xs text-muted-foreground">{level.description}</p>
-                    ) : null}
                   </div>
                 </div>
                 {canEdit ? (

@@ -89,6 +89,25 @@ async def require_project(db: DbSession, company_id: str, project_id: str) -> Pr
     return project
 
 
+async def require_task(
+    db: DbSession,
+    company_id: str,
+    project_id: str,
+    task_id: str,
+) -> Task:
+    result = await db.execute(
+        select(Task).where(
+            Task.id == task_id,
+            Task.company_id == company_id,
+            Task.project_id == project_id,
+        )
+    )
+    task = result.scalar_one_or_none()
+    if task is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada")
+    return task
+
+
 async def require_level(db: DbSession, project_id: str, level_id: str | None) -> None:
     if level_id is None:
         return
@@ -171,9 +190,7 @@ async def create_project(
 
 
 @router.get("/projects/{project_id}", response_model=ProjectResponse)
-async def get_project(
-    project_id: str, access: CurrentCompanyAccess, db: DbSession
-) -> Project:
+async def get_project(project_id: str, access: CurrentCompanyAccess, db: DbSession) -> Project:
     return await require_project(db, access.company_id, project_id)
 
 
@@ -344,16 +361,7 @@ async def update_task(
     db: DbSession,
 ) -> Task:
     await require_project(db, access.company_id, project_id)
-    result = await db.execute(
-        select(Task).where(
-            Task.id == task_id,
-            Task.company_id == access.company_id,
-            Task.project_id == project_id,
-        )
-    )
-    task = result.scalar_one_or_none()
-    if task is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada")
+    task = await require_task(db, access.company_id, project_id, task_id)
 
     changes = payload.model_dump(exclude_unset=True)
     if access.role not in WORK_EDITOR_ROLES:

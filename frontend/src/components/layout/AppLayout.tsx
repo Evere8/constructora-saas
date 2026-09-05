@@ -4,8 +4,7 @@ import {
   MoreHorizontal,
   Home,
   Building2,
-  ListChecks,
-  ClipboardCheck,
+  UserCircle,
 } from 'lucide-react';
 import { roleLabel } from '@/auth/permissions';
 import { useCompany } from '@/context/CompanyProvider';
@@ -77,14 +76,13 @@ function Sidebar() {
 const MOBILE_NAV = [
   { label: 'Inicio', to: '/', icon: Home, end: true },
   { label: 'Obras', to: '/obras', icon: Building2 },
-  { label: 'Mis tareas', to: '/tareas', icon: ListChecks },
-  { label: 'Checklist', to: '/checklist', icon: ClipboardCheck },
+  { label: 'Perfil', to: '/perfil', icon: UserCircle },
   { label: 'Mas', to: '/mas', icon: MoreHorizontal },
 ];
 
 function BottomNav() {
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t bg-card lg:hidden">
+    <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t bg-card lg:hidden">
       {MOBILE_NAV.map((item) => (
         <NavLink
           key={item.to}

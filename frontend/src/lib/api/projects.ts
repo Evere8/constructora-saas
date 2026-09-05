@@ -26,7 +26,8 @@ export interface ProjectInput {
   status?: ProjectStatus;
   address?: string | null;
   start_date?: string | null;
-  end_date?: string | null;
+  planned_end_date?: string | null;
+  actual_end_date?: string | null;
 }
 
 export interface TaskFilters {
@@ -50,9 +51,9 @@ export const projectsApi = {
 
   listLevels: (companyId: string, projectId: string, signal?: AbortSignal) =>
     api.get<Paginated<Level> | Level[]>(`${base(companyId)}/${projectId}/levels`, undefined, signal),
-  createLevel: (companyId: string, projectId: string, input: { name: string; order?: number; description?: string | null }) =>
+  createLevel: (companyId: string, projectId: string, input: { name: string; sort_order?: number }) =>
     api.post<Level>(`${base(companyId)}/${projectId}/levels`, input),
-  updateLevel: (companyId: string, projectId: string, levelId: string, input: Partial<{ name: string; order: number; description: string | null }>) =>
+  updateLevel: (companyId: string, projectId: string, levelId: string, input: Partial<{ name: string; sort_order: number }>) =>
     api.patch<Level>(`${base(companyId)}/${projectId}/levels/${levelId}`, input),
 
   listTasks: (companyId: string, projectId: string, filters: TaskFilters = {}, signal?: AbortSignal) =>
@@ -71,5 +72,5 @@ export interface TaskInput {
   priority?: TaskPriority;
   level_id?: string | null;
   assigned_user_id?: string | null;
-  due_date?: string | null;
+  due_at?: string | null;
 }

@@ -11,7 +11,6 @@ import { ApiError } from '@/lib/http';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog,
   DialogContent,
@@ -22,8 +21,7 @@ import {
 
 const schema = z.object({
   name: z.string().min(1, 'El nombre es obligatorio'),
-  order: z.coerce.number().int().min(0).optional(),
-  description: z.string().optional(),
+  sort_order: z.coerce.number().int().min(0).optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -53,8 +51,7 @@ export function LevelFormDialog({
     resolver: zodResolver(schema),
     defaultValues: {
       name: level?.name ?? '',
-      order: level?.order ?? undefined,
-      description: level?.description ?? '',
+      sort_order: level?.sort_order ?? undefined,
     },
   });
 
@@ -62,8 +59,7 @@ export function LevelFormDialog({
     mutationFn: (values: FormValues) => {
       const payload = {
         name: values.name,
-        order: values.order,
-        description: values.description || null,
+        sort_order: values.sort_order,
       };
       return isEdit && level
         ? projectsApi.updateLevel(companyId, projectId, level.id, payload)
@@ -97,11 +93,7 @@ export function LevelFormDialog({
           </div>
           <div className="space-y-2">
             <Label htmlFor="level-order">Orden</Label>
-            <Input id="level-order" type="number" min={0} {...register('order')} />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="level-desc">Descripcion</Label>
-            <Textarea id="level-desc" rows={2} {...register('description')} />
+            <Input id="level-order" type="number" min={0} {...register('sort_order')} />
           </div>
           {formError ? (
             <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">

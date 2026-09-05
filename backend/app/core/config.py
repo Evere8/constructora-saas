@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -22,6 +23,8 @@ class Settings(BaseSettings):
     supabase_invite_redirect_url: str | None = None
     supabase_audience: str = "authenticated"
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
+    upload_root: Path = Path("/data/uploads")
+    evidence_max_bytes: int = 10 * 1024 * 1024
 
     @property
     def database_url(self) -> URL:

@@ -53,8 +53,12 @@ async function doFetch(
   if (token) headers.Authorization = `Bearer ${token}`;
   let payload: BodyInit | undefined;
   if (body !== undefined) {
-    headers['Content-Type'] = 'application/json';
-    payload = JSON.stringify(body);
+    if (body instanceof FormData) {
+      payload = body;
+    } else {
+      headers['Content-Type'] = 'application/json';
+      payload = JSON.stringify(body);
+    }
   }
   return fetch(url, { method, headers, body: payload, signal });
 }
@@ -148,10 +152,35 @@ export async function apiRequest<T>(
   return parseResponse<T>(response);
 }
 
+async function apiBlobRequest(path: string): Promise<Blob> {
+  const url = buildUrl(path);
+  let token = await getAccessToken();
+  let response: Response;
+  try {
+    response = await doFetch('GET', url, token, undefined);
+  } catch (error) {
+    throw new ApiError(0, 'No se pudo descargar el archivo.', error);
+  }
+
+  if (response.status === 401) {
+    const { data, error } = await supabase.auth.refreshSession();
+    if (!error && data.session) {
+      token = data.session.access_token;
+      response = await doFetch('GET', url, token, undefined);
+    }
+  }
+  if (!response.ok) {
+    await parseResponse<never>(response);
+  }
+  return response.blob();
+}
+
 export const api = {
   get: <T>(path: string, params?: QueryParams, signal?: AbortSignal) =>
     apiRequest<T>('GET', path, { params, signal }),
   post: <T>(path: string, body?: unknown) => apiRequest<T>('POST', path, { body }),
+  upload: <T>(path: string, body: FormData) => apiRequest<T>('POST', path, { body }),
   patch: <T>(path: string, body?: unknown) => apiRequest<T>('PATCH', path, { body }),
   del: <T>(path: string) => apiRequest<T>('DELETE', path),
+  blob: (path: string) => apiBlobRequest(path),
 };

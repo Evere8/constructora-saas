@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { can } from '@/auth/permissions';
+import { can, canForAssignment } from '@/auth/permissions';
 
 describe('permisos por rol', () => {
   it('owner puede editar obras', () => {
@@ -16,6 +16,16 @@ describe('permisos por rol', () => {
     expect(can('worker', 'tasks.status')).toBe(true);
     expect(can('worker', 'tasks.edit')).toBe(false);
     expect(can('worker', 'projects.edit')).toBe(false);
+  });
+
+  it('worker solo cambia estados de elementos asignados a su usuario', () => {
+    expect(canForAssignment('worker', 'tasks.status', 'user-1', 'user-1')).toBe(true);
+    expect(canForAssignment('worker', 'tasks.status', 'user-2', 'user-1')).toBe(false);
+    expect(canForAssignment('worker', 'checklist.status', null, 'user-1')).toBe(false);
+  });
+
+  it('supervisor puede cambiar estados sin ser el asignado', () => {
+    expect(canForAssignment('supervisor', 'checklist.status', 'user-2', 'user-1')).toBe(true);
   });
 
   it('viewer no tiene capacidades de escritura', () => {

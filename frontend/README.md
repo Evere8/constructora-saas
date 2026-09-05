@@ -101,9 +101,8 @@ final** y los `403` se manejan de forma explícita.
 | `/restablecer` | Definir nueva contraseña (enlace de Supabase). |
 | `/` | Resumen (dashboard con métricas y accesos rápidos). |
 | `/obras` | Lista, búsqueda, filtros, alta y edición de obras. |
-| `/obras/:id` | Detalle de obra con pestañas Resumen, Niveles, Tareas y Checklist. |
-| `/tareas` | Selector de obra para gestionar tareas. |
-| `/checklist` | Selector de obra para gestionar checklist. |
+| `/obras/:id` | Detalle de obra con Resumen, Niveles, Tareas y Avance. Cada tarea contiene su checklist y evidencias. |
+| `/tareas`, `/checklist` | Compatibilidad: redirigen a Obras para conservar la jerarquía operativa. |
 | `/plataforma` | Panel de plataforma: empresas, planes y membresías (solo platform admin). |
 | `/perfil` | Perfil, estado de sesión y membresías. |
 | `/mas` | Menú adicional (móvil). |
@@ -128,14 +127,13 @@ Nginx no privilegiado enlazado únicamente a `127.0.0.1:8080`.
 Estos módulos **no tienen endpoint publicado** en el contrato actual, por lo que se
 muestran como `Próximamente` sin datos simulados:
 
-- Inventario, Planos, Archivos, Personal, Elongaciones, Reportes, Notificaciones.
-- Pestañas de obra deshabilitadas: Planos, Inventario, Personal, Archivos, Reportes,
-  Historial.
+- Planos por obra, Documentación/OCR, Herramientas, Personal, Reportes y Notificaciones.
+- Pestañas de obra deshabilitadas: Planos, Documentación e Historial.
 - Acciones rápidas sin API: **Escanear QR** y **Registrar movimiento**.
 
 Otras notas:
 
-- "Mis tareas" y "Checklist" a nivel global funcionan seleccionando una obra, ya que
-  el contrato expone estos recursos por proyecto.
+- Tareas y checklist ya no aparecen como módulos globales: se accede a ellos desde
+  una obra y los controles se crean dentro de la tarea correspondiente.
 - La asignación de responsables no ofrece selector de usuarios porque aún no existe un
   endpoint para listarlos.

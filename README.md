@@ -12,7 +12,8 @@ Backend inicial para el SaaS de constructoras. Está preparado para:
 - Panel de plataforma para administrar planes, constructoras y membresías.
 - Auditoría de operaciones administrativas.
 - Gestión operativa de obras, niveles y tareas con aislamiento multiempresa.
-- Checklist por obra con responsables, etapas, vencimientos y porcentaje de avance.
+- Checklist dentro de cada tarea, con responsables, etapas, vencimientos y porcentaje de avance.
+- Evidencias privadas de checklist mediante fotos, PDF y observaciones, aisladas por constructora.
 - CI automático para lint y pruebas del backend.
 - Respaldo diario cifrado de MySQL hacia Google Drive mediante rclone.
 - Contrato y encargo versionado para generar el frontend con Emergent.
@@ -84,6 +85,8 @@ La API queda enlazada solo a `127.0.0.1:8000`. Nginx es el único servicio públ
 - `GET/POST/PATCH /api/v1/companies/{company_id}/projects/{project_id}/tasks`: tareas.
 - `GET/POST/PATCH /api/v1/companies/{company_id}/projects/{project_id}/checklist`: controles.
 - `GET /api/v1/companies/{company_id}/projects/{project_id}/checklist/progress`: avance.
+- `GET/POST /api/v1/companies/{company_id}/projects/{project_id}/checklist/{item_id}/evidence`: evidencias.
+- `GET /api/v1/companies/{company_id}/projects/{project_id}/checklist/{item_id}/evidence/{evidence_id}/file`: descarga autenticada.
 
 Las rutas `/platform` requieren `is_platform_admin = 1`. La migración
 `0002_seed_plans` carga los planes Inicial, Profesional y Empresa.
@@ -98,6 +101,7 @@ que tengan asignadas.
 
 - No se publica `3306`.
 - El frontend nunca recibe la contraseña de MySQL ni la clave secreta de Supabase.
+- Las evidencias se guardan fuera del directorio público y se descargan solo por la API autenticada.
 - Cada consulta empresarial debe filtrar por `company_id` obtenido de la membresía.
 - El campo `sub` del JWT se vincula con `app_users.supabase_user_id`.
 - `user_metadata` no se usa para autorizar roles.
