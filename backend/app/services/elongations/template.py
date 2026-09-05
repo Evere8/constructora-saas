@@ -123,16 +123,46 @@ def _find_section(ws: Any, expected: str) -> int:
     return match[0]
 
 
+def _row_has_required_headers(ws: Any, row_number: int) -> bool:
+    """Return whether a row contains the stable, semantic template headings."""
+
+    values = [
+        _normalise(ws.cell(row_number, column).value)
+        for column in range(1, ws.max_column + 1)
+    ]
+    joined = " ".join(values)
+    return (
+        "ITEM" in joined
+        and "LABEL" in joined
+        and "LONGITUD" in joined
+        and "CANTIDAD" in joined
+    )
+
+
 def _find_header_row(ws: Any, section_row: int) -> int:
+    """Find headers placed either after or immediately before a section title.
+
+    Legacy templates repeat their headers below ``BANDAS`` and ``DISTRIBUIDOS``.
+    Operational templates supplied by the field team keep one shared header above
+    ``BANDAS`` and only repeat the section label later.  Both structures remain
+    safe because the complete required column set is still checked separately.
+    """
+
     for row_number in range(section_row + 1, min(ws.max_row, section_row + 10) + 1):
-        values = [
-            _normalise(ws.cell(row_number, column).value)
-            for column in range(1, ws.max_column + 1)
-        ]
-        joined = " ".join(values)
-        if "ITEM" in joined and "LABEL" in joined and "LONGITUD" in joined and "CANTIDAD" in joined:
+        if _row_has_required_headers(ws, row_number):
+            return row_number
+    for row_number in range(section_row - 1, max(0, section_row - 11), -1):
+        if _row_has_required_headers(ws, row_number):
             return row_number
     raise TemplateValidationError("No se localizaron las columnas obligatorias de la plantilla")
+
+
+def _section_body_start_row(section_row: int, header_row: int) -> int:
+    """Keep the title and spacer row when a template shares headers above it."""
+
+    if header_row < section_row:
+        return section_row + 2
+    return header_row + 2
 
 
 def _find_columns(ws: Any, header_row: int) -> dict[str, int]:
@@ -270,16 +300,23 @@ def analyse_template(content: bytes, filename: str | None = None) -> TemplateMap
             "Las secciones BANDAS y DISTRIBUIDOS están en un orden inválido"
         )
     band_header = _find_header_row(worksheet, band_row)
-    distributed_header = _find_header_row(worksheet, distributed_row)
+    warnings: list[str] = []
+    try:
+        distributed_header = _find_header_row(worksheet, distributed_row)
+    except TemplateValidationError:
+        # Some production templates have a single heading above BANDAS and no
+        # duplicate heading near DISTRIBUIDOS.  Reusing a fully validated
+        # heading is safer than guessing columns by position.
+        distributed_header = band_header
+        warnings.append("Distribuidos reutiliza los encabezados compartidos de Bandas")
     columns = _find_columns(worksheet, band_header)
     distributed_columns = _find_columns(worksheet, distributed_header)
     if columns != distributed_columns:
         raise TemplateValidationError(
             "Las secciones de la plantilla no comparten las mismas columnas"
         )
-    warnings: list[str] = []
-    band_start = band_header + 2
-    distributed_start = distributed_header + 2
+    band_start = _section_body_start_row(band_row, band_header)
+    distributed_start = _section_body_start_row(distributed_row, distributed_header)
     band_seed, formulas, tolerance = _find_formula_seed(
         worksheet, band_start, distributed_row - 1, columns, warnings
     )
