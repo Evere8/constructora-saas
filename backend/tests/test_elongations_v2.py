@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw
 from starlette.datastructures import Headers
 
 from app.api.routes import elongations
-from app.api.routes.elongations import require_job
+from app.api.routes.elongations import _resume_queued_theory_job, require_job
 from app.db.models import ElongationJob
 from app.services.elongations import theory
 from app.services.elongations.classification import propose_classifications, zone_contains
@@ -189,13 +189,14 @@ def test_large_pdf_tiles_cover_rotated_output_and_vector_coordinates(
     info = "Pages:          1\nPage size:      2384 x 3370 pts (A0)\nPage rot:        90\n"
     monkeypatch.setattr(theory, "_run", lambda *_args, **_kwargs: info)
     page_count, width, height = _pdf_layout(Path("rotated.pdf"), max_pdf_pages=25)
-    assert (page_count, width, height) == (1, 16382, 11589)
+    assert (page_count, width, height) == (1, 10531, 7450)
     x_offsets = _tile_offsets(width)
     y_offsets = _tile_offsets(height)
     assert x_offsets[0] == y_offsets[0] == 0
     assert x_offsets[-1] + 4096 >= width
     assert y_offsets[-1] + 4096 >= height
     assert len(x_offsets) == len(set(x_offsets))
+    assert len(x_offsets) * len(y_offsets) == 6
 
 
 def test_rotated_ocr_boxes_return_to_the_original_tile_coordinates() -> None:
@@ -447,6 +448,18 @@ def test_create_job_refreshes_server_timestamp_before_returning_response(
 
     assert response == "created"
     assert [job.id for job in session.refreshed] == ["job-1"]
+
+
+def test_idempotent_queued_job_resumes_its_theory_task() -> None:
+    background_tasks = BackgroundTasks()
+    queued = SimpleNamespace(id="job-1", workflow_status="queued_theory")
+    completed = SimpleNamespace(id="job-2", workflow_status="theory_review")
+
+    _resume_queued_theory_job(background_tasks, queued)
+    _resume_queued_theory_job(background_tasks, completed)
+
+    assert len(background_tasks.tasks) == 1
+    assert background_tasks.tasks[0].args == ("job-1",)
 
 
 def test_dynamic_export_has_one_row_per_s_and_own_max_min_formulas() -> None:

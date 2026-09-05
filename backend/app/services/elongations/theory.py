@@ -43,7 +43,11 @@ PDF_PAGE_SIZE_PATTERN = re.compile(
 PDF_PAGE_COUNT_PATTERN = re.compile(r"^Pages:\s*(?P<pages>\d+)\s*$", re.MULTILINE)
 PDF_PAGE_ROTATION_PATTERN = re.compile(r"^Page rot:\s*(?P<rotation>\d+)\s*$", re.MULTILINE)
 
-OCR_DPI = 350
+# A0 post-tensioning plans are exceptionally large.  225 DPI keeps the labels
+# readable for Tesseract while reducing the supplied A0 plan from 20 tiles to 6
+# before its orientation passes.  Every accepted result remains subject to the
+# complete Tendon/S/L/Elong semantic rule and human review.
+OCR_DPI = 225
 OCR_TILE_SIZE_PX = 4096
 OCR_TILE_OVERLAP_PX = 512
 MAX_OCR_IMAGE_PIXELS = 100_000_000
