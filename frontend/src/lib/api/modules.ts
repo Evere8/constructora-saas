@@ -6,10 +6,14 @@ import type {
   DocumentJob,
   InventoryItem,
   InventoryMovement,
+  NotificationList,
   PlanDocument,
   ReportOverview,
+  ReportAdvanced,
   Role,
+  TaskRequirement,
 } from '@/types/api';
+import type { QueryParams } from '@/lib/http';
 
 const companyBase = (companyId: string) => `/v1/companies/${companyId}`;
 const projectBase = (companyId: string, projectId: string) =>
@@ -110,6 +114,56 @@ export const membersApi = {
 export const reportsApi = {
   overview: (companyId: string, signal?: AbortSignal) =>
     api.get<ReportOverview>(`${companyBase(companyId)}/reports/overview`, undefined, signal),
+  advanced: (companyId: string, filters: QueryParams, signal?: AbortSignal) =>
+    api.get<ReportAdvanced>(`${companyBase(companyId)}/reports/advanced`, filters, signal),
+  csv: (companyId: string, filters: QueryParams) =>
+    api.blob(`${companyBase(companyId)}/reports/advanced.csv`, filters),
+};
+
+export interface TaskRequirementInput {
+  inventory_item_id?: string | null;
+  description: string;
+  required_quantity: number;
+  unit: string;
+  availability_status?: TaskRequirement['availability_status'];
+}
+
+export const requirementsApi = {
+  list: (companyId: string, projectId: string, taskId: string, signal?: AbortSignal) =>
+    api.get<TaskRequirement[]>(
+      `${projectBase(companyId, projectId)}/tasks/${taskId}/requirements`,
+      undefined,
+      signal,
+    ),
+  create: (companyId: string, projectId: string, taskId: string, input: TaskRequirementInput) =>
+    api.post<TaskRequirement>(
+      `${projectBase(companyId, projectId)}/tasks/${taskId}/requirements`,
+      input,
+    ),
+  update: (
+    companyId: string,
+    projectId: string,
+    taskId: string,
+    requirementId: string,
+    input: Partial<TaskRequirementInput>,
+  ) => api.patch<TaskRequirement>(
+    `${projectBase(companyId, projectId)}/tasks/${taskId}/requirements/${requirementId}`,
+    input,
+  ),
+  remove: (companyId: string, projectId: string, taskId: string, requirementId: string) =>
+    api.del<void>(
+      `${projectBase(companyId, projectId)}/tasks/${taskId}/requirements/${requirementId}`,
+    ),
+};
+
+export const notificationsApi = {
+  list: (companyId: string, signal?: AbortSignal) =>
+    api.get<NotificationList>(`${companyBase(companyId)}/notifications`, undefined, signal),
+  update: (
+    companyId: string,
+    notificationId: string,
+    status: 'unread' | 'read' | 'dismissed',
+  ) => api.patch(`${companyBase(companyId)}/notifications/${notificationId}`, { status }),
 };
 
 export const settingsApi = {

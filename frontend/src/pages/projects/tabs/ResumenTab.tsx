@@ -36,6 +36,16 @@ export function ResumenTab({ companyId, project }: { companyId: string; project:
 
   const status = PROJECT_STATUS[project.status];
   const percent = Math.round(progressQuery.data?.completion_percent ?? 0);
+  const plannedEnd = project.planned_end_date ? new Date(`${project.planned_end_date}T12:00:00`) : null;
+  const actualEnd = project.actual_end_date ? new Date(`${project.actual_end_date}T12:00:00`) : null;
+  const isFinished = project.status === 'completed' && actualEnd;
+  const dayDifference = plannedEnd
+    ? Math.ceil(((isFinished ? actualEnd : new Date()).getTime() - plannedEnd.getTime()) / 86_400_000)
+    : null;
+  const scheduleLabel = isFinished
+    ? (dayDifference !== null && dayDifference > 0 ? 'Atraso final' : 'Dias anticipados')
+    : (dayDifference !== null && dayDifference > 0 ? 'Dias de atraso' : 'Dias restantes');
+  const scheduleValue = dayDifference === null ? '—' : String(Math.abs(dayDifference));
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -81,7 +91,7 @@ export function ResumenTab({ companyId, project }: { companyId: string; project:
           </CardContent>
         </Card>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-3 gap-4">
           <Card>
             <CardContent className="p-4">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">Niveles</p>
@@ -92,6 +102,12 @@ export function ResumenTab({ companyId, project }: { companyId: string; project:
             <CardContent className="p-4">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">Tareas</p>
               <p className="mt-1 text-2xl font-semibold">{asTotal(tasksQuery.data)}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">{scheduleLabel}</p>
+              <p className={dayDifference !== null && dayDifference > 0 ? 'mt-1 text-2xl font-semibold text-destructive' : 'mt-1 text-2xl font-semibold'}>{scheduleValue}</p>
             </CardContent>
           </Card>
         </div>

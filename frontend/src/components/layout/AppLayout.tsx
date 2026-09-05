@@ -12,6 +12,7 @@ import { CompanySelector } from '@/components/layout/CompanySelector';
 import { PRIMARY_NAV, SECONDARY_NAV } from '@/components/layout/nav';
 import { Badge } from '@/components/ui/badge';
 import { UserMenu } from '@/components/layout/UserMenu';
+import { NotificationCenter } from '@/components/notifications/NotificationCenter';
 import { cn } from '@/lib/utils';
 
 function navLinkClass({ isActive }: { isActive: boolean }): string {
@@ -115,7 +116,10 @@ export function AppLayout() {
             </div>
             <CompanySelector />
           </div>
-          <UserMenu />
+          <div className="flex items-center gap-2">
+            <NotificationCenter />
+            <UserMenu />
+          </div>
         </header>
         <main className="flex-1 px-4 py-6 pb-24 sm:px-6 lg:pb-8">
           <div className="mx-auto w-full max-w-6xl">

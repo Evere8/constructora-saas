@@ -43,9 +43,14 @@ const schema = z.object({
   status: z.enum(['pending', 'in_progress', 'review', 'completed', 'cancelled']),
   priority: z.enum(['low', 'normal', 'high', 'urgent']),
   level_id: z.string().optional(),
+  planned_start_at: z.string().optional(),
   due_at: z.string().optional(),
+  location_text: z.string().max(300).optional(),
   assigned_user_id: z.string().optional(),
-});
+}).refine(
+  (values) => !values.planned_start_at || !values.due_at || values.due_at >= values.planned_start_at,
+  { message: 'La fecha límite debe ser posterior al inicio', path: ['due_at'] },
+);
 
 type FormValues = z.infer<typeof schema>;
 
@@ -83,7 +88,9 @@ export function TaskFormDialog({
       status: (task?.status ?? 'pending') as TaskStatus,
       priority: (task?.priority ?? 'normal') as TaskPriority,
       level_id: task?.level_id ?? NONE,
-      due_at: task?.due_at?.slice(0, 10) ?? '',
+      planned_start_at: task?.planned_start_at?.slice(0, 16) ?? '',
+      due_at: task?.due_at?.slice(0, 16) ?? '',
+      location_text: task?.location_text ?? '',
       assigned_user_id: task?.assigned_user_id ?? NONE,
     },
   });
@@ -103,7 +110,9 @@ export function TaskFormDialog({
         status: values.status,
         priority: values.priority,
         level_id: values.level_id && values.level_id !== NONE ? values.level_id : null,
+        planned_start_at: values.planned_start_at || null,
         due_at: values.due_at || null,
+        location_text: values.location_text || null,
         assigned_user_id:
           values.assigned_user_id && values.assigned_user_id !== NONE
             ? values.assigned_user_id
@@ -116,6 +125,8 @@ export function TaskFormDialog({
     onSuccess: () => {
       toast.success(isEdit ? 'Tarea actualizada' : 'Tarea creada');
       void queryClient.invalidateQueries({ queryKey: ['tasks', companyId, projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['notifications', companyId] });
+      void queryClient.invalidateQueries({ queryKey: ['reports-advanced', companyId] });
       onOpenChange(false);
     },
     onError: (error) =>
@@ -210,9 +221,20 @@ export function TaskFormDialog({
               </Select>
             </div>
           </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="task-start">Inicio planificado</Label>
+              <Input id="task-start" type="datetime-local" {...register('planned_start_at')} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="task-due">Fecha límite</Label>
+              <Input id="task-due" type="datetime-local" {...register('due_at')} />
+              {errors.due_at ? <p className="text-sm text-destructive">{errors.due_at.message}</p> : null}
+            </div>
+          </div>
           <div className="space-y-2">
-            <Label htmlFor="task-due">Fecha limite</Label>
-            <Input id="task-due" type="date" {...register('due_at')} />
+            <Label htmlFor="task-location">Ubicación dentro de la obra</Label>
+            <Input id="task-location" placeholder="Ej.: Losa 3, sector norte" {...register('location_text')} />
           </div>
           <div className="space-y-2">
             <Label>Responsable</Label>

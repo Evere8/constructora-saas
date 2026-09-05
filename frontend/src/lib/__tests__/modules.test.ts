@@ -5,7 +5,13 @@ vi.mock('@/lib/supabase', () => ({
   supabase: { auth: { getSession, refreshSession: vi.fn(), signOut: vi.fn() } },
 }));
 
-import { documentsApi, plansApi } from '@/lib/api/modules';
+import {
+  documentsApi,
+  notificationsApi,
+  plansApi,
+  reportsApi,
+  requirementsApi,
+} from '@/lib/api/modules';
 
 describe('API de módulos operativos', () => {
   beforeEach(() => {
@@ -36,5 +42,41 @@ describe('API de módulos operativos', () => {
 
     const body = fetchMock.mock.calls[0][1].body as FormData;
     expect(body.get('tolerance_percent')).toBe('5');
+  });
+
+  it('crea un recurso requerido dentro de la tarea correcta', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'requirement-1' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await requirementsApi.create('company-1', 'project-1', 'task-1', {
+      description: 'Taladro',
+      required_quantity: 1,
+      unit: 'unidad',
+      availability_status: 'missing',
+    });
+
+    expect(fetchMock.mock.calls[0][0]).toContain('/projects/project-1/tasks/task-1/requirements');
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'POST' });
+  });
+
+  it('envía los filtros del reporte avanzado como query params', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ projects: [], assignees: [] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await reportsApi.advanced('company-1', { date_from: '2026-09-01', project_id: 'project-1' });
+
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toContain('date_from=2026-09-01');
+    expect(url).toContain('project_id=project-1');
+  });
+
+  it('marca una alerta como leída mediante la ruta empresarial', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'read' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await notificationsApi.update('company-1', 'notification-1', 'read');
+
+    expect(fetchMock.mock.calls[0][0]).toContain('/companies/company-1/notifications/notification-1');
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'PATCH' });
   });
 });

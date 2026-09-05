@@ -72,5 +72,7 @@ export interface TaskInput {
   priority?: TaskPriority;
   level_id?: string | null;
   assigned_user_id?: string | null;
+  planned_start_at?: string | null;
   due_at?: string | null;
+  location_text?: string | null;
 }
