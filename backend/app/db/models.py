@@ -103,6 +103,11 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     planned_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     actual_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # The version selected as the shared operational board.  Plan documents remain
+    # versioned independently; this merely selects which version the Resumen opens.
+    overview_plan_version_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("plan_versions.id", ondelete="SET NULL"), nullable=True
+    )
 
     company: Mapped[Company] = relationship(back_populates="projects")
 
@@ -116,6 +121,17 @@ class ProjectLevel(UUIDPrimaryKeyMixin, Base):
     )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    building_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # ``concreted`` is intentionally separate from generic checklist completion: a
+    # supervisor may close every preparation step but the slab is not concreted yet.
+    work_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    concreted_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    plan_version_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("plan_versions.id", ondelete="SET NULL"), nullable=True
+    )
+    plan_page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Normalized x/y/width/height so zones remain valid regardless of browser size.
+    plan_geometry_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class Task(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -194,6 +210,9 @@ class ChecklistItem(UUIDPrimaryKeyMixin, Base):
     task_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True
     )
+    level_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("project_levels.id", ondelete="SET NULL"), nullable=True
+    )
     plan_version_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("plan_versions.id", ondelete="SET NULL"), nullable=True
     )
@@ -208,6 +227,9 @@ class ChecklistItem(UUIDPrimaryKeyMixin, Base):
         String(36), ForeignKey("app_users.id", ondelete="SET NULL"), nullable=True
     )
     due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # The actual field date captured on a level checklist.  ``completed_at`` is
+    # retained for existing APIs and audit compatibility.
+    performed_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
@@ -355,6 +377,9 @@ class Annotation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     plan_version_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("plan_versions.id", ondelete="CASCADE"), nullable=False
+    )
+    level_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("project_levels.id", ondelete="SET NULL"), nullable=True
     )
     page_number: Mapped[int] = mapped_column(Integer, nullable=False)
     annotation_type: Mapped[str] = mapped_column(String(30), nullable=False)

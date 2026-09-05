@@ -1,7 +1,13 @@
+import subprocess
+import tempfile
+from io import BytesIO
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse, Response
+from PIL import Image, ImageOps
 from sqlalchemy import func, select
 
 from app.api.dependencies import CurrentCompanyAccess, DbSession
@@ -20,6 +26,8 @@ from app.api.schemas.modules import (
     AnnotationResponse,
     PlanDocumentResponse,
     PlanVersionResponse,
+    ProjectOverviewPlanPatch,
+    ProjectOverviewPlanResponse,
 )
 from app.core.config import get_settings
 from app.db.models import Annotation, PlanDocument, PlanVersion
@@ -66,6 +74,51 @@ def document_response(document: PlanDocument, versions: list[PlanVersion]) -> Pl
     payload = PlanDocumentResponse.model_validate(document)
     payload.versions = [PlanVersionResponse.model_validate(version) for version in versions]
     return payload
+
+
+def preview_png(path: Path, mime_type: str, page: int) -> bytes:
+    """Render a private plan file for the in-app canvas without exposing its URL."""
+
+    if mime_type == "application/pdf":
+        with tempfile.TemporaryDirectory(prefix="obrixapy-plan-preview-") as directory:
+            output = Path(directory) / "page"
+            try:
+                subprocess.run(
+                    [
+                        "pdftoppm",
+                        "-f",
+                        str(page),
+                        "-l",
+                        str(page),
+                        "-png",
+                        "-r",
+                        "160",
+                        str(path),
+                        str(output),
+                    ],
+                    check=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+            except (
+                FileNotFoundError,
+                subprocess.CalledProcessError,
+                subprocess.TimeoutExpired,
+            ) as exc:
+                raise ValueError("No fue posible preparar la vista previa del PDF") from exc
+            rendered = Path(f"{output}-{page}.png")
+            if not rendered.is_file():
+                raise ValueError("La página solicitada no existe en el plano")
+            return rendered.read_bytes()
+    try:
+        with Image.open(path) as image:
+            preview = ImageOps.exif_transpose(image).convert("RGB")
+            preview.thumbnail((2600, 2600))
+            output = BytesIO()
+            preview.save(output, format="PNG", optimize=True)
+            return output.getvalue()
+    except (OSError, ValueError) as exc:
+        raise ValueError("No fue posible preparar la vista previa de la imagen") from exc
 
 
 @router.get(
@@ -224,6 +277,62 @@ async def download_plan_version(
     return FileResponse(path, media_type=version.mime_type, filename=version.original_filename)
 
 
+@router.get("/projects/{project_id}/plans/versions/{version_id}/preview")
+async def preview_plan_version(
+    project_id: str,
+    version_id: str,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+    page: int = 1,
+) -> Response:
+    """Return an authenticated raster preview used by the zoomable project board."""
+
+    if page < 1 or page > 100:
+        raise HTTPException(status_code=422, detail="La página de vista previa no es válida")
+    version, _ = await require_version(db, access.company_id, project_id, version_id)
+    path = storage_path(version.storage_key)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="El archivo del plano no está disponible")
+    try:
+        content = await run_in_threadpool(preview_png, path, version.mime_type, page)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return Response(
+        content=content,
+        media_type="image/png",
+        headers={"Cache-Control": "private, max-age=300"},
+    )
+
+
+@router.patch(
+    "/projects/{project_id}/plans/overview",
+    response_model=ProjectOverviewPlanResponse,
+)
+async def select_project_overview_plan(
+    project_id: str,
+    payload: ProjectOverviewPlanPatch,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+) -> ProjectOverviewPlanResponse:
+    """Select which immutable plan version is rendered in the project Resumen."""
+
+    require_role(access, WORK_EDITOR_ROLES)
+    project = await require_project(db, access.company_id, project_id)
+    if payload.plan_version_id is not None:
+        await require_version(db, access.company_id, project_id, payload.plan_version_id)
+    project.overview_plan_version_id = payload.plan_version_id
+    add_activity(
+        db,
+        access,
+        "project.overview_plan.updated",
+        "project",
+        project.id,
+        {"plan_version_id": payload.plan_version_id},
+    )
+    await commit_or_conflict(db, "No fue posible seleccionar el plano del resumen")
+    return ProjectOverviewPlanResponse(plan_version_id=project.overview_plan_version_id)
+
+
 @router.get(
     "/projects/{project_id}/plans/versions/{version_id}/annotations",
     response_model=list[AnnotationResponse],
@@ -263,6 +372,7 @@ async def create_annotation(
 ) -> Annotation:
     require_role(access, WORK_EDITOR_ROLES)
     await require_version(db, access.company_id, project_id, version_id)
+    await require_level(db, project_id, payload.level_id)
     annotation = Annotation(
         company_id=access.company_id,
         plan_version_id=version_id,
@@ -309,3 +419,32 @@ async def update_annotation(
     await commit_or_conflict(db, "No fue posible actualizar la anotación")
     await db.refresh(annotation)
     return annotation
+
+
+@router.delete(
+    "/projects/{project_id}/plans/annotations/{annotation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_annotation(
+    project_id: str,
+    annotation_id: str,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+) -> Response:
+    require_role(access, WORK_EDITOR_ROLES)
+    annotation = await db.scalar(
+        select(Annotation)
+        .join(PlanVersion, PlanVersion.id == Annotation.plan_version_id)
+        .join(PlanDocument, PlanDocument.id == PlanVersion.document_id)
+        .where(
+            Annotation.id == annotation_id,
+            Annotation.company_id == access.company_id,
+            PlanDocument.project_id == project_id,
+        )
+    )
+    if annotation is None:
+        raise HTTPException(status_code=404, detail="Anotación no encontrada")
+    add_activity(db, access, "plan.annotation.deleted", "annotation", annotation.id)
+    await db.delete(annotation)
+    await commit_or_conflict(db, "No fue posible eliminar la anotación")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

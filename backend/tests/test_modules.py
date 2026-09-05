@@ -5,7 +5,12 @@ import pytest
 from openpyxl import load_workbook
 from pydantic import ValidationError
 
-from app.api.schemas.modules import CompanyMemberCreate, InventoryItemCreate
+from app.api.schemas.modules import (
+    AnnotationCreate,
+    CompanyMemberCreate,
+    InventoryItemCreate,
+    ProjectOverviewPlanPatch,
+)
 from app.main import app
 from app.services.document_processing import build_xlsx, parse_elongation_rows
 from app.services.file_storage import _signature_matches
@@ -82,3 +87,15 @@ def test_module_schemas_validate_company_inputs() -> None:
     assert item.unit == "unit"
     with pytest.raises(ValidationError):
         CompanyMemberCreate(email="invalido", full_name="User", role="worker")
+
+
+def test_plan_board_schemas_keep_annotations_scoped_and_allow_clearing_overview() -> None:
+    annotation = AnnotationCreate(
+        page_number=1,
+        level_id="c7b55613-9adc-4b84-87c6-e356d1a5f983",
+        annotation_type="note",
+        geometry_json={"x": 0.2, "y": 0.4},
+        comment="Verificar armaduras",
+    )
+    assert annotation.level_id is not None
+    assert ProjectOverviewPlanPatch(plan_version_id=None).plan_version_id is None

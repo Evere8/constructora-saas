@@ -1,5 +1,5 @@
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
@@ -16,6 +16,7 @@ from app.api.routes.operations import (
     commit_or_conflict,
     flush_or_conflict,
     require_assignee,
+    require_level,
     require_project,
     require_role,
     require_task,
@@ -96,6 +97,7 @@ async def list_checklist(
     process_stage: str | None = Query(default=None, max_length=80),
     assigned_user_id: str | None = Query(default=None),
     task_id: str | None = Query(default=None),
+    level_id: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> ChecklistListResponse:
@@ -113,6 +115,9 @@ async def list_checklist(
     if task_id:
         await require_task(db, access.company_id, project_id, task_id)
         filters.append(ChecklistItem.task_id == task_id)
+    if level_id:
+        await require_level(db, project_id, level_id)
+        filters.append(ChecklistItem.level_id == level_id)
 
     total = await db.scalar(select(func.count()).select_from(ChecklistItem).where(*filters))
     result = await db.execute(
@@ -143,6 +148,7 @@ async def checklist_progress(
     access: CurrentCompanyAccess,
     db: DbSession,
     task_id: str | None = Query(default=None),
+    level_id: str | None = Query(default=None),
 ) -> ChecklistProgressResponse:
     await require_project(db, access.company_id, project_id)
     filters = [
@@ -152,6 +158,9 @@ async def checklist_progress(
     if task_id:
         await require_task(db, access.company_id, project_id, task_id)
         filters.append(ChecklistItem.task_id == task_id)
+    if level_id:
+        await require_level(db, project_id, level_id)
+        filters.append(ChecklistItem.level_id == level_id)
     result = await db.execute(
         select(ChecklistItem.status, func.count(ChecklistItem.id))
         .where(*filters)
@@ -187,16 +196,28 @@ async def create_checklist_item(
 ) -> ChecklistItem:
     require_role(access, WORK_EDITOR_ROLES)
     await require_project(db, access.company_id, project_id)
+    data = payload.model_dump()
+    task = None
     if payload.task_id:
-        await require_task(db, access.company_id, project_id, payload.task_id)
+        task = await require_task(db, access.company_id, project_id, payload.task_id)
+    if payload.level_id:
+        await require_level(db, project_id, payload.level_id)
+    if task and task.level_id:
+        if payload.level_id and payload.level_id != task.level_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="La tarea y el checklist deben pertenecer al mismo nivel",
+            )
+        data["level_id"] = task.level_id
     await require_assignee(db, access.company_id, payload.assigned_user_id)
     item = ChecklistItem(
         company_id=access.company_id,
         project_id=project_id,
-        **payload.model_dump(),
+        **data,
     )
     if item.status == "completed":
         item.completed_at = datetime.now(UTC).replace(tzinfo=None)
+        item.performed_on = item.performed_on or date.today()
     db.add(item)
     await flush_or_conflict(db, "No fue posible crear el punto de control")
     add_activity(db, access, "checklist.created", "checklist_item", item.id)
@@ -235,12 +256,27 @@ async def update_checklist_item(
 
     if "assigned_user_id" in changes:
         await require_assignee(db, access.company_id, changes["assigned_user_id"])
+    task = None
     if changes.get("task_id"):
-        await require_task(db, access.company_id, project_id, changes["task_id"])
+        task = await require_task(db, access.company_id, project_id, changes["task_id"])
+    if changes.get("level_id"):
+        await require_level(db, project_id, changes["level_id"])
+    final_level_id = changes.get("level_id", item.level_id)
+    if task and task.level_id:
+        if final_level_id and final_level_id != task.level_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="La tarea y el checklist deben pertenecer al mismo nivel",
+            )
+        changes["level_id"] = task.level_id
     if changes.get("status") == "completed" and item.status != "completed":
         item.completed_at = datetime.now(UTC).replace(tzinfo=None)
+        if "performed_on" not in changes:
+            item.performed_on = date.today()
     elif "status" in changes and changes["status"] != "completed":
         item.completed_at = None
+        if "performed_on" not in changes:
+            item.performed_on = None
     for field, value in changes.items():
         setattr(item, field, value)
     add_activity(db, access, "checklist.updated", "checklist_item", item.id, changes)

@@ -33,8 +33,18 @@ class PlanDocumentResponse(BaseModel):
     versions: list[PlanVersionResponse] = Field(default_factory=list)
 
 
+class ProjectOverviewPlanPatch(BaseModel):
+    plan_version_id: str | None = Field(default=None, min_length=36, max_length=36)
+
+
+class ProjectOverviewPlanResponse(BaseModel):
+    plan_version_id: str | None
+
+
 class AnnotationCreate(BaseModel):
     page_number: int = Field(ge=1, le=10000)
+    level_id: str | None = Field(default=None, min_length=36, max_length=36)
+    level_id: str | None = Field(default=None, min_length=36, max_length=36)
     annotation_type: Literal["pin", "note", "line", "area"]
     geometry_json: dict
     style_json: dict = Field(default_factory=dict)
@@ -58,6 +68,8 @@ class AnnotationResponse(BaseModel):
     id: str
     company_id: str
     plan_version_id: str
+    level_id: str | None
+    level_id: str | None
     page_number: int
     annotation_type: str
     geometry_json: dict
