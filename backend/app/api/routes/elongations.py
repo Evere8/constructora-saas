@@ -495,6 +495,9 @@ async def create_elongation_job(
             {"workflow_status": job.workflow_status, "template": template_upload.sha256},
         )
         await commit_or_conflict(db, "No fue posible guardar el trabajo de elongaciones")
+        # MySQL assigns created_at on the server.  Refresh before serializing so
+        # Pydantic never triggers an implicit async lazy-load after the commit.
+        await db.refresh(job)
         background_tasks.add_task(process_theory_job, job.id)
         return await response_for_job(db, job)
     except Exception:
