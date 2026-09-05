@@ -8,6 +8,7 @@ import type {
   InventoryMovement,
   NotificationList,
   PlanDocument,
+  PlanAnnotation,
   ReportOverview,
   ReportAdvanced,
   Role,
@@ -47,6 +48,34 @@ export const plansApi = {
   },
   download: (companyId: string, projectId: string, versionId: string) =>
     api.blob(`${projectBase(companyId, projectId)}/plans/versions/${versionId}/download`),
+  preview: (companyId: string, projectId: string, versionId: string, page = 1) =>
+    api.blob(`${projectBase(companyId, projectId)}/plans/versions/${versionId}/preview`, { page }),
+  setOverview: (companyId: string, projectId: string, planVersionId: string | null) =>
+    api.patch<{ plan_version_id: string | null }>(
+      `${projectBase(companyId, projectId)}/plans/overview`,
+      { plan_version_id: planVersionId },
+    ),
+  listAnnotations: (companyId: string, projectId: string, versionId: string, signal?: AbortSignal) =>
+    api.get<PlanAnnotation[]>(
+      `${projectBase(companyId, projectId)}/plans/versions/${versionId}/annotations`,
+      undefined,
+      signal,
+    ),
+  createAnnotation: (
+    companyId: string,
+    projectId: string,
+    versionId: string,
+    input: {
+      page_number: number;
+      level_id?: string | null;
+      annotation_type: PlanAnnotation['annotation_type'];
+      geometry_json: Record<string, unknown>;
+      style_json?: Record<string, unknown>;
+      comment?: string | null;
+    },
+  ) => api.post<PlanAnnotation>(`${projectBase(companyId, projectId)}/plans/versions/${versionId}/annotations`, input),
+  deleteAnnotation: (companyId: string, projectId: string, annotationId: string) =>
+    api.del<void>(`${projectBase(companyId, projectId)}/plans/annotations/${annotationId}`),
 };
 
 export const documentsApi = {

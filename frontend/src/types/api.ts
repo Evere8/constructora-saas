@@ -8,6 +8,7 @@ export type ChecklistStatus =
   | 'blocked'
   | 'completed'
   | 'not_applicable';
+export type LevelWorkStatus = 'pending' | 'in_progress' | 'concreted';
 
 export type Role =
   | 'platform_admin'
@@ -57,6 +58,7 @@ export interface Project {
   start_date?: string | null;
   planned_end_date?: string | null;
   actual_end_date?: string | null;
+  overview_plan_version_id?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -66,6 +68,19 @@ export interface Level {
   project_id: string;
   name: string;
   sort_order: number;
+  building_name?: string | null;
+  work_status: LevelWorkStatus;
+  concreted_at?: string | null;
+  plan_version_id?: string | null;
+  plan_page_number?: number | null;
+  plan_geometry_json?: LevelPlanGeometry | null;
+}
+
+export interface LevelPlanGeometry {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 export interface Task {
@@ -90,6 +105,7 @@ export interface ChecklistItem {
   company_id: string;
   project_id: string;
   task_id?: string | null;
+  level_id?: string | null;
   plan_version_id?: string | null;
   annotation_id?: string | null;
   title: string;
@@ -98,6 +114,7 @@ export interface ChecklistItem {
   status: ChecklistStatus;
   assigned_user_id?: string | null;
   due_at?: string | null;
+  performed_on?: string | null;
   completed_at?: string | null;
   created_at?: string | null;
 }
@@ -188,6 +205,24 @@ export interface PlanDocument {
   status: string;
   created_at: string;
   versions: PlanVersion[];
+}
+
+export type AnnotationType = 'pin' | 'note' | 'line' | 'area';
+
+export interface PlanAnnotation {
+  id: string;
+  company_id: string;
+  plan_version_id: string;
+  level_id?: string | null;
+  page_number: number;
+  annotation_type: AnnotationType;
+  geometry_json: Record<string, unknown>;
+  style_json: Record<string, unknown>;
+  comment?: string | null;
+  status: 'pending' | 'resolved';
+  created_by_user_id: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface DocumentItem {

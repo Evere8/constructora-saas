@@ -15,18 +15,21 @@ export interface ChecklistFilters {
   process_stage?: string;
   assigned_user_id?: string;
   task_id?: string;
+  level_id?: string;
   limit?: number;
   offset?: number;
 }
 
 export interface ChecklistInput {
   task_id?: string | null;
+  level_id?: string | null;
   title: string;
   description?: string | null;
   process_stage: string;
   status?: ChecklistStatus;
   assigned_user_id?: string | null;
   due_at?: string | null;
+  performed_on?: string | null;
 }
 
 export const checklistApi = {
@@ -39,7 +42,7 @@ export const checklistApi = {
   progress: (
     companyId: string,
     projectId: string,
-    filters: Pick<ChecklistFilters, 'task_id'> = {},
+    filters: Pick<ChecklistFilters, 'task_id' | 'level_id'> = {},
     signal?: AbortSignal,
   ) => api.get<ChecklistProgress>(`${base(companyId, projectId)}/progress`, filters, signal),
   listEvidence: (

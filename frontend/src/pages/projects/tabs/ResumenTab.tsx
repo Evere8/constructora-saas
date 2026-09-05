@@ -8,6 +8,7 @@ import { formatDate } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
+import { ProjectPlanBoard } from '@/pages/projects/ProjectPlanBoard';
 
 function Fact({ label, value }: { label: string; value: string }) {
   return (
@@ -48,8 +49,11 @@ export function ResumenTab({ companyId, project }: { companyId: string; project:
   const scheduleValue = dayDifference === null ? '—' : String(Math.abs(dayDifference));
 
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-      <Card className="lg:col-span-2">
+    <div className="space-y-4">
+      <ProjectPlanBoard companyId={companyId} project={project} />
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <Card className="lg:col-span-2">
         <CardHeader>
           <CardTitle className="text-base">Informacion de la obra</CardTitle>
         </CardHeader>
@@ -73,10 +77,10 @@ export function ResumenTab({ companyId, project }: { companyId: string; project:
             </div>
           ) : null}
         </CardContent>
-      </Card>
+        </Card>
 
-      <div className="space-y-4">
-        <Card>
+        <div className="space-y-4">
+          <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Avance de checklist</CardTitle>
           </CardHeader>
@@ -89,27 +93,28 @@ export function ResumenTab({ companyId, project }: { companyId: string; project:
             </div>
             <Progress value={percent} />
           </CardContent>
-        </Card>
+          </Card>
 
-        <div className="grid grid-cols-3 gap-4">
-          <Card>
+          <div className="grid grid-cols-3 gap-4">
+            <Card>
             <CardContent className="p-4">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">Niveles</p>
               <p className="mt-1 text-2xl font-semibold">{asItems(levelsQuery.data).length}</p>
             </CardContent>
-          </Card>
-          <Card>
+            </Card>
+            <Card>
             <CardContent className="p-4">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">Tareas</p>
               <p className="mt-1 text-2xl font-semibold">{asTotal(tasksQuery.data)}</p>
             </CardContent>
-          </Card>
-          <Card>
+            </Card>
+            <Card>
             <CardContent className="p-4">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">{scheduleLabel}</p>
               <p className={dayDifference !== null && dayDifference > 0 ? 'mt-1 text-2xl font-semibold text-destructive' : 'mt-1 text-2xl font-semibold'}>{scheduleValue}</p>
             </CardContent>
-          </Card>
+            </Card>
+          </div>
         </div>
       </div>
     </div>

@@ -33,6 +33,32 @@ describe('API de módulos operativos', () => {
     expect(options.headers).not.toHaveProperty('Content-Type');
   });
 
+  it('usa las rutas autenticadas del tablero y conserva la geometría normalizada', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('png', { status: 200, headers: { 'Content-Type': 'image/png' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ plan_version_id: 'version-1' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'annotation-1' }), { status: 201 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await plansApi.preview('company-1', 'project-1', 'version-1', 2);
+    await plansApi.setOverview('company-1', 'project-1', 'version-1');
+    await plansApi.createAnnotation('company-1', 'project-1', 'version-1', {
+      page_number: 1,
+      level_id: 'level-1',
+      annotation_type: 'line',
+      geometry_json: { points: [{ x: 0.1, y: 0.2 }, { x: 0.3, y: 0.4 }] },
+    });
+
+    expect(fetchMock.mock.calls[0][0]).toContain('/plans/versions/version-1/preview?page=2');
+    expect(fetchMock.mock.calls[1][0]).toContain('/plans/overview');
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({ method: 'PATCH' });
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body as string)).toMatchObject({
+      level_id: 'level-1',
+      geometry_json: { points: [{ x: 0.1, y: 0.2 }, { x: 0.3, y: 0.4 }] },
+    });
+  });
+
   it('envía la tolerancia al procesar un documento', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ items: [] }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
