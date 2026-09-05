@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -6,14 +7,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.db.session import engine
+from app.services.elongations.pipeline import resume_interrupted_theory_jobs
 
 settings = get_settings()
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    yield
-    await engine.dispose()
+    recovery_tasks = await resume_interrupted_theory_jobs()
+    try:
+        yield
+    finally:
+        for task in recovery_tasks:
+            if not task.done():
+                task.cancel()
+        if recovery_tasks:
+            await asyncio.gather(*recovery_tasks, return_exceptions=True)
+        await engine.dispose()
 
 
 app = FastAPI(

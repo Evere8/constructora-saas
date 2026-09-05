@@ -38,6 +38,7 @@ from app.services.file_storage import XLSX_MIME_TYPES, storage_path, store_bytes
 
 PROCESSING_LIMIT = asyncio.Semaphore(2)
 DOCUMENT_APPROVER_ROLES = {"owner", "admin", "engineer"}
+THEORY_RECOVERY_STATUSES = {"queued_theory", "processing_theory"}
 
 
 def utcnow() -> datetime:
@@ -143,11 +144,60 @@ def _mapping_from_json(data: dict[str, Any]) -> TemplateMapping:
     )
 
 
+async def resume_interrupted_theory_jobs() -> list[asyncio.Task[None]]:
+    """Resume persisted theory jobs after an API restart.
+
+    ``BackgroundTasks`` is intentionally lightweight, so a process restart can
+    happen after the job is committed but before its OCR coroutine runs.  The
+    job record is the durable queue: interrupted ``processing_theory`` jobs are
+    returned to ``queued_theory`` and every queued job is scheduled again.
+    ``process_theory_job`` claims a queued job atomically, so this recovery
+    cannot make duplicate readers work on the same job.
+    """
+
+    async with SessionLocal() as session:
+        job_ids = list(
+            (
+                await session.scalars(
+                    select(ElongationJob.id)
+                    .where(ElongationJob.workflow_status.in_(THEORY_RECOVERY_STATUSES))
+                    .order_by(ElongationJob.created_at)
+                )
+            ).all()
+        )
+        if not job_ids:
+            return []
+        await session.execute(
+            update(ElongationJob)
+            .where(
+                ElongationJob.id.in_(job_ids),
+                ElongationJob.workflow_status == "processing_theory",
+            )
+            .values(workflow_status="queued_theory", status="queued_theory")
+        )
+        await session.commit()
+    return [asyncio.create_task(process_theory_job(job_id)) for job_id in job_ids]
+
+
 async def process_theory_job(job_id: str) -> None:
     """Extract semantic theory in a new session so the HTTP request never waits for OCR."""
 
     async with PROCESSING_LIMIT:
         async with SessionLocal() as session:
+            claim = await session.execute(
+                update(ElongationJob)
+                .where(
+                    ElongationJob.id == job_id,
+                    ElongationJob.workflow_status == "queued_theory",
+                )
+                .values(
+                    workflow_status="processing_theory",
+                    status="processing",
+                    error_message=None,
+                )
+            )
+            if claim.rowcount != 1:
+                return
             job = await session.get(ElongationJob, job_id)
             if job is None:
                 return
@@ -158,9 +208,6 @@ async def process_theory_job(job_id: str) -> None:
                 job.error_message = "No se encontró el plano fuente para procesar"
                 await session.commit()
                 return
-            job.workflow_status = "processing_theory"
-            job.status = "processing"
-            job.error_message = None
             _activity(session, job, "elongation.theory.started", {"file_id": source.id})
             await session.commit()
             try:

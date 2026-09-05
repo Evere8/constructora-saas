@@ -29,6 +29,7 @@ from app.services.elongations.pipeline import (
     DOCUMENT_APPROVER_ROLES,
     json_safe,
     progress_for,
+    resume_interrupted_theory_jobs,
 )
 from app.services.elongations.template import (
     TemplateValidationError,
@@ -460,6 +461,48 @@ def test_idempotent_queued_job_resumes_its_theory_task() -> None:
 
     assert len(background_tasks.tasks) == 1
     assert background_tasks.tasks[0].args == ("job-1",)
+
+
+def test_startup_recovery_schedules_persisted_theory_jobs(monkeypatch: pytest.MonkeyPatch) -> None:
+    class ScalarResult:
+        def all(self) -> list[str]:
+            return ["job-queued", "job-interrupted"]
+
+    class Session:
+        committed = False
+        executed = False
+
+        async def scalars(self, _statement: object) -> ScalarResult:
+            return ScalarResult()
+
+        async def execute(self, _statement: object) -> None:
+            self.executed = True
+
+        async def commit(self) -> None:
+            self.committed = True
+
+        async def __aenter__(self) -> Session:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    session = Session()
+    scheduled: list[object] = []
+
+    monkeypatch.setattr("app.services.elongations.pipeline.SessionLocal", lambda: session)
+    monkeypatch.setattr(
+        "app.services.elongations.pipeline.asyncio.create_task",
+        lambda coroutine: scheduled.append(coroutine) or object(),
+    )
+
+    tasks = asyncio.run(resume_interrupted_theory_jobs())
+    for coroutine in scheduled:
+        coroutine.close()  # type: ignore[union-attr]
+
+    assert len(tasks) == 2
+    assert session.executed is True
+    assert session.committed is True
 
 
 def test_dynamic_export_has_one_row_per_s_and_own_max_min_formulas() -> None:
