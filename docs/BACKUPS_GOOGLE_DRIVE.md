@@ -7,10 +7,12 @@ El respaldo de producción sigue la regla 3-2-1 de forma inicial:
 - MySQL activo en el volumen Docker del VPS.
 - Copia comprimida local durante 7 días.
 - Copia cifrada en Google Drive durante 30 días.
+- Archivos privados de `app_uploads` incluidos en un archivo TAR cifrado por rclone.
 
 Google Drive no es la base activa. El respaldo se genera con `mysqldump`, se valida,
 se comprime, se cifra en el VPS mediante un remoto `crypt` de rclone y después se
-sube a Drive. La tarea falla si el archivo está truncado o no aparece en el remoto.
+sube a Drive. El mismo proceso empaqueta fotos, planos y documentos desde el volumen
+privado. La tarea falla si algún archivo está truncado o no aparece en el remoto.
 
 ## Requisitos de seguridad
 
@@ -79,6 +81,7 @@ Comprobar el remoto cifrado sin subir secretos:
 
 ```bash
 sudo rclone mkdir gdrive-crypt:obrixapy/mysql
+sudo rclone mkdir gdrive-crypt:obrixapy/uploads
 sudo rclone lsd gdrive-crypt:
 sudo chmod 600 /root/.config/rclone/rclone.conf
 ```
@@ -88,7 +91,7 @@ sudo chmod 600 /root/.config/rclone/rclone.conf
 Ejecutar desde `/opt/constructora/app` después de desplegar este código:
 
 ```bash
-sudo install -d -m 700 /etc/constructora /var/backups/constructora/mysql
+sudo install -d -m 700 /etc/constructora /var/backups/constructora/mysql /var/backups/constructora/uploads
 sudo install -m 600 deploy/backup/backup.env.example /etc/constructora/backup.env
 sudo install -m 644 deploy/backup/constructora-backup.service /etc/systemd/system/constructora-backup.service
 sudo install -m 644 deploy/backup/constructora-backup.timer /etc/systemd/system/constructora-backup.timer
@@ -108,6 +111,7 @@ sudo systemctl status constructora-backup.service --no-pager
 sudo journalctl -u constructora-backup.service -n 100 --no-pager
 sudo ls -lh /var/backups/constructora/mysql
 sudo rclone lsl gdrive-crypt:obrixapy/mysql
+sudo rclone lsl gdrive-crypt:obrixapy/uploads
 sudo systemctl list-timers constructora-backup.timer --no-pager
 ```
 
@@ -127,9 +131,11 @@ Nunca restaurar primero sobre la base de producción.
 ```bash
 sudo install -d -m 700 /var/backups/constructora/restore-test
 sudo rclone copy gdrive-crypt:obrixapy/mysql /var/backups/constructora/restore-test --max-age 48h
+sudo rclone copy gdrive-crypt:obrixapy/uploads /var/backups/constructora/restore-test --max-age 48h
 cd /var/backups/constructora/restore-test
 sudo sha256sum -c constructora_mysql_*.sql.gz.sha256
 sudo gzip -t constructora_mysql_*.sql.gz
+sudo tar -tzf constructora_uploads_*.tar.gz >/dev/null
 ```
 
 La creación e importación de la base temporal debe ejecutarse de forma asistida,

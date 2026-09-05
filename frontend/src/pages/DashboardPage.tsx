@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { toast } from 'sonner';
 import {
   Building2,
   FileSpreadsheet,
@@ -23,11 +22,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 const BANNER = 'https://images.pexels.com/photos/18078304/pexels-photo-18078304.jpeg?auto=compress&cs=tinysrgb&w=1400';
 const QUICK_ACTIONS = [
-  { label: 'Obras y tareas', icon: Building2, to: '/obras', soon: false },
-  { label: 'Planos por obra', icon: Map, to: '#', soon: true },
-  { label: 'PDF a Excel', icon: FileSpreadsheet, to: '#', soon: true },
-  { label: 'Herramientas', icon: Wrench, to: '/inventario', soon: true },
-  { label: 'Personal', icon: Users, to: '/personal', soon: true },
+  { label: 'Obras y tareas', icon: Building2, to: '/obras' },
+  { label: 'Planos por obra', icon: Map, to: '/obras' },
+  { label: 'PDF a Excel', icon: FileSpreadsheet, to: '/obras' },
+  { label: 'Herramientas', icon: Wrench, to: '/inventario' },
+  { label: 'Personal', icon: Users, to: '/personal' },
 ] as const;
 
 function StatCard({ label, value }: { label: string; value: number }) {
@@ -96,29 +95,16 @@ export function DashboardPage() {
           Accesos rapidos
         </h2>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          {QUICK_ACTIONS.map((action) =>
-            action.soon ? (
-              <button
-                type="button"
-                key={action.label}
-                onClick={() => toast.info('Proximamente: este modulo se habilitara en la siguiente fase.')}
-                className="flex flex-col items-center gap-2 rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground transition-colors hover:bg-muted"
-              >
-                <action.icon className="h-6 w-6" />
-                <span>{action.label}</span>
-                <Badge variant="warning" className="text-[10px]">Pronto</Badge>
-              </button>
-            ) : (
-              <Link
-                key={action.label}
-                to={action.to}
-                className="flex flex-col items-center gap-2 rounded-lg border bg-card p-4 text-center text-sm font-medium transition-colors hover:border-primary hover:text-primary"
-              >
-                <action.icon className="h-6 w-6 text-primary" />
-                <span>{action.label}</span>
-              </Link>
-            ),
-          )}
+          {QUICK_ACTIONS.map((action) => (
+            <Link
+              key={action.label}
+              to={action.to}
+              className="flex flex-col items-center gap-2 rounded-lg border bg-card p-4 text-center text-sm font-medium transition-colors hover:border-primary hover:text-primary"
+            >
+              <action.icon className="h-6 w-6 text-primary" />
+              <span>{action.label}</span>
+            </Link>
+          ))}
         </div>
       </div>
 

@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
     upload_root: Path = Path("/data/uploads")
     evidence_max_bytes: int = 10 * 1024 * 1024
+    document_max_bytes: int = 50 * 1024 * 1024
+    ocr_max_pdf_pages: int = 25
 
     @property
     def database_url(self) -> URL:

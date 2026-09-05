@@ -164,3 +164,120 @@ export interface CompanyOnboardingResult {
   company: Company;
   owner: PlatformMembership;
 }
+
+export interface PlanVersion {
+  id: string;
+  document_id: string;
+  version_number: number;
+  original_filename: string;
+  mime_type: string;
+  size_bytes: number;
+  sha256: string;
+  created_by_user_id: string;
+  created_at: string;
+}
+
+export interface PlanDocument {
+  id: string;
+  company_id: string;
+  project_id: string;
+  level_id?: string | null;
+  title: string;
+  status: string;
+  created_at: string;
+  versions: PlanVersion[];
+}
+
+export interface DocumentItem {
+  id: string;
+  job_id: string;
+  label: string;
+  classification: 'band' | 'distributed';
+  length_m: string;
+  strand_count: number;
+  calculated_elongation: string;
+  measured_elongation?: string | null;
+  confidence?: string | null;
+  review_status: 'pending' | 'approved' | 'rejected';
+}
+
+export interface DocumentJob {
+  id: string;
+  company_id: string;
+  project_id: string;
+  title: string;
+  source_kind: string;
+  original_filename?: string | null;
+  mime_type?: string | null;
+  size_bytes?: number | null;
+  status: string;
+  tolerance_percent: string;
+  error_message?: string | null;
+  completed_at?: string | null;
+  created_at: string;
+  item_count: number;
+  items: DocumentItem[];
+}
+
+export interface InventoryItem {
+  id: string;
+  company_id: string;
+  code: string;
+  name: string;
+  item_type: 'machine' | 'tool' | 'material';
+  unit: string;
+  serial_number?: string | null;
+  status: 'available' | 'assigned' | 'maintenance' | 'retired';
+  current_project_id?: string | null;
+  quantity: string;
+  created_at: string;
+}
+
+export interface InventoryMovement {
+  id: string;
+  company_id: string;
+  item_id: string;
+  from_project_id?: string | null;
+  to_project_id?: string | null;
+  quantity: string;
+  condition_status?: string | null;
+  notes?: string | null;
+  moved_by_user_id: string;
+  moved_at: string;
+}
+
+export interface CompanyMember {
+  id: string;
+  user_id: string;
+  email: string;
+  full_name?: string | null;
+  role: Role;
+  status: string;
+  created_at: string;
+  assigned_tasks: number;
+  assigned_checklist: number;
+  invitation_sent?: boolean;
+}
+
+export interface ReportOverview {
+  projects_total: number;
+  projects_active: number;
+  tasks_total: number;
+  tasks_completed: number;
+  checklist_total: number;
+  checklist_completed: number;
+  completion_percent: number;
+  inventory_total: number;
+  inventory_assigned: number;
+  members_active: number;
+}
+
+export interface CompanySettings {
+  id: string;
+  name: string;
+  slug: string;
+  status: string;
+  plan_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}

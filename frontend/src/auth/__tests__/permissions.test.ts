@@ -37,6 +37,13 @@ describe('permisos por rol', () => {
     expect(can('platform_admin', 'platform.admin')).toBe(true);
   });
 
+  it('separa permisos de inventario y personal', () => {
+    expect(can('warehouse', 'inventory.edit')).toBe(true);
+    expect(can('warehouse', 'members.edit')).toBe(false);
+    expect(can('owner', 'members.edit')).toBe(true);
+    expect(can('supervisor', 'plans.edit')).toBe(true);
+  });
+
   it('rol nulo devuelve false', () => {
     expect(can(null, 'tasks.status')).toBe(false);
     expect(can(undefined, 'projects.edit')).toBe(false);

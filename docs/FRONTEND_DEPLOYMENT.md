@@ -171,7 +171,7 @@ Luego validar en el navegador:
 4. Selector de empresa.
 5. Cierre de sesión.
 
-## 11. Migración y almacenamiento de evidencias
+## 11. Migración y almacenamiento privado
 
 La versión que incorpora **Obra → Tarea → Checklist → Evidencia** requiere ejecutar
 la migración después de actualizar el código y antes de probar la función:
@@ -184,7 +184,11 @@ sudo docker compose \
   exec api alembic upgrade head
 ```
 
-Las fotos y PDF se guardan en el volumen Docker `app_uploads`, montado en
+Las evidencias, planos, PDF y fotografías se guardan en el volumen Docker `app_uploads`, montado en
 `/data/uploads`. MySQL conserva los metadatos y el SHA-256, pero el contenido del
-archivo no forma parte del respaldo SQL. Antes de usar evidencias con datos reales,
-incorporar ese volumen al procedimiento de respaldo y restauración.
+archivo no forma parte del respaldo SQL. El script de respaldo incluido empaqueta
+también este volumen y lo guarda cifrado bajo `obrixapy/uploads`.
+
+La imagen del backend instala Poppler y Tesseract (`spa+eng`) para procesar PDF y
+fotografías sin enviar documentos fuera del VPS. Después de desplegar esta versión,
+ejecutar `alembic upgrade head` antes de habilitar los módulos en el frontend.

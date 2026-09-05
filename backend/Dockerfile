@@ -5,7 +5,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
 RUN groupadd --system --gid 10001 app \
-    && useradd --system --uid 10001 --gid app --create-home app
+    && useradd --system --uid 10001 --gid app --create-home app \
+    && apt-get update \
+    && apt-get install --no-install-recommends -y \
+        ca-certificates \
+        poppler-utils \
+        tesseract-ocr \
+        tesseract-ocr-eng \
+        tesseract-ocr-spa \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

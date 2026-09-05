@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Pencil } from 'lucide-react';
@@ -17,8 +17,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
-const ENABLED_TABS = ['resumen', 'niveles', 'tareas', 'checklist'];
-const DISABLED_TABS = ['planos', 'documentacion', 'historial'];
+const ENABLED_TABS = ['resumen', 'niveles', 'tareas', 'checklist', 'planos', 'documentacion'];
+const PlanosTab = lazy(() => import('@/pages/projects/tabs/PlanosTab').then((module) => ({ default: module.PlanosTab })));
+const DocumentosTab = lazy(() => import('@/pages/projects/tabs/DocumentosTab').then((module) => ({ default: module.DocumentosTab })));
 
 export function ProjectDetailPage() {
   const { projectId = '' } = useParams();
@@ -88,11 +89,8 @@ export function ProjectDetailPage() {
             <TabsTrigger value="niveles">Niveles</TabsTrigger>
             <TabsTrigger value="tareas">Tareas</TabsTrigger>
             <TabsTrigger value="checklist">Avance</TabsTrigger>
-            {DISABLED_TABS.map((tab) => (
-              <TabsTrigger key={tab} value={tab} disabled className="capitalize">
-                {tab}
-              </TabsTrigger>
-            ))}
+            <TabsTrigger value="planos">Planos</TabsTrigger>
+            <TabsTrigger value="documentacion">Documentación</TabsTrigger>
           </TabsList>
         </div>
 
@@ -107,6 +105,16 @@ export function ProjectDetailPage() {
         </TabsContent>
         <TabsContent value="checklist">
           <ChecklistTab companyId={companyId} projectId={project.id} />
+        </TabsContent>
+        <TabsContent value="planos">
+          <Suspense fallback={<FullScreenLoader label="Cargando planos..." />}>
+            <PlanosTab companyId={companyId} projectId={project.id} />
+          </Suspense>
+        </TabsContent>
+        <TabsContent value="documentacion">
+          <Suspense fallback={<FullScreenLoader label="Cargando documentos..." />}>
+            <DocumentosTab companyId={companyId} projectId={project.id} />
+          </Suspense>
         </TabsContent>
       </Tabs>
 

@@ -22,8 +22,8 @@ export const PRIMARY_NAV: NavItem[] = [
 ];
 
 export const SECONDARY_NAV: NavItem[] = [
-  { label: 'Herramientas', to: '/inventario', icon: Wrench, comingSoon: true },
-  { label: 'Personal', to: '/personal', icon: Users, comingSoon: true },
-  { label: 'Reportes', to: '/reportes', icon: BarChart3, comingSoon: true },
-  { label: 'Configuracion', to: '/configuracion', icon: Settings, comingSoon: true },
+  { label: 'Herramientas', to: '/inventario', icon: Wrench },
+  { label: 'Personal', to: '/personal', icon: Users },
+  { label: 'Reportes', to: '/reportes', icon: BarChart3 },
+  { label: 'Configuracion', to: '/configuracion', icon: Settings },
 ];
