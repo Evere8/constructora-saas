@@ -15,7 +15,11 @@ from PIL import Image, ImageDraw
 from starlette.datastructures import Headers
 
 from app.api.routes import elongations
-from app.api.routes.elongations import _resume_queued_theory_job, require_job
+from app.api.routes.elongations import (
+    _restore_missing_source_file,
+    _resume_queued_theory_job,
+    require_job,
+)
 from app.db.models import ElongationJob
 from app.services.elongations import theory
 from app.services.elongations.classification import propose_classifications, zone_contains
@@ -451,6 +455,106 @@ def test_create_job_refreshes_server_timestamp_before_returning_response(
     assert [job.id for job in session.refreshed] == ["job-1"]
 
 
+def test_committed_job_keeps_its_sources_when_response_serialization_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = SimpleNamespace(
+        id="plan-version-1",
+        storage_key="plans/plan.pdf",
+        original_filename="plan.pdf",
+        mime_type="application/pdf",
+        size_bytes=1,
+        sha256="plan-sha",
+    )
+    template_upload = SimpleNamespace(
+        storage_key="templates/template.xlsx",
+        original_filename="template.xlsx",
+        mime_type=next(iter(XLSX_MIME_TYPES)),
+        size_bytes=1,
+        sha256="template-sha",
+    )
+
+    class Mapping:
+        tolerance_percent = Decimal("7.00")
+
+        def to_dict(self) -> dict[str, str]:
+            return {"sheet_name": "N1"}
+
+    class Session:
+        def __init__(self) -> None:
+            self.scalar_values = [plan, None, None, None]
+            self.objects: list[object] = []
+
+        async def scalar(self, _statement: object) -> object | None:
+            return self.scalar_values.pop(0)
+
+        def add(self, object_: object) -> None:
+            self.objects.append(object_)
+
+        async def flush(self) -> None:
+            for object_ in self.objects:
+                if isinstance(object_, ElongationJob) and object_.id is None:
+                    object_.id = "job-1"
+
+        async def commit(self) -> None:
+            return None
+
+        async def refresh(self, job: ElongationJob) -> None:
+            job.created_at = datetime(2026, 9, 5, 16, 24, 27)
+
+    async def no_op(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    async def fake_upload(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        return template_upload
+
+    async def broken_response(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("response failed after commit")
+
+    removed: list[str] = []
+
+    async def capture_remove(storage_key: str) -> None:
+        removed.append(storage_key)
+
+    session = Session()
+    monkeypatch.setattr(elongations, "require_project", no_op)
+    monkeypatch.setattr(elongations, "require_level", no_op)
+    monkeypatch.setattr(elongations, "require_assignee", no_op)
+    monkeypatch.setattr(elongations, "store_upload", fake_upload)
+    monkeypatch.setattr(
+        elongations,
+        "storage_path",
+        lambda _key: SimpleNamespace(read_bytes=lambda: b"template"),
+    )
+    monkeypatch.setattr(elongations, "analyse_template", lambda *_args: Mapping())
+    monkeypatch.setattr(
+        elongations,
+        "get_settings",
+        lambda: SimpleNamespace(document_max_bytes=1),
+    )
+    monkeypatch.setattr(elongations, "response_for_job", broken_response)
+    monkeypatch.setattr(elongations, "remove_stored_file", capture_remove)
+
+    with pytest.raises(RuntimeError, match="response failed after commit"):
+        asyncio.run(
+            elongations.create_elongation_job(
+                project_id="project-1",
+                background_tasks=BackgroundTasks(),
+                access=SimpleNamespace(
+                    company_id="company-1",
+                    role="owner",
+                    user=SimpleNamespace(id="user-1"),
+                ),
+                db=session,
+                title="Elongaciones nivel 1",
+                template_file=UploadFile(file=BytesIO(), filename="template.xlsx"),
+                plan_version_id="plan-version-1",
+            )
+        )
+
+    assert removed == []
+
+
 def test_idempotent_queued_job_resumes_its_theory_task() -> None:
     background_tasks = BackgroundTasks()
     queued = SimpleNamespace(id="job-1", workflow_status="queued_theory")
@@ -461,6 +565,79 @@ def test_idempotent_queued_job_resumes_its_theory_task() -> None:
 
     assert len(background_tasks.tasks) == 1
     assert background_tasks.tasks[0].args == ("job-1",)
+
+
+def test_missing_idempotent_source_is_restored_without_replacing_a_healthy_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = SimpleNamespace(
+        storage_key="old/missing.pdf",
+        original_filename="old.pdf",
+        mime_type="application/pdf",
+        size_bytes=1,
+        sha256="old-sha",
+        page_count=4,
+        processing_status="failed",
+        processing_summary_json={"old": True},
+        error_message="missing",
+    )
+
+    class Session:
+        flushed = 0
+
+        async def scalar(self, _statement: object) -> object:
+            return source
+
+        async def flush(self) -> None:
+            self.flushed += 1
+
+    session = Session()
+    values = {
+        "storage_key": "new/plan.pdf",
+        "original_filename": "plan.pdf",
+        "mime_type": "application/pdf",
+        "size_bytes": 99,
+        "sha256": "new-sha",
+    }
+    monkeypatch.setattr(
+        "app.api.routes.elongations._source_file_is_available",
+        lambda _source: asyncio.sleep(0, result=False),
+    )
+
+    restored = asyncio.run(
+        _restore_missing_source_file(
+            session,
+            SimpleNamespace(id="job-1"),
+            kind="plan",
+            source_values=values,
+            uploaded_by_user_id="user-1",
+        )
+    )
+
+    assert restored is True
+    assert source.storage_key == "new/plan.pdf"
+    assert source.sha256 == "new-sha"
+    assert source.page_count is None
+    assert source.processing_status == "uploaded"
+    assert source.error_message is None
+    assert session.flushed == 1
+
+    monkeypatch.setattr(
+        "app.api.routes.elongations._source_file_is_available",
+        lambda _source: asyncio.sleep(0, result=True),
+    )
+    restored_again = asyncio.run(
+        _restore_missing_source_file(
+            session,
+            SimpleNamespace(id="job-1"),
+            kind="plan",
+            source_values={**values, "storage_key": "must-not-replace.pdf"},
+            uploaded_by_user_id="user-1",
+        )
+    )
+
+    assert restored_again is False
+    assert source.storage_key == "new/plan.pdf"
 
 
 def test_startup_recovery_schedules_persisted_theory_jobs(monkeypatch: pytest.MonkeyPatch) -> None:
