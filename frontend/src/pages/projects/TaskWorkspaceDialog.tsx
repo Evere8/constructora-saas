@@ -7,6 +7,7 @@ import { EmptyState, ErrorState, LoadingState } from '@/components/common/states
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { RelocationRequestsCard } from '@/components/inventory/RelocationRequestsCard';
 import {
   Dialog,
   DialogContent,
@@ -142,6 +143,13 @@ export function TaskWorkspaceDialog({
           </Card>
 
           <TaskRequirementsCard companyId={companyId} projectId={projectId} taskId={task.id} />
+
+          <RelocationRequestsCard
+            companyId={companyId}
+            projectId={projectId}
+            taskId={task.id}
+            title="Reubicación del equipo"
+          />
 
           <div className="flex items-center justify-between gap-3">
             <div>

@@ -34,6 +34,12 @@ describe('permisos por rol', () => {
     expect(canForAssignment('worker', 'checklist.status', null, 'user-1')).toBe(false);
   });
 
+  it('el responsable puede confirmar solo su propia reubicación', () => {
+    expect(canForAssignment('transport', 'inventory.relocate', 'user-1', 'user-1')).toBe(true);
+    expect(canForAssignment('transport', 'inventory.relocate', 'user-2', 'user-1')).toBe(false);
+    expect(canForAssignment('supervisor', 'inventory.relocate', 'user-2', 'user-1')).toBe(true);
+  });
+
   it('supervisor puede cambiar estados sin ser el asignado', () => {
     expect(canForAssignment('supervisor', 'checklist.status', 'user-2', 'user-1')).toBe(true);
   });

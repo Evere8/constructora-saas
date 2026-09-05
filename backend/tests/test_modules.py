@@ -24,6 +24,7 @@ def test_openapi_exposes_operational_modules() -> None:
         f"{prefix}/projects/{{project_id}}/documents",
         f"{prefix}/inventory",
         f"{prefix}/inventory/movements",
+        f"{prefix}/inventory/relocations",
         f"{prefix}/members",
         f"{prefix}/reports/overview",
         f"{prefix}/settings",

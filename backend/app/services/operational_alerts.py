@@ -2,12 +2,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
+from sqlalchemy.orm import aliased
 
 from app.api.dependencies import DbSession
 from app.db.models import (
     ChecklistItem,
     InventoryItem,
+    InventoryRelocationRequest,
     Notification,
     Project,
     Task,
@@ -46,7 +48,9 @@ def derive_requirement_availability(
 ) -> str:
     if item is None:
         return "unchecked"
-    if item.status in {"maintenance", "retired"} or item.current_project_id != project_id:
+    if item.status in {"maintenance", "retired", "relocation_pending", "in_transit"}:
+        return "missing"
+    if item.current_project_id != project_id:
         return "missing"
     if item.quantity < required_quantity:
         return "partial"
@@ -163,12 +167,22 @@ async def collect_alert_candidates(
             select(TaskMaterialRequirement, Task, Project.name)
             .join(Task, Task.id == TaskMaterialRequirement.task_id)
             .join(Project, Project.id == Task.project_id)
+            .outerjoin(
+                InventoryRelocationRequest,
+                and_(
+                    InventoryRelocationRequest.task_id == TaskMaterialRequirement.task_id,
+                    InventoryRelocationRequest.inventory_item_id
+                    == TaskMaterialRequirement.inventory_item_id,
+                    InventoryRelocationRequest.status.in_(("pending", "in_transit")),
+                ),
+            )
             .where(
                 Task.company_id == company_id,
                 Task.status.not_in(("completed", "cancelled")),
                 Task.due_at.is_not(None),
                 Task.due_at <= horizon,
                 TaskMaterialRequirement.availability_status != "available",
+                InventoryRelocationRequest.id.is_(None),
             )
         )
     ).all()
@@ -206,6 +220,49 @@ async def collect_alert_candidates(
                 title="Equipo en mantenimiento",
                 message=f"{item.code} · {item.name}",
                 project_id=item.current_project_id,
+            )
+        )
+    from_project = aliased(Project)
+    to_project = aliased(Project)
+    relocation_rows = (
+        await db.execute(
+            select(
+                InventoryRelocationRequest,
+                InventoryItem,
+                Task,
+                from_project.name,
+                to_project.name,
+            )
+            .join(
+                InventoryItem,
+                InventoryItem.id == InventoryRelocationRequest.inventory_item_id,
+            )
+            .join(Task, Task.id == InventoryRelocationRequest.task_id)
+            .outerjoin(from_project, from_project.id == InventoryRelocationRequest.from_project_id)
+            .outerjoin(to_project, to_project.id == InventoryRelocationRequest.to_project_id)
+            .where(
+                InventoryRelocationRequest.company_id == company_id,
+                InventoryRelocationRequest.status.in_(("pending", "in_transit")),
+            )
+        )
+    ).all()
+    for relocation, item, task, from_name, to_name in relocation_rows:
+        is_pending = relocation.status == "pending"
+        origin = from_name or "Depósito"
+        destination = to_name or "Obra destino"
+        candidates.append(
+            AlertCandidate(
+                dedupe_key=f"inventory_relocation:{relocation.id}",
+                alert_type="inventory_relocation",
+                severity="critical" if is_pending else "warning",
+                title="Reubicación pendiente" if is_pending else "Equipo en traslado",
+                message=(
+                    f"{item.code} · {item.name} · {origin} → {destination} · {task.title}"
+                ),
+                project_id=relocation.to_project_id,
+                task_id=relocation.task_id,
+                assigned_user_id=relocation.assigned_user_id,
+                due_at=task.planned_start_at or task.due_at,
             )
         )
     return candidates

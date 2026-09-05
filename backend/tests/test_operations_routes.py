@@ -44,6 +44,15 @@ def test_openapi_exposes_project_plan_board_routes() -> None:
     assert f"{prefix}/levels/{{level_id}}/checklist-template" in paths
 
 
+def test_openapi_exposes_inventory_relocation_actions() -> None:
+    paths = app.openapi()["paths"]
+    prefix = "/api/v1/companies/{company_id}/inventory/relocations/{relocation_id}"
+
+    assert f"{prefix}/start" in paths
+    assert f"{prefix}/complete" in paths
+    assert f"{prefix}/cancel" in paths
+
+
 def test_activity_metadata_serializes_checklist_dates() -> None:
     added: list[object] = []
     db = SimpleNamespace(add=added.append)

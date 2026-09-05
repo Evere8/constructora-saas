@@ -82,7 +82,15 @@ class AnnotationResponse(BaseModel):
 
 
 ItemType = Literal["machine", "tool", "material"]
-InventoryStatus = Literal["available", "assigned", "maintenance", "retired"]
+InventoryStatus = Literal[
+    "available",
+    "assigned",
+    "relocation_pending",
+    "in_transit",
+    "maintenance",
+    "retired",
+]
+RelocationStatus = Literal["pending", "in_transit", "completed", "cancelled"]
 
 
 class InventoryItemCreate(BaseModel):
@@ -148,6 +156,30 @@ class InventoryMovementResponse(BaseModel):
     notes: str | None
     moved_by_user_id: str
     moved_at: datetime
+
+
+class InventoryRelocationRequestResponse(BaseModel):
+    id: str
+    company_id: str
+    task_id: str
+    inventory_item_id: str
+    from_project_id: str | None
+    to_project_id: str
+    assigned_user_id: str | None
+    requested_by_user_id: str
+    status: RelocationStatus
+    notes: str | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    cancelled_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+    inventory_code: str | None = None
+    inventory_name: str | None = None
+    task_title: str | None = None
+    from_project_name: str | None = None
+    to_project_name: str | None = None
+    assigned_user_name: str | None = None
 
 
 class ElongationItemCreate(BaseModel):

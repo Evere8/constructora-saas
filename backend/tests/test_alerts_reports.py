@@ -54,6 +54,9 @@ def test_requirement_schema_and_automatic_availability() -> None:
     assert derive_availability(item, "project", Decimal("2")) == "available"
     item.current_project_id = None
     assert derive_availability(item, "project", Decimal("2")) == "missing"
+    item.current_project_id = "project"
+    item.status = "relocation_pending"
+    assert derive_availability(item, "project", Decimal("2")) == "missing"
     assert derive_availability(None, "project", Decimal("2")) == "unchecked"
 
 

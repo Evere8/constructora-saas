@@ -322,6 +322,44 @@ class InventoryMovement(UUIDPrimaryKeyMixin, Base):
     moved_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
 
 
+class InventoryRelocationRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """A requested move that must be confirmed before changing an item's location."""
+
+    __tablename__ = "inventory_relocation_requests"
+    __table_args__ = (
+        Index("ix_inventory_relocations_company_status", "company_id", "status"),
+        Index("ix_inventory_relocations_task_status", "task_id", "status"),
+        Index("ix_inventory_relocations_item_status", "inventory_item_id", "status"),
+    )
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    task_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    inventory_item_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("inventory_items.id", ondelete="RESTRICT"), nullable=False
+    )
+    from_project_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True
+    )
+    to_project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    assigned_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="SET NULL"), nullable=True
+    )
+    requested_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(25), nullable=False, default="pending")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class PlanDocument(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "plan_documents"
     __table_args__ = (Index("ix_plans_company_project", "company_id", "project_id"),)

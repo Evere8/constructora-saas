@@ -8,6 +8,7 @@ import { formatDate } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
+import { RelocationRequestsCard } from '@/components/inventory/RelocationRequestsCard';
 import { ProjectPlanBoard } from '@/pages/projects/ProjectPlanBoard';
 
 function Fact({ label, value }: { label: string; value: string }) {
@@ -50,6 +51,12 @@ export function ResumenTab({ companyId, project }: { companyId: string; project:
 
   return (
     <div className="space-y-4">
+      <RelocationRequestsCard
+        companyId={companyId}
+        projectId={project.id}
+        title="Reubicaciones pendientes de esta obra"
+      />
+
       <ProjectPlanBoard companyId={companyId} project={project} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

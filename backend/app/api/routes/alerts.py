@@ -10,6 +10,7 @@ from app.api.routes.operations import (
     WORK_EDITOR_ROLES,
     add_activity,
     commit_or_conflict,
+    require_assignee,
     require_project,
     require_role,
     require_task,
@@ -24,6 +25,7 @@ from app.api.schemas.alerts import (
 )
 from app.db.models import (
     InventoryItem,
+    InventoryRelocationRequest,
     Notification,
     NotificationReceipt,
     TaskMaterialRequirement,
@@ -36,6 +38,7 @@ from app.services.operational_alerts import (
 router = APIRouter()
 REQUIREMENT_EDITOR_ROLES = WORK_EDITOR_ROLES | {"warehouse"}
 ASSIGNMENT_SCOPED_ROLES = {"worker", "transport"}
+ACTIVE_RELOCATION_STATUSES = ("pending", "in_transit")
 
 
 async def require_inventory_item(
@@ -60,6 +63,96 @@ def derive_availability(
     required_quantity: Decimal,
 ) -> str:
     return derive_requirement_availability(item, project_id, required_quantity)
+
+
+def needs_relocation(item: InventoryItem | None, project_id: str) -> bool:
+    return bool(
+        item
+        and item.item_type in {"machine", "tool"}
+        and item.current_project_id != project_id
+    )
+
+
+def location_status(project_id: str | None) -> str:
+    return "assigned" if project_id else "available"
+
+
+async def active_relocation_for_item(
+    db: DbSession,
+    company_id: str,
+    item_id: str,
+) -> InventoryRelocationRequest | None:
+    return await db.scalar(
+        select(InventoryRelocationRequest).where(
+            InventoryRelocationRequest.company_id == company_id,
+            InventoryRelocationRequest.inventory_item_id == item_id,
+            InventoryRelocationRequest.status.in_(ACTIVE_RELOCATION_STATUSES),
+        )
+    )
+
+
+async def cancel_pending_relocation(
+    db: DbSession,
+    relocation: InventoryRelocationRequest,
+    item: InventoryItem,
+) -> None:
+    if relocation.status == "in_transit":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No se puede cambiar el recurso mientras su traslado está en curso",
+        )
+    if relocation.status != "pending":
+        return
+    relocation.status = "cancelled"
+    relocation.cancelled_at = datetime.now(UTC).replace(tzinfo=None)
+    if item.status == "relocation_pending":
+        item.status = location_status(relocation.from_project_id)
+    await db.flush()
+
+
+async def create_relocation_if_needed(
+    db: DbSession,
+    *,
+    company_id: str,
+    project_id: str,
+    task_id: str,
+    item: InventoryItem | None,
+    assignee_id: str | None,
+    requested_by_user_id: str,
+) -> InventoryRelocationRequest | None:
+    if not needs_relocation(item, project_id):
+        return None
+    assert item is not None
+    if item.status in {"maintenance", "retired"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="El equipo está en mantenimiento o retirado y no puede reubicarse",
+        )
+    if assignee_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Seleccione el responsable que realizará la reubicación del equipo",
+        )
+    active = await active_relocation_for_item(db, company_id, item.id)
+    if active is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="El equipo ya tiene una reubicación pendiente o está en traslado",
+        )
+    relocation = InventoryRelocationRequest(
+        company_id=company_id,
+        task_id=task_id,
+        inventory_item_id=item.id,
+        from_project_id=item.current_project_id,
+        to_project_id=project_id,
+        assigned_user_id=assignee_id,
+        requested_by_user_id=requested_by_user_id,
+        status="pending",
+    )
+    db.add(relocation)
+    item.status = "relocation_pending"
+    await db.flush()
+    return relocation
 
 
 def requirement_response(
@@ -117,9 +210,13 @@ async def create_requirement(
     await require_project(db, access.company_id, project_id)
     await require_task(db, access.company_id, project_id, task_id)
     item = await require_inventory_item(db, access.company_id, payload.inventory_item_id)
-    values = payload.model_dump(exclude={"availability_status"})
-    availability = payload.availability_status or derive_availability(
-        item, project_id, payload.required_quantity
+    if needs_relocation(item, project_id):
+        await require_assignee(db, access.company_id, payload.relocation_assignee_id)
+    values = payload.model_dump(exclude={"availability_status", "relocation_assignee_id"})
+    availability = (
+        derive_availability(item, project_id, payload.required_quantity)
+        if item is not None
+        else payload.availability_status or "unchecked"
     )
     requirement = TaskMaterialRequirement(
         task_id=task_id,
@@ -128,13 +225,26 @@ async def create_requirement(
     )
     db.add(requirement)
     await db.flush()
+    relocation = await create_relocation_if_needed(
+        db,
+        company_id=access.company_id,
+        project_id=project_id,
+        task_id=task_id,
+        item=item,
+        assignee_id=payload.relocation_assignee_id,
+        requested_by_user_id=access.user.id,
+    )
     add_activity(
         db,
         access,
         "task.requirement.created",
         "task_material_requirement",
         requirement.id,
-        {"task_id": task_id, "availability_status": availability},
+        {
+            "task_id": task_id,
+            "availability_status": availability,
+            "relocation_request_id": relocation.id if relocation else None,
+        },
     )
     await commit_or_conflict(db, "No fue posible agregar el recurso")
     await db.refresh(requirement)
@@ -164,21 +274,60 @@ async def update_requirement(
     if requirement is None:
         raise HTTPException(status_code=404, detail="Recurso requerido no encontrado")
     changes = payload.model_dump(exclude_unset=True)
+    relocation_assignee_id = changes.pop("relocation_assignee_id", None)
     item_id = changes.get("inventory_item_id", requirement.inventory_item_id)
     item = await require_inventory_item(db, access.company_id, item_id)
+    active_relocation = None
+    if requirement.inventory_item_id:
+        active_relocation = await active_relocation_for_item(
+            db,
+            access.company_id,
+            requirement.inventory_item_id,
+        )
+    if (
+        active_relocation
+        and active_relocation.task_id == task_id
+        and item_id != requirement.inventory_item_id
+    ):
+        previous_item = await require_inventory_item(
+            db,
+            access.company_id,
+            requirement.inventory_item_id,
+        )
+        assert previous_item is not None
+        await cancel_pending_relocation(db, active_relocation, previous_item)
+        active_relocation = None
+    if needs_relocation(item, project_id):
+        if active_relocation and active_relocation.inventory_item_id == item.id:
+            if relocation_assignee_id:
+                await require_assignee(db, access.company_id, relocation_assignee_id)
+                active_relocation.assigned_user_id = relocation_assignee_id
+        else:
+            await require_assignee(db, access.company_id, relocation_assignee_id)
+            await create_relocation_if_needed(
+                db,
+                company_id=access.company_id,
+                project_id=project_id,
+                task_id=task_id,
+                item=item,
+                assignee_id=relocation_assignee_id,
+                requested_by_user_id=access.user.id,
+            )
     for field, value in changes.items():
         setattr(requirement, field, value)
-    if "availability_status" not in changes:
+    if item is not None:
         requirement.availability_status = derive_availability(
             item, project_id, requirement.required_quantity
         )
+    elif "availability_status" not in changes:
+        requirement.availability_status = "unchecked"
     add_activity(
         db,
         access,
         "task.requirement.updated",
         "task_material_requirement",
         requirement.id,
-        changes,
+        {**changes, "relocation_assignee_id": relocation_assignee_id},
     )
     await commit_or_conflict(db, "No fue posible actualizar el recurso")
     await db.refresh(requirement)
@@ -206,6 +355,20 @@ async def delete_requirement(
     )
     if requirement is None:
         raise HTTPException(status_code=404, detail="Recurso requerido no encontrado")
+    if requirement.inventory_item_id:
+        relocation = await active_relocation_for_item(
+            db,
+            access.company_id,
+            requirement.inventory_item_id,
+        )
+        if relocation and relocation.task_id == task_id:
+            item = await require_inventory_item(
+                db,
+                access.company_id,
+                requirement.inventory_item_id,
+            )
+            assert item is not None
+            await cancel_pending_relocation(db, relocation, item)
     await db.delete(requirement)
     add_activity(
         db,

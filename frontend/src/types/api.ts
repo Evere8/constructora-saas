@@ -381,7 +381,7 @@ export interface InventoryItem {
   item_type: 'machine' | 'tool' | 'material';
   unit: string;
   serial_number?: string | null;
-  status: 'available' | 'assigned' | 'maintenance' | 'retired';
+  status: 'available' | 'assigned' | 'relocation_pending' | 'in_transit' | 'maintenance' | 'retired';
   current_project_id?: string | null;
   quantity: string;
   created_at: string;
@@ -398,6 +398,32 @@ export interface InventoryMovement {
   notes?: string | null;
   moved_by_user_id: string;
   moved_at: string;
+}
+
+export type InventoryRelocationStatus = 'pending' | 'in_transit' | 'completed' | 'cancelled';
+
+export interface InventoryRelocationRequest {
+  id: string;
+  company_id: string;
+  task_id: string;
+  inventory_item_id: string;
+  from_project_id?: string | null;
+  to_project_id: string;
+  assigned_user_id?: string | null;
+  requested_by_user_id: string;
+  status: InventoryRelocationStatus;
+  notes?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  cancelled_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  inventory_code?: string | null;
+  inventory_name?: string | null;
+  task_title?: string | null;
+  from_project_name?: string | null;
+  to_project_name?: string | null;
+  assigned_user_name?: string | null;
 }
 
 export interface CompanyMember {

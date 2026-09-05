@@ -6,6 +6,7 @@ import type {
   DocumentJob,
   InventoryItem,
   InventoryMovement,
+  InventoryRelocationRequest,
   NotificationList,
   PlanDocument,
   PlanAnnotation,
@@ -129,6 +130,17 @@ export const inventoryApi = {
     api.post<InventoryItem>(`${companyBase(companyId)}/inventory`, input),
   move: (companyId: string, input: { item_id: string; to_project_id?: string | null; quantity: number; notes?: string }) =>
     api.post<InventoryMovement>(`${companyBase(companyId)}/inventory/movements`, input),
+  listRelocations: (
+    companyId: string,
+    filters: { project_id?: string; task_id?: string; active_only?: boolean } = {},
+    signal?: AbortSignal,
+  ) => api.get<InventoryRelocationRequest[]>(`${companyBase(companyId)}/inventory/relocations`, filters, signal),
+  startRelocation: (companyId: string, relocationId: string) =>
+    api.post<InventoryRelocationRequest>(`${companyBase(companyId)}/inventory/relocations/${relocationId}/start`, {}),
+  completeRelocation: (companyId: string, relocationId: string) =>
+    api.post<InventoryRelocationRequest>(`${companyBase(companyId)}/inventory/relocations/${relocationId}/complete`, {}),
+  cancelRelocation: (companyId: string, relocationId: string) =>
+    api.post<InventoryRelocationRequest>(`${companyBase(companyId)}/inventory/relocations/${relocationId}/cancel`, {}),
 };
 
 export const membersApi = {
@@ -151,6 +163,7 @@ export const reportsApi = {
 
 export interface TaskRequirementInput {
   inventory_item_id?: string | null;
+  relocation_assignee_id?: string | null;
   description: string;
   required_quantity: number;
   unit: string;

@@ -20,6 +20,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertsSummaryCard } from '@/components/notifications/NotificationCenter';
+import { RelocationRequestsCard } from '@/components/inventory/RelocationRequestsCard';
 
 const BANNER = 'https://images.pexels.com/photos/18078304/pexels-photo-18078304.jpeg?auto=compress&cs=tinysrgb&w=1400';
 const QUICK_ACTIONS = [
@@ -108,6 +109,8 @@ export function DashboardPage() {
           ))}
         </div>
       </div>
+
+      <RelocationRequestsCard companyId={activeCompanyId} />
 
       <AlertsSummaryCard />
 

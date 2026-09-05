@@ -13,6 +13,7 @@ export type Capability =
   | 'documents.export'
   | 'inventory.edit'
   | 'inventory.move'
+  | 'inventory.relocate'
   | 'requirements.edit'
   | 'members.edit'
   | 'platform.admin';
@@ -29,6 +30,7 @@ const FULL: Capability[] = [
   'documents.approve',
   'documents.export',
   'inventory.move',
+  'inventory.relocate',
   'requirements.edit',
 ];
 
@@ -41,10 +43,10 @@ const ROLE_CAPS: Record<Role, Capability[]> = {
   owner: [...FULL, 'inventory.edit', 'members.edit'],
   admin: [...FULL, 'inventory.edit', 'members.edit'],
   engineer: [...FULL],
-  supervisor: [...DOCUMENT_READ, 'levels.edit', 'tasks.edit', 'tasks.status', 'checklist.edit', 'checklist.status', 'plans.edit', 'documents.edit', 'inventory.move', 'requirements.edit'],
-  warehouse: [...DOCUMENT_READ, 'inventory.edit', 'inventory.move', 'requirements.edit'],
-  worker: [...DOCUMENT_READ, 'tasks.status', 'checklist.status'],
-  transport: [...DOCUMENT_READ, 'tasks.status', 'checklist.status'],
+  supervisor: [...DOCUMENT_READ, 'levels.edit', 'tasks.edit', 'tasks.status', 'checklist.edit', 'checklist.status', 'plans.edit', 'documents.edit', 'inventory.move', 'inventory.relocate', 'requirements.edit'],
+  warehouse: [...DOCUMENT_READ, 'inventory.edit', 'inventory.move', 'inventory.relocate', 'requirements.edit'],
+  worker: [...DOCUMENT_READ, 'tasks.status', 'checklist.status', 'inventory.relocate'],
+  transport: [...DOCUMENT_READ, 'tasks.status', 'checklist.status', 'inventory.relocate'],
   viewer: [...DOCUMENT_READ],
 };
 

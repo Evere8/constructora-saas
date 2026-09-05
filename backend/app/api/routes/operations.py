@@ -27,6 +27,8 @@ from app.db.models import (
     ChecklistEvidence,
     ChecklistItem,
     CompanyMembership,
+    InventoryItem,
+    InventoryRelocationRequest,
     PlanDocument,
     PlanVersion,
     Project,
@@ -563,6 +565,32 @@ async def delete_task(
     require_role(access, WORK_EDITOR_ROLES)
     await require_project(db, access.company_id, project_id)
     task = await require_task(db, access.company_id, project_id, task_id)
+    active_relocations = (
+        await db.execute(
+            select(InventoryRelocationRequest, InventoryItem)
+            .join(
+                InventoryItem,
+                InventoryItem.id == InventoryRelocationRequest.inventory_item_id,
+            )
+            .where(
+                InventoryRelocationRequest.company_id == access.company_id,
+                InventoryRelocationRequest.task_id == task.id,
+                InventoryRelocationRequest.status.in_(("pending", "in_transit")),
+            )
+        )
+    ).all()
+    if any(relocation.status == "in_transit" for relocation, _ in active_relocations):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No se puede eliminar la tarea mientras un equipo está en traslado",
+        )
+    current = datetime.now(UTC).replace(tzinfo=None)
+    for relocation, item in active_relocations:
+        relocation.status = "cancelled"
+        relocation.cancelled_at = current
+        item.current_project_id = relocation.from_project_id
+        if item.status == "relocation_pending":
+            item.status = "assigned" if relocation.from_project_id else "available"
     evidence_keys = list(
         (
             await db.execute(
@@ -581,7 +609,11 @@ async def delete_task(
         "task.deleted",
         "task",
         task.id,
-        {"title": task.title, "evidence_count": len(evidence_keys)},
+        {
+            "title": task.title,
+            "evidence_count": len(evidence_keys),
+            "cancelled_relocations": len(active_relocations),
+        },
     )
     await db.delete(task)
     await commit_or_conflict(db, "No fue posible eliminar la tarea")

@@ -26,7 +26,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { inventoryApi, requirementsApi } from '@/lib/api/modules';
+import { inventoryApi, membersApi, requirementsApi } from '@/lib/api/modules';
+import { projectsApi } from '@/lib/api/projects';
+import { asItems } from '@/lib/collection';
 import type { InventoryItem, TaskRequirement } from '@/types/api';
 
 const schema = z.object({
@@ -35,6 +37,7 @@ const schema = z.object({
   required_quantity: z.coerce.number().positive('La cantidad debe ser mayor que cero'),
   unit: z.string().min(1, 'Indica la unidad'),
   availability_status: z.enum(['unchecked', 'available', 'partial', 'missing']),
+  relocation_assignee_id: z.string().optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -72,19 +75,40 @@ function RequirementDialog({
       required_quantity: Number(item?.required_quantity ?? 1),
       unit: item?.unit ?? 'unidad',
       availability_status: item?.availability_status ?? 'unchecked',
+      relocation_assignee_id: '',
     },
   });
+  const selectedInventoryId = form.watch('inventory_item_id');
+  const selectedInventoryItem = inventory.find((candidate) => candidate.id === selectedInventoryId);
+  const requiresRelocation = Boolean(
+    selectedInventoryItem
+    && selectedInventoryItem.item_type !== 'material'
+    && selectedInventoryItem.current_project_id !== projectId,
+  );
+  const membersQuery = useQuery({
+    queryKey: ['members', companyId],
+    queryFn: ({ signal }) => membersApi.list(companyId, signal),
+    enabled: open && requiresRelocation,
+  });
+  const projectsQuery = useQuery({
+    queryKey: ['projects', companyId, { limit: 100 }],
+    queryFn: ({ signal }) => projectsApi.list(companyId, { limit: 100 }, signal),
+    enabled: open && requiresRelocation,
+  });
+  const sourceProjectName = selectedInventoryItem?.current_project_id
+    ? asItems(projectsQuery.data).find((project) => project.id === selectedInventoryItem.current_project_id)?.name
+    : 'Depósito';
   const mutation = useMutation({
     mutationFn: (values: FormValues) => {
-      const { availability_status, ...resource } = values;
-      const shouldSendStatus = Boolean(
-        item
-        || values.inventory_item_id === 'manual'
-        || form.formState.dirtyFields.availability_status,
+      const { availability_status, relocation_assignee_id, ...resource } = values;
+      const isLinkedInventory = values.inventory_item_id !== 'manual';
+      const shouldSendStatus = !isLinkedInventory && Boolean(
+        item || form.formState.dirtyFields.availability_status,
       );
       const input = {
         ...resource,
         inventory_item_id: values.inventory_item_id === 'manual' ? null : values.inventory_item_id,
+        ...(requiresRelocation ? { relocation_assignee_id: relocation_assignee_id || null } : {}),
         ...(shouldSendStatus ? { availability_status } : {}),
       };
       return item
@@ -94,6 +118,7 @@ function RequirementDialog({
     onSuccess: () => {
       toast.success(item ? 'Recurso actualizado' : 'Recurso agregado');
       void queryClient.invalidateQueries({ queryKey: ['task-requirements', companyId, projectId, taskId] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory-relocations', companyId] });
       void queryClient.invalidateQueries({ queryKey: ['notifications', companyId] });
       void queryClient.invalidateQueries({ queryKey: ['reports-advanced', companyId] });
       onOpenChange(false);
@@ -119,7 +144,13 @@ function RequirementDialog({
             Vincúlalo al inventario para verificar automáticamente si ya está en la obra.
           </DialogDescription>
         </DialogHeader>
-        <form className="space-y-4" onSubmit={form.handleSubmit((values) => mutation.mutate(values))}>
+        <form className="space-y-4" onSubmit={form.handleSubmit((values) => {
+          if (requiresRelocation && !values.relocation_assignee_id) {
+            form.setError('relocation_assignee_id', { message: 'Selecciona el responsable del traslado' });
+            return;
+          }
+          mutation.mutate(values);
+        })}>
           <div className="space-y-1">
             <Label>Inventario</Label>
             <Select value={form.watch('inventory_item_id')} onValueChange={selectInventory}>
@@ -149,20 +180,11 @@ function RequirementDialog({
               <Input id="requirement-unit" {...form.register('unit')} />
             </div>
           </div>
-          <div className="space-y-1">
-            <Label>Disponibilidad</Label>
-            <Select
-              value={form.watch('availability_status')}
-              onValueChange={(value) => form.setValue('availability_status', value as FormValues['availability_status'])}
-            >
-              <SelectTrigger aria-label="Seleccionar disponibilidad"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {Object.entries(STATUS).map(([value, statusOption]) => (
-                  <SelectItem key={value} value={value}>{statusOption.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {selectedInventoryItem ? (
+            <div className={requiresRelocation ? 'space-y-3 rounded-md border border-amber-300 bg-amber-50 p-3' : 'rounded-md border bg-muted/40 p-3'}>
+              {requiresRelocation ? <><div><p className="text-sm font-medium text-amber-900">Equipo fuera de esta obra</p><p className="mt-1 text-xs text-amber-800">Actualmente: {sourceProjectName ?? 'Otra obra'}. Al guardar se solicitará su reubicación; la tarea queda pendiente y no se marca sobre el plano hasta confirmar su llegada.</p></div><div className="space-y-1"><Label>Responsable de reubicación</Label><Select value={form.watch('relocation_assignee_id') || 'none'} onValueChange={(value) => form.setValue('relocation_assignee_id', value === 'none' ? '' : value)}><SelectTrigger aria-label="Seleccionar responsable de reubicación"><SelectValue placeholder="Seleccionar personal" /></SelectTrigger><SelectContent><SelectItem value="none">Seleccionar personal</SelectItem>{(membersQuery.data ?? []).filter((member) => member.status === 'active').map((member) => <SelectItem key={member.user_id} value={member.user_id}>{member.full_name || member.email}</SelectItem>)}</SelectContent></Select>{form.formState.errors.relocation_assignee_id ? <p className="text-xs text-destructive">{form.formState.errors.relocation_assignee_id.message}</p> : null}</div></> : <><p className="text-sm font-medium">Disponibilidad automática</p><p className="mt-1 text-xs text-muted-foreground">El equipo ya está en esta obra y se valida según su cantidad y estado actual.</p></>}
+            </div>
+          ) : <div className="space-y-1"><Label>Disponibilidad</Label><Select value={form.watch('availability_status')} onValueChange={(value) => form.setValue('availability_status', value as FormValues['availability_status'])}><SelectTrigger aria-label="Seleccionar disponibilidad"><SelectValue /></SelectTrigger><SelectContent>{Object.entries(STATUS).map(([value, statusOption]) => <SelectItem key={value} value={value}>{statusOption.label}</SelectItem>)}</SelectContent></Select></div>}
           <Button className="w-full" disabled={mutation.isPending}>
             {mutation.isPending ? 'Guardando...' : 'Guardar recurso'}
           </Button>
@@ -199,6 +221,7 @@ export function TaskRequirementsCard({
     onSuccess: () => {
       toast.success('Recurso eliminado');
       void queryClient.invalidateQueries({ queryKey: ['task-requirements', companyId, projectId, taskId] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory-relocations', companyId] });
       void queryClient.invalidateQueries({ queryKey: ['notifications', companyId] });
     },
     onError: () => toast.error('No se pudo eliminar el recurso'),

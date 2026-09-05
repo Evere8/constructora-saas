@@ -61,6 +61,7 @@ export function TaskFormDialog({
   task,
   open,
   onOpenChange,
+  onCreated,
 }: {
   companyId: string;
   projectId: string;
@@ -68,6 +69,7 @@ export function TaskFormDialog({
   task?: Task;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onCreated?: (task: Task) => void;
 }) {
   const isEdit = Boolean(task);
   const queryClient = useQueryClient();
@@ -122,12 +124,13 @@ export function TaskFormDialog({
         ? projectsApi.updateTask(companyId, projectId, task.id, payload)
         : projectsApi.createTask(companyId, projectId, payload);
     },
-    onSuccess: () => {
+    onSuccess: (savedTask) => {
       toast.success(isEdit ? 'Tarea actualizada' : 'Tarea creada');
       void queryClient.invalidateQueries({ queryKey: ['tasks', companyId, projectId] });
       void queryClient.invalidateQueries({ queryKey: ['notifications', companyId] });
       void queryClient.invalidateQueries({ queryKey: ['reports-advanced', companyId] });
       onOpenChange(false);
+      if (!isEdit) onCreated?.(savedTask);
     },
     onError: (error) =>
       setFormError(error instanceof ApiError ? error.detail : 'No se pudo guardar la tarea.'),
@@ -150,6 +153,7 @@ export function TaskFormDialog({
         <DialogHeader>
           <DialogTitle>{isEdit ? 'Editar tarea' : 'Nueva tarea'}</DialogTitle>
         </DialogHeader>
+        {!isEdit ? <p className="text-sm text-muted-foreground">Después de crearla podrás elegir sus herramientas o máquinas y, si están en otra obra, solicitar su reubicación.</p> : null}
         <form onSubmit={onSubmit} className="space-y-4" noValidate>
           <div className="space-y-2">
             <Label htmlFor="task-title">Titulo</Label>

@@ -3,6 +3,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { Eye, ListChecks, Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { projectsApi, type TaskFilters } from '@/lib/api/projects';
+import { inventoryApi } from '@/lib/api/modules';
 import type { Task, TaskStatus, TaskType } from '@/types/api';
 import { useCan, useCanAssigned } from '@/auth/useCan';
 import { asItems, asTotal } from '@/lib/collection';
@@ -74,6 +75,14 @@ export function TareasTab({ companyId, projectId }: { companyId: string; project
     queryFn: ({ signal }) => projectsApi.listTasks(companyId, projectId, filters, signal),
     placeholderData: keepPreviousData,
   });
+  const relocationsQuery = useQuery({
+    queryKey: ['inventory-relocations', companyId, { project_id: projectId, active_only: true }],
+    queryFn: ({ signal }) => inventoryApi.listRelocations(
+      companyId,
+      { project_id: projectId, active_only: true },
+      signal,
+    ),
+  });
 
   const statusMutation = useMutation({
     mutationFn: ({ taskId, status }: { taskId: string; status: TaskStatus }) =>
@@ -104,6 +113,10 @@ export function TareasTab({ companyId, projectId }: { companyId: string; project
   const total = asTotal(query.data);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const levelName = (id?: string | null) => levels.find((l) => l.id === id)?.name ?? '\u2014';
+  const relocationsByTask = useMemo(
+    () => new Map((relocationsQuery.data ?? []).map((relocation) => [relocation.task_id, relocation])),
+    [relocationsQuery.data],
+  );
 
   const openCreate = () => {
     setEditing(undefined);
@@ -182,6 +195,7 @@ export function TareasTab({ companyId, projectId }: { companyId: string; project
                     <TableRow key={task.id}>
                       <TableCell>
                         <p className="font-medium">{task.title}</p>
+                        {relocationsByTask.get(task.id) ? <Badge variant={relocationsByTask.get(task.id)?.status === 'pending' ? 'warning' : 'info'} className="mt-1">{relocationsByTask.get(task.id)?.status === 'pending' ? 'Reubicación pendiente' : 'Equipo en traslado'}</Badge> : null}
                         {task.due_at ? (
                           <p className="text-xs text-muted-foreground">Vence {formatDate(task.due_at)}</p>
                         ) : null}
@@ -261,6 +275,7 @@ export function TareasTab({ companyId, projectId }: { companyId: string; project
           task={editing}
           open={dialogOpen}
           onOpenChange={setDialogOpen}
+          onCreated={setWorkspaceTask}
         />
       ) : null}
 

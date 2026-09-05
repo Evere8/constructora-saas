@@ -30,7 +30,14 @@ const schema = z.object({
 type FormValues = z.infer<typeof schema>;
 
 const TYPE_LABELS = { machine: 'Máquina', tool: 'Herramienta', material: 'Material' };
-const STATUS_LABELS = { available: 'Disponible', assigned: 'En obra', maintenance: 'Mantenimiento', retired: 'Retirado' };
+const STATUS_LABELS = {
+  available: 'Disponible',
+  assigned: 'En obra',
+  relocation_pending: 'Reubicación pendiente',
+  in_transit: 'En traslado',
+  maintenance: 'Mantenimiento',
+  retired: 'Retirado',
+};
 
 export function InventoryPage() {
   const { activeCompanyId } = useCompany();
@@ -71,6 +78,10 @@ export function InventoryPage() {
       <div className="space-y-1"><Label htmlFor="inventory-quantity">Cantidad</Label><Input id="inventory-quantity" type="number" min="0.001" step="0.001" {...form.register('quantity')} /></div>
       <Button type="submit" disabled={createMutation.isPending}><PackagePlus className="h-4 w-4" /> Agregar</Button>
     </form></CardContent></Card> : null}
-    {query.isLoading ? <LoadingState label="Cargando inventario..." /> : query.isError ? <ErrorState error={query.error} onRetry={() => void query.refetch()} /> : query.data?.length ? <div className="space-y-3">{query.data.map((item) => <Card key={item.id}><CardContent className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between"><div><div className="flex items-center gap-2"><p className="font-medium">{item.name}</p><Badge variant="muted">{TYPE_LABELS[item.item_type]}</Badge><Badge variant={item.status === 'maintenance' ? 'warning' : 'outline'}>{STATUS_LABELS[item.status]}</Badge></div><p className="text-xs text-muted-foreground">{item.code} · {item.quantity} {item.unit}{item.serial_number ? ` · Serie ${item.serial_number}` : ''}</p></div>{canMove && item.item_type !== 'material' ? <div className="flex gap-2"><Select value={destinations[item.id] ?? item.current_project_id ?? 'warehouse'} onValueChange={(value) => setDestinations((current) => ({ ...current, [item.id]: value }))}><SelectTrigger className="w-[200px]"><SelectValue placeholder="Destino" /></SelectTrigger><SelectContent><SelectItem value="warehouse">Depósito</SelectItem>{projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select><Button variant="outline" onClick={() => moveMutation.mutate({ item, destination: destinations[item.id] ?? item.current_project_id ?? 'warehouse' })}>Registrar movimiento</Button></div> : null}</CardContent></Card>)}</div> : <EmptyState title="Sin herramientas" description="Registra la primera herramienta, máquina o material." icon={<Wrench className="h-6 w-6" />} />}
+    {query.isLoading ? <LoadingState label="Cargando inventario..." /> : query.isError ? <ErrorState error={query.error} onRetry={() => void query.refetch()} /> : query.data?.length ? <div className="space-y-3">{query.data.map((item) => {
+      const relocationActive = item.status === 'relocation_pending' || item.status === 'in_transit';
+      const statusVariant = item.status === 'relocation_pending' || item.status === 'maintenance' ? 'warning' : item.status === 'in_transit' ? 'info' : 'outline';
+      return <Card key={item.id}><CardContent className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between"><div><div className="flex items-center gap-2"><p className="font-medium">{item.name}</p><Badge variant="muted">{TYPE_LABELS[item.item_type]}</Badge><Badge variant={statusVariant}>{STATUS_LABELS[item.status]}</Badge></div><p className="text-xs text-muted-foreground">{item.code} · {item.quantity} {item.unit}{item.serial_number ? ` · Serie ${item.serial_number}` : ''}</p>{relocationActive ? <p className="mt-1 text-xs text-amber-700">La ubicación se confirma desde la reubicación asignada.</p> : null}</div>{canMove && item.item_type !== 'material' && !relocationActive ? <div className="flex gap-2"><Select value={destinations[item.id] ?? item.current_project_id ?? 'warehouse'} onValueChange={(value) => setDestinations((current) => ({ ...current, [item.id]: value }))}><SelectTrigger className="w-[200px]"><SelectValue placeholder="Destino" /></SelectTrigger><SelectContent><SelectItem value="warehouse">Depósito</SelectItem>{projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select><Button variant="outline" onClick={() => moveMutation.mutate({ item, destination: destinations[item.id] ?? item.current_project_id ?? 'warehouse' })}>Registrar movimiento</Button></div> : null}</CardContent></Card>;
+    })}</div> : <EmptyState title="Sin herramientas" description="Registra la primera herramienta, máquina o material." icon={<Wrench className="h-6 w-6" />} />}
   </div>;
 }

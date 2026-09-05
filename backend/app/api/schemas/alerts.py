@@ -10,6 +10,7 @@ NotificationStatus = Literal["unread", "read", "dismissed"]
 
 class TaskRequirementCreate(BaseModel):
     inventory_item_id: str | None = Field(default=None, min_length=36, max_length=36)
+    relocation_assignee_id: str | None = Field(default=None, min_length=36, max_length=36)
     description: str = Field(min_length=2, max_length=220)
     required_quantity: Decimal = Field(gt=0, max_digits=14, decimal_places=3)
     unit: str = Field(min_length=1, max_length=30)
@@ -18,6 +19,7 @@ class TaskRequirementCreate(BaseModel):
 
 class TaskRequirementPatch(BaseModel):
     inventory_item_id: str | None = Field(default=None, min_length=36, max_length=36)
+    relocation_assignee_id: str | None = Field(default=None, min_length=36, max_length=36)
     description: str | None = Field(default=None, min_length=2, max_length=220)
     required_quantity: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=3)
     unit: str | None = Field(default=None, min_length=1, max_length=30)
