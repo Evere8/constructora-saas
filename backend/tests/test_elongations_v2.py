@@ -75,6 +75,40 @@ def synthetic_template() -> bytes:
     return output.getvalue()
 
 
+def shared_header_template() -> bytes:
+    """Field layout: one header above BANDAS and no repeated header later."""
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "N1 (Ajustado)"
+    worksheet.cell(1, 1).value = "Item"
+    worksheet.cell(1, 2).value = "Label"
+    worksheet.cell(1, 3).value = "Longitud (m)"
+    worksheet.cell(1, 4).value = "Cantidad de tendones"
+    worksheet.cell(1, 5).value = "Elongación (cm)"
+    worksheet.cell(2, 5).value = "Calculada"
+    worksheet.cell(2, 6).value = "Max."
+    worksheet.cell(2, 7).value = "Elong. Medida"
+    worksheet.cell(2, 8).value = "Min."
+    for section_row, body_row, title, label in (
+        (3, 5, "BANDAS", "T1"),
+        (15, 17, "DISTRIBUIDOS", "T203"),
+    ):
+        worksheet.cell(section_row, 1).value = title
+        worksheet.cell(body_row, 1).value = 1
+        worksheet.cell(body_row, 2).value = label
+        worksheet.cell(body_row, 3).value = Decimal("10.000")
+        worksheet.cell(body_row, 4).value = 1
+        worksheet.cell(body_row, 5).value = Decimal("7.000")
+        worksheet.cell(body_row, 6).value = f"=E{body_row}+(E{body_row}*0.07)"
+        worksheet.cell(body_row, 8).value = f"=E{body_row}-(E{body_row}*0.07)"
+        for column in (3, 5, 6, 7, 8):
+            worksheet.cell(body_row, column).number_format = "0.000"
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
 def test_parser_requires_all_semantic_fields_and_normalises_decimals() -> None:
     candidates = parse_theory_candidates(
         "Tendon 8; S = 2; L 11.880; Elong = 7,9\n"
@@ -259,6 +293,59 @@ def test_template_mapping_finds_sections_and_formula_tolerance_without_fixed_row
     assert mapping.columns["maximum"] == 6
     assert mapping.tolerance_percent == Decimal("7.00")
     assert mapping.sections["band"].body_start_row == 5
+
+
+def test_template_mapping_accepts_shared_headers_above_section_titles() -> None:
+    mapping = analyse_template(shared_header_template(), "N1-ajustado.xlsx")
+
+    assert mapping.sheet_name == "N1 (Ajustado)"
+    assert mapping.sections["band"].header_row == 1
+    assert mapping.sections["band"].body_start_row == 5
+    assert mapping.sections["distributed"].header_row == 1
+    assert mapping.sections["distributed"].body_start_row == 17
+    assert mapping.columns["measured"] == 7
+    assert "encabezados compartidos" in " ".join(mapping.warnings)
+
+
+def test_dynamic_export_keeps_shared_header_sections_and_own_formulas() -> None:
+    template = shared_header_template()
+    mapping = analyse_template(template)
+    groups = [
+        {
+            "label": "T8",
+            "label_number": 8,
+            "classification": "band",
+            "length_m": Decimal("11.880"),
+            "strand_count": 1,
+            "calculated_elongation": Decimal("7.9"),
+            "measurements": [{"ordinal": 1}],
+        },
+        {
+            "label": "T203",
+            "label_number": 203,
+            "classification": "distributed",
+            "length_m": Decimal("31.496"),
+            "strand_count": 2,
+            "calculated_elongation": Decimal("20.6"),
+            "measurements": [{"ordinal": 1}, {"ordinal": 2}],
+        },
+    ]
+
+    content = build_export_xlsx(
+        template,
+        mapping,
+        groups,
+        final=False,
+        history={"kind": "theory"},
+    )
+    worksheet = load_workbook(BytesIO(content), data_only=False)["N1 (Ajustado)"]
+    assert worksheet.cell(5, 2).value == "T8"
+    assert worksheet.cell(6, 1).value == "DISTRIBUIDOS"
+    assert worksheet.cell(8, 2).value == "T203"
+    assert worksheet.cell(9, 2).value is None
+    for row in (5, 8, 9):
+        assert worksheet.cell(row, 6).value == f"=E{row}+(E{row}*0.07)"
+        assert worksheet.cell(row, 8).value == f"=E{row}-(E{row}*0.07)"
 
 
 def test_dynamic_export_has_one_row_per_s_and_own_max_min_formulas() -> None:
