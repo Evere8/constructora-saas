@@ -19,6 +19,7 @@ import { EmptyState, ErrorState, LoadingState } from '@/components/common/states
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { AlertsSummaryCard } from '@/components/notifications/NotificationCenter';
 
 const BANNER = 'https://images.pexels.com/photos/18078304/pexels-photo-18078304.jpeg?auto=compress&cs=tinysrgb&w=1400';
 const QUICK_ACTIONS = [
@@ -107,6 +108,8 @@ export function DashboardPage() {
           ))}
         </div>
       </div>
+
+      <AlertsSummaryCard />
 
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0">

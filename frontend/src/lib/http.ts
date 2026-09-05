@@ -152,8 +152,8 @@ export async function apiRequest<T>(
   return parseResponse<T>(response);
 }
 
-async function apiBlobRequest(path: string): Promise<Blob> {
-  const url = buildUrl(path);
+async function apiBlobRequest(path: string, params?: QueryParams): Promise<Blob> {
+  const url = buildUrl(path, params);
   let token = await getAccessToken();
   let response: Response;
   try {
@@ -182,5 +182,5 @@ export const api = {
   upload: <T>(path: string, body: FormData) => apiRequest<T>('POST', path, { body }),
   patch: <T>(path: string, body?: unknown) => apiRequest<T>('PATCH', path, { body }),
   del: <T>(path: string) => apiRequest<T>('DELETE', path),
-  blob: (path: string) => apiBlobRequest(path),
+  blob: (path: string, params?: QueryParams) => apiBlobRequest(path, params),
 };

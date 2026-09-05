@@ -11,6 +11,7 @@ export type Capability =
   | 'documents.edit'
   | 'inventory.edit'
   | 'inventory.move'
+  | 'requirements.edit'
   | 'members.edit'
   | 'platform.admin';
 
@@ -24,6 +25,7 @@ const FULL: Capability[] = [
   'plans.edit',
   'documents.edit',
   'inventory.move',
+  'requirements.edit',
 ];
 
 const ROLE_CAPS: Record<Role, Capability[]> = {
@@ -31,8 +33,8 @@ const ROLE_CAPS: Record<Role, Capability[]> = {
   owner: [...FULL, 'inventory.edit', 'members.edit'],
   admin: [...FULL, 'inventory.edit', 'members.edit'],
   engineer: [...FULL],
-  supervisor: ['levels.edit', 'tasks.edit', 'tasks.status', 'checklist.edit', 'checklist.status', 'plans.edit', 'documents.edit', 'inventory.move'],
-  warehouse: ['inventory.edit', 'inventory.move'],
+  supervisor: ['levels.edit', 'tasks.edit', 'tasks.status', 'checklist.edit', 'checklist.status', 'plans.edit', 'documents.edit', 'inventory.move', 'requirements.edit'],
+  warehouse: ['inventory.edit', 'inventory.move', 'requirements.edit'],
   worker: ['tasks.status', 'checklist.status'],
   transport: ['tasks.status', 'checklist.status'],
   viewer: [],

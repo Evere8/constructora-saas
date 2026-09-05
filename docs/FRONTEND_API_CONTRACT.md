@@ -45,11 +45,15 @@ Solo disponible cuando `is_platform_admin` es verdadero.
 | PATCH | `/v1/companies/{company_id}/projects/{project_id}/levels/{level_id}` | Nivel |
 | GET, POST | `/v1/companies/{company_id}/projects/{project_id}/tasks` | `status`, `task_type`, `assigned_user_id`, `level_id`, paginación |
 | PATCH | `/v1/companies/{company_id}/projects/{project_id}/tasks/{task_id}` | Tarea |
+| GET, POST | `/v1/companies/{company_id}/projects/{project_id}/tasks/{task_id}/requirements` | Recursos necesarios |
+| PATCH, DELETE | `/v1/companies/{company_id}/projects/{project_id}/tasks/{task_id}/requirements/{requirement_id}` | Disponibilidad o eliminación |
 
 Estados de obra: `active`, `inactive`, `completed`, `archived`.
 
 Tipos de tarea: `work`, `transport`. Estados: `pending`, `in_progress`, `review`,
 `completed`, `cancelled`. Prioridades: `low`, `normal`, `high`, `urgent`.
+Las tareas aceptan `planned_start_at`, `due_at` y `location_text`; la fecha límite
+no puede ser anterior al inicio planificado.
 
 ## Checklist
 
@@ -113,8 +117,14 @@ cuando sea segura. Después de una mutación, invalidar las consultas relacionad
 | GET, POST | `/v1/companies/{company_id}/members` | Personal e invitación |
 | PATCH | `/v1/companies/{company_id}/members/{membership_id}` | Rol o estado del miembro |
 | GET | `/v1/companies/{company_id}/reports/overview` | Resumen consolidado |
+| GET | `/v1/companies/{company_id}/notifications` | Alertas activas y cantidad sin leer |
+| PATCH | `/v1/companies/{company_id}/notifications/{notification_id}` | Leer, reabrir o descartar |
+| GET | `/v1/companies/{company_id}/reports/advanced` | Reporte filtrado por período, obra o responsable |
+| GET | `/v1/companies/{company_id}/reports/advanced.csv` | Exportación CSV del filtro actual |
 | GET, PATCH | `/v1/companies/{company_id}/settings` | Datos generales de la constructora |
 
 Los archivos se guardan en almacenamiento privado. El OCR se ejecuta localmente
 con Poppler y Tesseract; su resultado siempre requiere revisión humana antes de
-usar el Excel. Notificaciones y facturación continúan como módulos posteriores.
+usar el Excel. Las alertas se recalculan al consultar el centro de notificaciones,
+se deduplican y guardan el estado de lectura por usuario. Facturación continúa
+como módulo posterior.

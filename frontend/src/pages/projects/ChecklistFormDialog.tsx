@@ -108,6 +108,8 @@ export function ChecklistFormDialog({
       toast.success(isEdit ? 'Control actualizado' : 'Control creado');
       void queryClient.invalidateQueries({ queryKey: ['checklist', companyId, projectId] });
       void queryClient.invalidateQueries({ queryKey: ['checklist-progress', companyId, projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['notifications', companyId] });
+      void queryClient.invalidateQueries({ queryKey: ['reports-advanced', companyId] });
       onOpenChange(false);
     },
     onError: (error) =>

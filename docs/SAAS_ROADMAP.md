@@ -10,21 +10,24 @@
 - Documentos PDF o fotografía con OCR local, revisión y exportación Excel.
 - Herramientas e inventario con movimientos por obra.
 - Personal empresarial, invitaciones, roles y asignaciones.
-- Dashboard y reporte consolidado.
+- Dashboard con alertas de vencimientos y recursos faltantes.
+- Reportes avanzados por obra, período y responsable, con exportación CSV.
 - Monitoreo horario del endpoint de salud.
 
-## En preparación
+## Operación configurada
 
-- Frontend MVP generado por Emergent desde un contrato versionado.
-- Respaldo diario cifrado en Google Drive y restauración mensual de prueba.
-- CI del backend en GitHub Actions.
+- Frontend React/Vite desplegable mediante Docker y Nginx.
+- Respaldo diario cifrado de base de datos y archivos privados en Google Drive.
+- CI de backend y frontend en GitHub Actions.
+
+La restauración mensual completa continúa como control operativo pendiente.
 
 ## Siguientes módulos
 
-1. Notificaciones y alertas de faltantes.
-2. Reportes avanzados por obra, período y responsable.
-3. Suscripciones, límites por plan y facturación.
-4. Pruebas E2E con datos piloto y restauración de archivos.
+1. Suscripciones, límites por plan y facturación.
+2. Correo transaccional programado para alertas críticas.
+3. Pruebas E2E con datos piloto y restauración de archivos.
+4. Métricas de producción, logs centralizados y procedimiento de incidentes.
 
 ## Condiciones antes de vender
 

@@ -17,9 +17,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
-const ENABLED_TABS = ['resumen', 'niveles', 'tareas', 'checklist', 'planos', 'documentacion'];
+const ENABLED_TABS = ['resumen', 'niveles', 'cronograma', 'tareas', 'checklist', 'planos', 'documentacion'];
 const PlanosTab = lazy(() => import('@/pages/projects/tabs/PlanosTab').then((module) => ({ default: module.PlanosTab })));
 const DocumentosTab = lazy(() => import('@/pages/projects/tabs/DocumentosTab').then((module) => ({ default: module.DocumentosTab })));
+const CronogramaTab = lazy(() => import('@/pages/projects/tabs/CronogramaTab').then((module) => ({ default: module.CronogramaTab })));
 
 export function ProjectDetailPage() {
   const { projectId = '' } = useParams();
@@ -87,6 +88,7 @@ export function ProjectDetailPage() {
           <TabsList className="w-max">
             <TabsTrigger value="resumen">Resumen</TabsTrigger>
             <TabsTrigger value="niveles">Niveles</TabsTrigger>
+            <TabsTrigger value="cronograma">Cronograma</TabsTrigger>
             <TabsTrigger value="tareas">Tareas</TabsTrigger>
             <TabsTrigger value="checklist">Avance</TabsTrigger>
             <TabsTrigger value="planos">Planos</TabsTrigger>
@@ -99,6 +101,11 @@ export function ProjectDetailPage() {
         </TabsContent>
         <TabsContent value="niveles">
           <NivelesTab companyId={companyId} projectId={project.id} />
+        </TabsContent>
+        <TabsContent value="cronograma">
+          <Suspense fallback={<FullScreenLoader label="Cargando cronograma..." />}>
+            <CronogramaTab companyId={companyId} projectId={project.id} />
+          </Suspense>
         </TabsContent>
         <TabsContent value="tareas">
           <TareasTab companyId={companyId} projectId={project.id} />

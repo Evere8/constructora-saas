@@ -33,6 +33,7 @@ import {
 import { formatDate } from '@/lib/utils';
 import { ChecklistEvidenceDialog } from '@/pages/projects/ChecklistEvidenceDialog';
 import { ChecklistFormDialog } from '@/pages/projects/ChecklistFormDialog';
+import { TaskRequirementsCard } from '@/pages/projects/TaskRequirementsCard';
 import type { ChecklistItem, ChecklistStatus, Task } from '@/types/api';
 
 export function TaskWorkspaceDialog({
@@ -76,6 +77,8 @@ export function TaskWorkspaceDialog({
       toast.success('Estado actualizado');
       void queryClient.invalidateQueries({ queryKey: ['checklist', companyId, projectId] });
       void queryClient.invalidateQueries({ queryKey: ['checklist-progress', companyId, projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['notifications', companyId] });
+      void queryClient.invalidateQueries({ queryKey: ['reports-advanced', companyId] });
     },
     onError: () => toast.error('No se pudo actualizar el estado'),
   });
@@ -119,6 +122,7 @@ export function TaskWorkspaceDialog({
               {taskPriority?.label ?? task.priority}
             </Badge>
             {task.due_at ? <Badge variant="outline">Vence {formatDate(task.due_at)}</Badge> : null}
+            {task.location_text ? <Badge variant="outline">{task.location_text}</Badge> : null}
           </div>
           {task.description ? <p className="text-sm text-muted-foreground">{task.description}</p> : null}
 
@@ -136,6 +140,8 @@ export function TaskWorkspaceDialog({
               <Progress value={percent} />
             </CardContent>
           </Card>
+
+          <TaskRequirementsCard companyId={companyId} projectId={projectId} taskId={task.id} />
 
           <div className="flex items-center justify-between gap-3">
             <div>

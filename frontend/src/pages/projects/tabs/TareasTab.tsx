@@ -81,6 +81,8 @@ export function TareasTab({ companyId, projectId }: { companyId: string; project
     onSuccess: () => {
       toast.success('Estado actualizado');
       void queryClient.invalidateQueries({ queryKey: ['tasks', companyId, projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['notifications', companyId] });
+      void queryClient.invalidateQueries({ queryKey: ['reports-advanced', companyId] });
     },
     onError: () => toast.error('No se pudo actualizar el estado'),
   });
@@ -170,6 +172,7 @@ export function TareasTab({ companyId, projectId }: { companyId: string; project
                         {task.due_at ? (
                           <p className="text-xs text-muted-foreground">Vence {formatDate(task.due_at)}</p>
                         ) : null}
+                        {task.location_text ? <p className="text-xs text-muted-foreground">{task.location_text}</p> : null}
                       </TableCell>
                       <TableCell className="hidden sm:table-cell text-sm">{TASK_TYPE[task.task_type]}</TableCell>
                       <TableCell className="hidden md:table-cell text-sm text-muted-foreground">{levelName(task.level_id)}</TableCell>

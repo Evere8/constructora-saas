@@ -78,7 +78,9 @@ export interface Task {
   status: TaskStatus;
   priority: TaskPriority;
   assigned_user_id?: string | null;
+  planned_start_at?: string | null;
   due_at?: string | null;
+  location_text?: string | null;
   completed_at?: string | null;
   created_at?: string | null;
 }
@@ -280,4 +282,75 @@ export interface CompanySettings {
   plan_id?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface TaskRequirement {
+  id: string;
+  task_id: string;
+  inventory_item_id?: string | null;
+  description: string;
+  required_quantity: string;
+  unit: string;
+  availability_status: 'unchecked' | 'available' | 'partial' | 'missing';
+  inventory_code?: string | null;
+  inventory_name?: string | null;
+}
+
+export interface OperationalNotification {
+  id: string;
+  company_id: string;
+  project_id?: string | null;
+  task_id?: string | null;
+  checklist_item_id?: string | null;
+  requirement_id?: string | null;
+  alert_type: string;
+  severity: 'info' | 'warning' | 'critical';
+  title: string;
+  message: string;
+  due_at?: string | null;
+  status: 'unread' | 'read' | 'dismissed';
+  created_at: string;
+}
+
+export interface NotificationList {
+  items: OperationalNotification[];
+  unread_count: number;
+}
+
+export interface ReportProjectRow {
+  project_id: string;
+  project_name: string;
+  tasks_total: number;
+  tasks_completed: number;
+  tasks_overdue: number;
+  completion_percent: number;
+}
+
+export interface ReportAssigneeRow {
+  user_id?: string | null;
+  name: string;
+  tasks_total: number;
+  tasks_completed: number;
+  tasks_overdue: number;
+  completion_percent: number;
+}
+
+export interface ReportAdvanced {
+  date_from?: string | null;
+  date_to?: string | null;
+  project_id?: string | null;
+  assigned_user_id?: string | null;
+  tasks_total: number;
+  tasks_completed: number;
+  tasks_overdue: number;
+  tasks_due_soon: number;
+  tasks_unassigned: number;
+  checklist_total: number;
+  checklist_completed: number;
+  checklist_blocked: number;
+  requirements_at_risk: number;
+  completion_percent: number;
+  status_counts: Array<{ status: string; count: number }>;
+  projects: ReportProjectRow[];
+  assignees: ReportAssigneeRow[];
 }

@@ -17,17 +17,29 @@ import { PlatformLayout } from '@/components/layout/PlatformLayout';
 import { LoginPage } from '@/pages/LoginPage';
 import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage';
 import { ResetPasswordPage } from '@/pages/ResetPasswordPage';
-import { DashboardPage } from '@/pages/DashboardPage';
-import { ProjectsListPage } from '@/pages/projects/ProjectsListPage';
-import { ProjectDetailPage } from '@/pages/projects/ProjectDetailPage';
-import { MorePage } from '@/pages/MorePage';
-import { ProfilePage } from '@/pages/ProfilePage';
-import { PlatformPage } from '@/pages/platform/PlatformPage';
 import { FullScreenLoader } from '@/components/common/states';
 import { NotFoundPage } from '@/pages/NotFoundPage';
 
 const InventoryPage = lazy(() =>
   import('@/pages/InventoryPage').then((module) => ({ default: module.InventoryPage })),
+);
+const DashboardPage = lazy(() =>
+  import('@/pages/DashboardPage').then((module) => ({ default: module.DashboardPage })),
+);
+const ProjectsListPage = lazy(() =>
+  import('@/pages/projects/ProjectsListPage').then((module) => ({ default: module.ProjectsListPage })),
+);
+const ProjectDetailPage = lazy(() =>
+  import('@/pages/projects/ProjectDetailPage').then((module) => ({ default: module.ProjectDetailPage })),
+);
+const MorePage = lazy(() =>
+  import('@/pages/MorePage').then((module) => ({ default: module.MorePage })),
+);
+const ProfilePage = lazy(() =>
+  import('@/pages/ProfilePage').then((module) => ({ default: module.ProfilePage })),
+);
+const PlatformPage = lazy(() =>
+  import('@/pages/platform/PlatformPage').then((module) => ({ default: module.PlatformPage })),
 );
 const PersonnelPage = lazy(() =>
   import('@/pages/PersonnelPage').then((module) => ({ default: module.PersonnelPage })),

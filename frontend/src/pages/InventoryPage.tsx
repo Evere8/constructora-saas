@@ -49,7 +49,13 @@ export function InventoryPage() {
   });
   const moveMutation = useMutation({
     mutationFn: ({ item, destination }: { item: InventoryItem; destination: string }) => inventoryApi.move(companyId, { item_id: item.id, to_project_id: destination === 'warehouse' ? null : destination, quantity: Number(item.quantity) }),
-    onSuccess: () => { toast.success('Movimiento registrado'); void queryClient.invalidateQueries({ queryKey: ['inventory', companyId] }); },
+    onSuccess: () => {
+      toast.success('Movimiento registrado');
+      void queryClient.invalidateQueries({ queryKey: ['inventory', companyId] });
+      void queryClient.invalidateQueries({ queryKey: ['task-requirements', companyId] });
+      void queryClient.invalidateQueries({ queryKey: ['notifications', companyId] });
+      void queryClient.invalidateQueries({ queryKey: ['reports-advanced', companyId] });
+    },
     onError: (error: Error) => toast.error(error.message),
   });
   const projects = asItems(projectsQuery.data);

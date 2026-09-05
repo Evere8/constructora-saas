@@ -61,6 +61,8 @@ export function ChecklistTab({ companyId, projectId }: { companyId: string; proj
       toast.success('Estado actualizado');
       void queryClient.invalidateQueries({ queryKey: ['checklist', companyId, projectId] });
       void queryClient.invalidateQueries({ queryKey: ['checklist-progress', companyId, projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['notifications', companyId] });
+      void queryClient.invalidateQueries({ queryKey: ['reports-advanced', companyId] });
     },
     onError: () => toast.error('No se pudo actualizar el estado'),
   });

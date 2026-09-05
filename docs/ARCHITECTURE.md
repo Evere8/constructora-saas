@@ -34,10 +34,12 @@ Todas las tablas operativas contienen `company_id`. La API obtiene la empresa de
 - Listado paginado y filtrado de obras por constructora.
 - Alta y modificación de obras con control de fechas y códigos únicos por empresa.
 - Niveles ordenables y únicos dentro de cada obra.
-- Tareas de trabajo o transporte filtrables por estado, nivel y responsable.
+- Tareas de trabajo o transporte filtrables por estado, nivel y responsable, con inicio,
+  fecha límite y ubicación dentro de la obra.
 - Validación de que nivel, obra y responsable pertenecen a la misma constructora.
 - Roles `owner`, `admin`, `engineer` y `supervisor` administran el trabajo.
 - Roles `worker` y `transport` solo cambian el estado de tareas propias.
+- El cronograma ordena por inicio planificado y permite detectar atrasos contra la fecha límite.
 
 ## Almacenamiento
 
@@ -54,6 +56,24 @@ Todas las tablas operativas contienen `company_id`. La API obtiene la empresa de
 - Supervisores administran controles; trabajadores asignados solo actualizan su estado.
 - Cambios importantes registrados en la auditoría de la constructora.
 
+## Alertas operativas implementadas
+
+- Cada tarea puede declarar herramientas o materiales requeridos y vincularlos al inventario.
+- La disponibilidad se contrasta con el estado, cantidad y ubicación actual del recurso.
+- Al consultar las notificaciones, la API sincroniza tareas y controles vencidos o próximos
+  a 48 horas, tareas sin responsable, recursos faltantes y equipos en mantenimiento.
+- Las alertas se deduplican por constructora y cada usuario conserva su propio estado de
+  lectura o descarte. Trabajadores y transportistas solo ven avisos asignados a ellos.
+- El dashboard y la campana del encabezado actualizan esta información periódicamente.
+
+## Reportes implementados
+
+- Resumen general de obras, tareas, controles, inventario y personal.
+- Filtros por período, obra y responsable.
+- Avance y atrasos agrupados por obra y por persona.
+- Conteo de controles bloqueados, tareas sin responsable y recursos en riesgo.
+- Exportación CSV del resultado filtrado.
+
 ## Módulos previstos
 
 - Plataforma: constructoras, planes, activación y superadministración.
@@ -62,6 +82,6 @@ Todas las tablas operativas contienen `company_id`. La API obtiene la empresa de
 - Checklist: estados, responsables, evidencia y resumen.
 - Tareas: trabajo y transporte, ubicación, personal y materiales requeridos.
 - Inventario: máquinas, herramientas, materiales y movimientos diarios.
-- Alertas: faltantes para tareas del día siguiente.
+- Alertas: vencimientos y faltantes para tareas de las próximas 48 horas.
 - Elongaciones: PDF/foto, revisión humana y generación de Excel.
 - Auditoría: actividad, actor, fecha y entidad modificada.
