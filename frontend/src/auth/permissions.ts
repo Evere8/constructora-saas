@@ -9,6 +9,8 @@ export type Capability =
   | 'checklist.status'
   | 'plans.edit'
   | 'documents.edit'
+  | 'documents.approve'
+  | 'documents.export'
   | 'inventory.edit'
   | 'inventory.move'
   | 'requirements.edit'
@@ -24,20 +26,26 @@ const FULL: Capability[] = [
   'checklist.status',
   'plans.edit',
   'documents.edit',
+  'documents.approve',
+  'documents.export',
   'inventory.move',
   'requirements.edit',
 ];
+
+// Descargas de documentación aprobada son de lectura: el backend sigue exigiendo membresía de la
+// constructora y estado aprobado, pero no convierte la descarga en una aprobación técnica.
+const DOCUMENT_READ: Capability[] = ['documents.export'];
 
 const ROLE_CAPS: Record<Role, Capability[]> = {
   platform_admin: [...FULL, 'platform.admin'],
   owner: [...FULL, 'inventory.edit', 'members.edit'],
   admin: [...FULL, 'inventory.edit', 'members.edit'],
   engineer: [...FULL],
-  supervisor: ['levels.edit', 'tasks.edit', 'tasks.status', 'checklist.edit', 'checklist.status', 'plans.edit', 'documents.edit', 'inventory.move', 'requirements.edit'],
-  warehouse: ['inventory.edit', 'inventory.move', 'requirements.edit'],
-  worker: ['tasks.status', 'checklist.status'],
-  transport: ['tasks.status', 'checklist.status'],
-  viewer: [],
+  supervisor: [...DOCUMENT_READ, 'levels.edit', 'tasks.edit', 'tasks.status', 'checklist.edit', 'checklist.status', 'plans.edit', 'documents.edit', 'inventory.move', 'requirements.edit'],
+  warehouse: [...DOCUMENT_READ, 'inventory.edit', 'inventory.move', 'requirements.edit'],
+  worker: [...DOCUMENT_READ, 'tasks.status', 'checklist.status'],
+  transport: [...DOCUMENT_READ, 'tasks.status', 'checklist.status'],
+  viewer: [...DOCUMENT_READ],
 };
 
 const ASSIGNMENT_SCOPED_ROLES = new Set<Role>(['worker', 'transport']);

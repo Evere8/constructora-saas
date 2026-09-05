@@ -12,6 +12,16 @@ describe('permisos por rol', () => {
     expect(can('supervisor', 'checklist.edit')).toBe(true);
   });
 
+  it('separa corrección y aprobación, manteniendo la descarga como lectura autorizada', () => {
+    expect(can('supervisor', 'documents.edit')).toBe(true);
+    expect(can('supervisor', 'documents.approve')).toBe(false);
+    expect(can('supervisor', 'documents.export')).toBe(true);
+    expect(can('engineer', 'documents.edit')).toBe(true);
+    expect(can('engineer', 'documents.approve')).toBe(true);
+    expect(can('engineer', 'documents.export')).toBe(true);
+    expect(can('viewer', 'documents.export')).toBe(true);
+  });
+
   it('worker solo cambia estados', () => {
     expect(can('worker', 'tasks.status')).toBe(true);
     expect(can('worker', 'tasks.edit')).toBe(false);
