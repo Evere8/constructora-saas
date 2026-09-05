@@ -115,7 +115,11 @@ export function ProjectDetailPage() {
         </TabsContent>
         <TabsContent value="planos">
           <Suspense fallback={<FullScreenLoader label="Cargando planos..." />}>
-            <PlanosTab companyId={companyId} projectId={project.id} />
+            <PlanosTab
+              companyId={companyId}
+              projectId={project.id}
+              overviewPlanVersionId={project.overview_plan_version_id ?? null}
+            />
           </Suspense>
         </TabsContent>
         <TabsContent value="documentacion">

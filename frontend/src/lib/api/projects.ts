@@ -1,6 +1,8 @@
 import { api } from '@/lib/http';
 import type {
   Level,
+  LevelPlanGeometry,
+  LevelWorkStatus,
   Paginated,
   Project,
   ProjectStatus,
@@ -9,6 +11,7 @@ import type {
   TaskStatus,
   TaskType,
 } from '@/types/api';
+import type { ChecklistItem } from '@/types/api';
 
 const base = (companyId: string) => `/v1/companies/${companyId}/projects`;
 
@@ -51,10 +54,12 @@ export const projectsApi = {
 
   listLevels: (companyId: string, projectId: string, signal?: AbortSignal) =>
     api.get<Paginated<Level> | Level[]>(`${base(companyId)}/${projectId}/levels`, undefined, signal),
-  createLevel: (companyId: string, projectId: string, input: { name: string; sort_order?: number }) =>
+  createLevel: (companyId: string, projectId: string, input: LevelInput) =>
     api.post<Level>(`${base(companyId)}/${projectId}/levels`, input),
-  updateLevel: (companyId: string, projectId: string, levelId: string, input: Partial<{ name: string; sort_order: number }>) =>
+  updateLevel: (companyId: string, projectId: string, levelId: string, input: Partial<LevelInput>) =>
     api.patch<Level>(`${base(companyId)}/${projectId}/levels/${levelId}`, input),
+  initializeLevelChecklist: (companyId: string, projectId: string, levelId: string) =>
+    api.post<ChecklistItem[]>(`${base(companyId)}/${projectId}/levels/${levelId}/checklist-template`),
 
   listTasks: (companyId: string, projectId: string, filters: TaskFilters = {}, signal?: AbortSignal) =>
     api.get<Paginated<Task>>(`${base(companyId)}/${projectId}/tasks`, { ...filters }, signal),
@@ -63,6 +68,17 @@ export const projectsApi = {
   updateTask: (companyId: string, projectId: string, taskId: string, input: Partial<TaskInput>) =>
     api.patch<Task>(`${base(companyId)}/${projectId}/tasks/${taskId}`, input),
 };
+
+export interface LevelInput {
+  name: string;
+  sort_order?: number;
+  building_name?: string | null;
+  work_status?: LevelWorkStatus;
+  concreted_at?: string | null;
+  plan_version_id?: string | null;
+  plan_page_number?: number | null;
+  plan_geometry_json?: LevelPlanGeometry | null;
+}
 
 export interface TaskInput {
   title: string;

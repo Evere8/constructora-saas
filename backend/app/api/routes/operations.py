@@ -1,10 +1,11 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencies import CurrentCompanyAccess, DbSession
+from app.api.schemas.checklists import ChecklistResponse
 from app.api.schemas.operations import (
     LevelCreate,
     LevelPatch,
@@ -21,7 +22,10 @@ from app.api.schemas.operations import (
 from app.db.models import (
     ActivityLog,
     AppUser,
+    ChecklistItem,
     CompanyMembership,
+    PlanDocument,
+    PlanVersion,
     Project,
     ProjectLevel,
     Task,
@@ -33,6 +37,17 @@ PROJECT_EDITOR_ROLES = {"platform_admin", "owner", "admin", "engineer"}
 WORK_EDITOR_ROLES = PROJECT_EDITOR_ROLES | {"supervisor"}
 SELF_TASK_ROLES = {"worker", "transport"}
 SELF_TASK_STATUSES = {"in_progress", "review", "completed"}
+
+# The editable field checklist illustrated in the operational plan workflow.
+# These records are created independently for every project level.
+DEFAULT_LEVEL_CHECKLIST: tuple[tuple[str, str], ...] = (
+    ("Cortados", "cortados"),
+    ("En obra", "en_obra"),
+    ("Anclajes colocados", "anclajes_colocados"),
+    ("Colocación de cabos", "colocacion_de_cabos"),
+    ("Ataduras", "ataduras"),
+    ("Revisado", "revisado"),
+)
 
 
 def require_role(access: CurrentCompanyAccess, allowed: set[str]) -> None:
@@ -120,6 +135,27 @@ async def require_level(db: DbSession, project_id: str, level_id: str | None) ->
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="El nivel no pertenece a esta obra",
+        )
+
+
+async def require_plan_version(
+    db: DbSession, company_id: str, project_id: str, version_id: str | None
+) -> None:
+    if version_id is None:
+        return
+    version = await db.scalar(
+        select(PlanVersion.id)
+        .join(PlanDocument, PlanDocument.id == PlanVersion.document_id)
+        .where(
+            PlanVersion.id == version_id,
+            PlanDocument.company_id == company_id,
+            PlanDocument.project_id == project_id,
+        )
+    )
+    if version is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="La versión de plano no pertenece a esta obra",
         )
 
 
@@ -245,9 +281,26 @@ async def create_level(
 ) -> ProjectLevel:
     require_role(access, WORK_EDITOR_ROLES)
     await require_project(db, access.company_id, project_id)
-    level = ProjectLevel(project_id=project_id, **payload.model_dump())
+    data = payload.model_dump()
+    await require_plan_version(db, access.company_id, project_id, data["plan_version_id"])
+    if data["work_status"] == "concreted" and data["concreted_at"] is None:
+        data["concreted_at"] = date.today()
+    level = ProjectLevel(project_id=project_id, **data)
     db.add(level)
     await flush_or_conflict(db, "Ya existe un nivel con ese nombre en la obra")
+    db.add_all(
+        [
+            ChecklistItem(
+                company_id=access.company_id,
+                project_id=project_id,
+                level_id=level.id,
+                title=title,
+                process_stage=stage,
+                status="pending",
+            )
+            for title, stage in DEFAULT_LEVEL_CHECKLIST
+        ]
+    )
     add_activity(db, access, "project_level.created", "project_level", level.id)
     await commit_or_conflict(db, "Ya existe un nivel con ese nombre en la obra")
     await db.refresh(level)
@@ -273,12 +326,93 @@ async def update_level(
     if level is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nivel no encontrado")
     changes = payload.model_dump(exclude_unset=True)
+    final_plan_version_id = changes.get("plan_version_id", level.plan_version_id)
+    await require_plan_version(db, access.company_id, project_id, final_plan_version_id)
+    if changes.get("plan_geometry_json") is not None and final_plan_version_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Seleccione una versión de plano antes de ubicar el nivel",
+        )
+    if changes.get("work_status") == "concreted" and (
+        "concreted_at" not in changes and level.concreted_at is None
+    ):
+        changes["concreted_at"] = date.today()
+    if changes.get("work_status") in {"pending", "in_progress"} and "concreted_at" not in changes:
+        changes["concreted_at"] = None
     for field, value in changes.items():
         setattr(level, field, value)
     add_activity(db, access, "project_level.updated", "project_level", level.id, changes)
     await commit_or_conflict(db, "Ya existe un nivel con ese nombre en la obra")
     await db.refresh(level)
     return level
+
+
+@router.post(
+    "/projects/{project_id}/levels/{level_id}/checklist-template",
+    response_model=list[ChecklistResponse],
+)
+async def initialize_level_checklist(
+    project_id: str,
+    level_id: str,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+) -> list[ChecklistItem]:
+    """Add only missing default controls for an older level, without duplicates."""
+
+    require_role(access, WORK_EDITOR_ROLES)
+    await require_project(db, access.company_id, project_id)
+    level = await db.scalar(
+        select(ProjectLevel).where(
+            ProjectLevel.id == level_id,
+            ProjectLevel.project_id == project_id,
+        )
+    )
+    if level is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nivel no encontrado")
+    existing_stages = set(
+        (
+            await db.scalars(
+                select(ChecklistItem.process_stage).where(
+                    ChecklistItem.company_id == access.company_id,
+                    ChecklistItem.project_id == project_id,
+                    ChecklistItem.level_id == level_id,
+                )
+            )
+        ).all()
+    )
+    created = [
+        ChecklistItem(
+            company_id=access.company_id,
+            project_id=project_id,
+            level_id=level_id,
+            title=title,
+            process_stage=stage,
+            status="pending",
+        )
+        for title, stage in DEFAULT_LEVEL_CHECKLIST
+        if stage not in existing_stages
+    ]
+    if created:
+        db.add_all(created)
+        add_activity(
+            db,
+            access,
+            "project_level.checklist_initialized",
+            "project_level",
+            level_id,
+            {"created": len(created)},
+        )
+        await commit_or_conflict(db, "No fue posible crear el checklist del nivel")
+    result = await db.execute(
+        select(ChecklistItem)
+        .where(
+            ChecklistItem.company_id == access.company_id,
+            ChecklistItem.project_id == project_id,
+            ChecklistItem.level_id == level_id,
+        )
+        .order_by(ChecklistItem.created_at, ChecklistItem.title)
+    )
+    return list(result.scalars())
 
 
 @router.get("/projects/{project_id}/tasks", response_model=TaskListResponse)

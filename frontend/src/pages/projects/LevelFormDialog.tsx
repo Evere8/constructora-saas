@@ -22,6 +22,9 @@ import {
 const schema = z.object({
   name: z.string().min(1, 'El nombre es obligatorio'),
   sort_order: z.coerce.number().int().min(0).optional(),
+  building_name: z.string().max(120).optional(),
+  work_status: z.enum(['pending', 'in_progress', 'concreted']),
+  concreted_at: z.string().optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -47,11 +50,15 @@ export function LevelFormDialog({
     register,
     handleSubmit,
     formState: { errors },
+    watch,
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
       name: level?.name ?? '',
       sort_order: level?.sort_order ?? undefined,
+      building_name: level?.building_name ?? '',
+      work_status: level?.work_status ?? 'pending',
+      concreted_at: level?.concreted_at ?? '',
     },
   });
 
@@ -60,6 +67,9 @@ export function LevelFormDialog({
       const payload = {
         name: values.name,
         sort_order: values.sort_order,
+        building_name: values.building_name?.trim() || null,
+        work_status: values.work_status,
+        concreted_at: values.work_status === 'concreted' ? values.concreted_at || null : null,
       };
       return isEdit && level
         ? projectsApi.updateLevel(companyId, projectId, level.id, payload)
@@ -94,6 +104,30 @@ export function LevelFormDialog({
           <div className="space-y-2">
             <Label htmlFor="level-order">Orden</Label>
             <Input id="level-order" type="number" min={0} {...register('sort_order')} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="level-building">Edificio o sector</Label>
+            <Input id="level-building" placeholder="Torre Habitacional 1" {...register('building_name')} />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="level-work-status">Estado en obra</Label>
+              <select
+                id="level-work-status"
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                {...register('work_status')}
+              >
+                <option value="pending">Pendiente</option>
+                <option value="in_progress">En ejecución</option>
+                <option value="concreted">Hormigonado</option>
+              </select>
+            </div>
+            {watch('work_status') === 'concreted' ? (
+              <div className="space-y-2">
+                <Label htmlFor="level-concreted-at">Fecha de hormigonado</Label>
+                <Input id="level-concreted-at" type="date" {...register('concreted_at')} />
+              </div>
+            ) : null}
           </div>
           {formError ? (
             <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">

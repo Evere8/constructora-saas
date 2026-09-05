@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, FileUp, Map, Plus } from 'lucide-react';
+import { Download, Eye, FileUp, Map, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { useCan } from '@/auth/useCan';
 import { plansApi, saveBlob } from '@/lib/api/modules';
@@ -11,7 +11,15 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
-export function PlanosTab({ companyId, projectId }: { companyId: string; projectId: string }) {
+export function PlanosTab({
+  companyId,
+  projectId,
+  overviewPlanVersionId,
+}: {
+  companyId: string;
+  projectId: string;
+  overviewPlanVersionId: string | null;
+}) {
   const canEdit = useCan('plans.edit');
   const queryClient = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -38,6 +46,14 @@ export function PlanosTab({ companyId, projectId }: { companyId: string; project
     onSuccess: () => {
       toast.success('Nueva versión cargada');
       void queryClient.invalidateQueries({ queryKey: ['plans', companyId, projectId] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  const overviewMutation = useMutation({
+    mutationFn: (versionId: string) => plansApi.setOverview(companyId, projectId, versionId),
+    onSuccess: () => {
+      toast.success('Plano configurado para el resumen de la obra');
+      void queryClient.invalidateQueries({ queryKey: ['project', companyId, projectId] });
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -85,6 +101,17 @@ export function PlanosTab({ companyId, projectId }: { companyId: string; project
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {latest ? <Button size="sm" variant="outline" onClick={() => void download(latest.id, latest.original_filename)}><Download className="h-4 w-4" /> Descargar</Button> : null}
+                    {latest && canEdit ? (
+                      <Button
+                        size="sm"
+                        variant={overviewPlanVersionId === latest.id ? 'secondary' : 'outline'}
+                        disabled={overviewPlanVersionId === latest.id || overviewMutation.isPending}
+                        onClick={() => overviewMutation.mutate(latest.id)}
+                      >
+                        <Eye className="h-4 w-4" />
+                        {overviewPlanVersionId === latest.id ? 'En resumen' : 'Mostrar en resumen'}
+                      </Button>
+                    ) : null}
                     {canEdit ? (
                       <Label className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border px-3 text-sm font-medium hover:bg-muted">
                         <FileUp className="h-4 w-4" /> Nueva versión

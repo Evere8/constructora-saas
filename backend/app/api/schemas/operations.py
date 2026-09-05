@@ -7,6 +7,22 @@ ProjectStatus = Literal["active", "inactive", "completed", "archived"]
 TaskType = Literal["work", "transport"]
 TaskStatus = Literal["pending", "in_progress", "review", "completed", "cancelled"]
 TaskPriority = Literal["low", "normal", "high", "urgent"]
+LevelWorkStatus = Literal["pending", "in_progress", "concreted"]
+
+
+class LevelPlanGeometry(BaseModel):
+    """A level's click target expressed as a normalized rectangle on a plan."""
+
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    width: float = Field(gt=0, le=1)
+    height: float = Field(gt=0, le=1)
+
+    @model_validator(mode="after")
+    def fit_inside_plan(self) -> "LevelPlanGeometry":
+        if self.x + self.width > 1 or self.y + self.height > 1:
+            raise ValueError("La zona del nivel debe quedar dentro del plano")
+        return self
 
 
 class ProjectCreate(BaseModel):
@@ -57,6 +73,7 @@ class ProjectResponse(BaseModel):
     start_date: date | None
     planned_end_date: date | None
     actual_end_date: date | None
+    overview_plan_version_id: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -71,11 +88,29 @@ class ProjectListResponse(BaseModel):
 class LevelCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     sort_order: int = Field(default=0, ge=-10000, le=10000)
+    building_name: str | None = Field(default=None, min_length=1, max_length=120)
+    work_status: LevelWorkStatus = "pending"
+    concreted_at: date | None = None
+    plan_version_id: str | None = Field(default=None, min_length=36, max_length=36)
+    plan_page_number: int | None = Field(default=None, ge=1, le=10000)
+    plan_geometry_json: LevelPlanGeometry | None = None
+
+    @model_validator(mode="after")
+    def validate_plan_mapping(self) -> "LevelCreate":
+        if self.plan_geometry_json is not None and self.plan_version_id is None:
+            raise ValueError("Seleccione la versión de plano para ubicar el nivel")
+        return self
 
 
 class LevelPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     sort_order: int | None = Field(default=None, ge=-10000, le=10000)
+    building_name: str | None = Field(default=None, min_length=1, max_length=120)
+    work_status: LevelWorkStatus | None = None
+    concreted_at: date | None = None
+    plan_version_id: str | None = Field(default=None, min_length=36, max_length=36)
+    plan_page_number: int | None = Field(default=None, ge=1, le=10000)
+    plan_geometry_json: LevelPlanGeometry | None = None
 
     @model_validator(mode="after")
     def require_change(self) -> "LevelPatch":
@@ -91,6 +126,12 @@ class LevelResponse(BaseModel):
     project_id: str
     name: str
     sort_order: int
+    building_name: str | None
+    work_status: str
+    concreted_at: date | None
+    plan_version_id: str | None
+    plan_page_number: int | None
+    plan_geometry_json: LevelPlanGeometry | None
 
 
 class TaskCreate(BaseModel):

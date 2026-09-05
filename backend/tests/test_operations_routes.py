@@ -26,3 +26,13 @@ def test_openapi_exposes_elongation_v2_routes_without_removing_legacy_documents(
     assert f"{prefix}/elongation-jobs/{{job_id}}/approve-theory" in paths
     assert f"{prefix}/elongation-jobs/{{job_id}}/measurement-files" in paths
     assert f"{prefix}/elongation-jobs/{{job_id}}/exports/final" in paths
+
+
+def test_openapi_exposes_project_plan_board_routes() -> None:
+    paths = app.openapi()["paths"]
+    prefix = "/api/v1/companies/{company_id}/projects/{project_id}"
+
+    assert f"{prefix}/plans/overview" in paths
+    assert f"{prefix}/plans/versions/{{version_id}}/preview" in paths
+    assert f"{prefix}/plans/annotations/{{annotation_id}}" in paths
+    assert f"{prefix}/levels/{{level_id}}/checklist-template" in paths
