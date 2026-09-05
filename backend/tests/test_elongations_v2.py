@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
@@ -8,12 +9,14 @@ from types import SimpleNamespace
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
-from fastapi import HTTPException, UploadFile
+from fastapi import BackgroundTasks, HTTPException, UploadFile
 from openpyxl import Workbook, load_workbook
 from PIL import Image, ImageDraw
 from starlette.datastructures import Headers
 
+from app.api.routes import elongations
 from app.api.routes.elongations import require_job
+from app.db.models import ElongationJob
 from app.services.elongations import theory
 from app.services.elongations.classification import propose_classifications, zone_contains
 from app.services.elongations.measurements import (
@@ -346,6 +349,104 @@ def test_dynamic_export_keeps_shared_header_sections_and_own_formulas() -> None:
     for row in (5, 8, 9):
         assert worksheet.cell(row, 6).value == f"=E{row}+(E{row}*0.07)"
         assert worksheet.cell(row, 8).value == f"=E{row}-(E{row}*0.07)"
+
+
+def test_create_job_refreshes_server_timestamp_before_returning_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created_at = datetime(2026, 9, 5, 16, 24, 27)
+    plan = SimpleNamespace(
+        id="plan-version-1",
+        storage_key="plans/plan.pdf",
+        original_filename="plan.pdf",
+        mime_type="application/pdf",
+        size_bytes=1,
+        sha256="plan-sha",
+    )
+    template_upload = SimpleNamespace(
+        storage_key="templates/template.xlsx",
+        original_filename="template.xlsx",
+        mime_type=next(iter(XLSX_MIME_TYPES)),
+        size_bytes=1,
+        sha256="template-sha",
+    )
+
+    class Mapping:
+        tolerance_percent = Decimal("7.00")
+
+        def to_dict(self) -> dict[str, str]:
+            return {"sheet_name": "N1"}
+
+    class Session:
+        def __init__(self) -> None:
+            self.scalar_values = [plan, None, None, None]
+            self.objects: list[object] = []
+            self.refreshed: list[ElongationJob] = []
+
+        async def scalar(self, _statement: object) -> object | None:
+            return self.scalar_values.pop(0)
+
+        def add(self, object_: object) -> None:
+            self.objects.append(object_)
+
+        async def flush(self) -> None:
+            for object_ in self.objects:
+                if isinstance(object_, ElongationJob) and object_.id is None:
+                    object_.id = "job-1"
+
+        async def commit(self) -> None:
+            return None
+
+        async def refresh(self, job: ElongationJob) -> None:
+            self.refreshed.append(job)
+            job.created_at = created_at
+
+    async def no_op(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    async def fake_upload(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        return template_upload
+
+    async def fake_response(_db: object, job: ElongationJob) -> str:
+        assert job.created_at == created_at
+        return "created"
+
+    session = Session()
+    monkeypatch.setattr(elongations, "require_project", no_op)
+    monkeypatch.setattr(elongations, "require_level", no_op)
+    monkeypatch.setattr(elongations, "require_assignee", no_op)
+    monkeypatch.setattr(elongations, "store_upload", fake_upload)
+    monkeypatch.setattr(
+        elongations,
+        "storage_path",
+        lambda _key: SimpleNamespace(read_bytes=lambda: b"template"),
+    )
+    monkeypatch.setattr(elongations, "analyse_template", lambda *_args: Mapping())
+    monkeypatch.setattr(
+        elongations,
+        "get_settings",
+        lambda: SimpleNamespace(document_max_bytes=1),
+    )
+    monkeypatch.setattr(elongations, "response_for_job", fake_response)
+
+    response = asyncio.run(
+        elongations.create_elongation_job(
+            project_id="project-1",
+            background_tasks=BackgroundTasks(),
+            access=SimpleNamespace(
+                company_id="company-1",
+                role="owner",
+                user=SimpleNamespace(id="user-1"),
+            ),
+            db=session,
+            title="Elongaciones nivel 1",
+            template_file=UploadFile(file=BytesIO(), filename="template.xlsx"),
+            plan_version_id="plan-version-1",
+        )
+    )
+
+    assert response == "created"
+    assert [job.id for job in session.refreshed] == ["job-1"]
 
 
 def test_dynamic_export_has_one_row_per_s_and_own_max_min_formulas() -> None:
