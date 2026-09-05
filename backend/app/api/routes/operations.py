@@ -308,7 +308,13 @@ async def list_tasks(
     result = await db.execute(
         select(Task)
         .where(*filters)
-        .order_by(Task.due_at.is_(None), Task.due_at, Task.created_at.desc())
+        .order_by(
+            Task.planned_start_at.is_(None),
+            Task.planned_start_at,
+            Task.due_at.is_(None),
+            Task.due_at,
+            Task.created_at.desc(),
+        )
         .limit(limit)
         .offset(offset)
     )
@@ -382,6 +388,13 @@ async def update_task(
         await require_level(db, project_id, changes["level_id"])
     if "assigned_user_id" in changes:
         await require_assignee(db, access.company_id, changes["assigned_user_id"])
+    final_start = changes.get("planned_start_at", task.planned_start_at)
+    final_due = changes.get("due_at", task.due_at)
+    if final_start and final_due and final_due < final_start:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="La fecha límite no puede ser anterior al inicio planificado",
+        )
     if changes.get("status") == "completed" and task.status != "completed":
         task.completed_at = datetime.now(UTC).replace(tzinfo=None)
     elif "status" in changes and changes["status"] != "completed":

@@ -101,7 +101,15 @@ class TaskCreate(BaseModel):
     status: TaskStatus = "pending"
     priority: TaskPriority = "normal"
     assigned_user_id: str | None = Field(default=None, min_length=36, max_length=36)
+    planned_start_at: datetime | None = None
     due_at: datetime | None = None
+    location_text: str | None = Field(default=None, max_length=300)
+
+    @model_validator(mode="after")
+    def validate_schedule(self) -> "TaskCreate":
+        if self.planned_start_at and self.due_at and self.due_at < self.planned_start_at:
+            raise ValueError("La fecha límite no puede ser anterior al inicio planificado")
+        return self
 
 
 class TaskPatch(BaseModel):
@@ -112,12 +120,16 @@ class TaskPatch(BaseModel):
     status: TaskStatus | None = None
     priority: TaskPriority | None = None
     assigned_user_id: str | None = Field(default=None, min_length=36, max_length=36)
+    planned_start_at: datetime | None = None
     due_at: datetime | None = None
+    location_text: str | None = Field(default=None, max_length=300)
 
     @model_validator(mode="after")
     def require_change(self) -> "TaskPatch":
         if not self.model_fields_set:
             raise ValueError("Debe indicar al menos un campo")
+        if self.planned_start_at and self.due_at and self.due_at < self.planned_start_at:
+            raise ValueError("La fecha límite no puede ser anterior al inicio planificado")
         return self
 
 
@@ -134,7 +146,9 @@ class TaskResponse(BaseModel):
     status: str
     priority: str
     assigned_user_id: str | None
+    planned_start_at: datetime | None
     due_at: datetime | None
+    location_text: str | None
     completed_at: datetime | None
     created_by_user_id: str
     created_at: datetime

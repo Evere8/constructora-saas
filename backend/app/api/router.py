@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.routes import (
+    alerts,
     auth,
     checklists,
     company_admin,
@@ -10,6 +11,7 @@ from app.api.routes import (
     operations,
     plans,
     platform,
+    reports,
 )
 
 api_router = APIRouter()
@@ -45,4 +47,14 @@ api_router.include_router(
     company_admin.router,
     prefix="/v1/companies/{company_id}",
     tags=["company-admin"],
+)
+api_router.include_router(
+    alerts.router,
+    prefix="/v1/companies/{company_id}",
+    tags=["alerts"],
+)
+api_router.include_router(
+    reports.router,
+    prefix="/v1/companies/{company_id}",
+    tags=["reports"],
 )

@@ -141,10 +141,30 @@ class Task(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     assigned_user_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("app_users.id", ondelete="SET NULL"), nullable=True
     )
+    planned_start_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    location_text: Mapped[str | None] = mapped_column(String(300), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_by_user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("app_users.id"), nullable=False
+    )
+
+
+class TaskMaterialRequirement(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "task_material_requirements"
+    __table_args__ = (Index("ix_task_requirements_task", "task_id"),)
+
+    task_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    inventory_item_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("inventory_items.id", ondelete="SET NULL"), nullable=True
+    )
+    description: Mapped[str] = mapped_column(String(220), nullable=False)
+    required_quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False)
+    unit: Mapped[str] = mapped_column(String(30), nullable=False)
+    availability_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="unchecked"
     )
 
 
@@ -400,6 +420,63 @@ class ElongationItem(UUIDPrimaryKeyMixin, Base):
     confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
     review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     source_location_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class Notification(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "notifications"
+    __table_args__ = (
+        UniqueConstraint("company_id", "dedupe_key", name="uq_notification_company_dedupe"),
+        Index("ix_notifications_company_resolved_due", "company_id", "resolved_at", "due_at"),
+        Index("ix_notifications_assignee", "assigned_user_id", "resolved_at"),
+    )
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True
+    )
+    task_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True
+    )
+    checklist_item_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("checklist_items.id", ondelete="CASCADE"), nullable=True
+    )
+    requirement_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("task_material_requirements.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    assigned_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="SET NULL"), nullable=True
+    )
+    alert_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    severity: Mapped[str] = mapped_column(String(15), nullable=False)
+    dedupe_key: Mapped[str] = mapped_column(String(180), nullable=False)
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    message: Mapped[str] = mapped_column(String(500), nullable=False)
+    due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class NotificationReceipt(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "notification_receipts"
+    __table_args__ = (
+        UniqueConstraint("notification_id", "user_id", name="uq_notification_receipt_user"),
+        Index("ix_notification_receipts_user_status", "user_id", "status"),
+    )
+
+    notification_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("notifications.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(15), nullable=False, default="read")
+    read_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(), onupdate=func.now()
+    )
 
 
 class ActivityLog(UUIDPrimaryKeyMixin, Base):
