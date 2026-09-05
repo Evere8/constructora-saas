@@ -98,7 +98,16 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_inventory_relocations_item_status", table_name="inventory_relocation_requests")
-    op.drop_index("ix_inventory_relocations_task_status", table_name="inventory_relocation_requests")
-    op.drop_index("ix_inventory_relocations_company_status", table_name="inventory_relocation_requests")
+    op.drop_index(
+        "ix_inventory_relocations_item_status",
+        table_name="inventory_relocation_requests",
+    )
+    op.drop_index(
+        "ix_inventory_relocations_task_status",
+        table_name="inventory_relocation_requests",
+    )
+    op.drop_index(
+        "ix_inventory_relocations_company_status",
+        table_name="inventory_relocation_requests",
+    )
     op.drop_table("inventory_relocation_requests")
