@@ -319,6 +319,66 @@ async def _create_source_file(
     return file
 
 
+async def _latest_source_file(
+    db: DbSession, job_id: str, kind: str
+) -> ElongationJobFile | None:
+    return await db.scalar(
+        select(ElongationJobFile)
+        .where(ElongationJobFile.job_id == job_id, ElongationJobFile.kind == kind)
+        .order_by(ElongationJobFile.version_number.desc())
+        .limit(1)
+    )
+
+
+async def _source_file_is_available(source: ElongationJobFile | None) -> bool:
+    if source is None:
+        return False
+    try:
+        return await run_in_threadpool(storage_path(source.storage_key).is_file)
+    except HTTPException:
+        return False
+
+
+async def _restore_missing_source_file(
+    db: DbSession,
+    job: ElongationJob,
+    *,
+    kind: str,
+    source_values: dict[str, Any],
+    uploaded_by_user_id: str,
+) -> bool:
+    """Repair an idempotent job only when its original source is unavailable.
+
+    A request that committed before an old container was replaced can retain
+    metadata while its pre-volume upload is gone.  The same SHA input is safe
+    to use as a recovery source; healthy immutable sources are never replaced.
+    """
+
+    source = await _latest_source_file(db, job.id, kind)
+    if await _source_file_is_available(source):
+        return False
+    if source is None:
+        await _create_source_file(
+            db,
+            job,
+            kind=kind,
+            uploaded_by_user_id=uploaded_by_user_id,
+            **source_values,
+        )
+        return True
+    source.storage_key = source_values["storage_key"]
+    source.original_filename = source_values["original_filename"]
+    source.mime_type = source_values["mime_type"]
+    source.size_bytes = source_values["size_bytes"]
+    source.sha256 = source_values["sha256"]
+    source.page_count = None
+    source.processing_status = "uploaded"
+    source.processing_summary_json = None
+    source.error_message = None
+    await db.flush()
+    return True
+
+
 @router.get("/projects/{project_id}/elongation-jobs", response_model=list[ElongationJobV2Response])
 async def list_elongation_jobs(
     project_id: str, access: CurrentCompanyAccess, db: DbSession
@@ -367,6 +427,7 @@ async def create_elongation_job(
             detail="Debe indicar exactamente un plano existente o un archivo PDF de plano",
         )
     uploaded_keys: list[str] = []
+    persisted_upload_keys: set[str] = set()
     try:
         template_upload = await store_upload(
             template_file,
@@ -448,9 +509,87 @@ async def create_elongation_job(
             .order_by(ElongationJob.created_at.desc())
         )
         if existing is not None:
-            for storage_key in uploaded_keys:
+            plan_file_missing = not await _source_file_is_available(
+                await _latest_source_file(db, existing.id, "plan")
+            )
+            template_file_missing = not await _source_file_is_available(
+                await _latest_source_file(db, existing.id, "template")
+            )
+            if plan_file_missing and plan_file is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "El plano fuente del trabajo anterior no está disponible. "
+                        "Cárguelo nuevamente como archivo para restaurarlo."
+                    ),
+                )
+            restored_kinds: list[str] = []
+            if plan_file_missing:
+                restored = await _restore_missing_source_file(
+                    db,
+                    existing,
+                    kind="plan",
+                    source_values={
+                        key: plan_values[key]
+                        for key in (
+                            "storage_key",
+                            "original_filename",
+                            "mime_type",
+                            "size_bytes",
+                            "sha256",
+                        )
+                    },
+                    uploaded_by_user_id=access.user.id,
+                )
+                if restored:
+                    persisted_upload_keys.add(plan_values["storage_key"])
+                    restored_kinds.append("plan")
+                    existing.plan_version_id = plan_values["plan_version_id"]
+                    existing.source_kind = (
+                        "pdf" if plan_values["mime_type"] == "application/pdf" else "scan"
+                    )
+                    existing.source_storage_key = plan_values["storage_key"]
+                    existing.original_filename = plan_values["original_filename"]
+                    existing.mime_type = plan_values["mime_type"]
+                    existing.size_bytes = plan_values["size_bytes"]
+                    existing.sha256 = plan_values["sha256"]
+            if template_file_missing:
+                restored = await _restore_missing_source_file(
+                    db,
+                    existing,
+                    kind="template",
+                    source_values={
+                        "storage_key": template_upload.storage_key,
+                        "original_filename": template_upload.original_filename,
+                        "mime_type": template_upload.mime_type,
+                        "size_bytes": template_upload.size_bytes,
+                        "sha256": template_upload.sha256,
+                    },
+                    uploaded_by_user_id=access.user.id,
+                )
+                if restored:
+                    persisted_upload_keys.add(template_upload.storage_key)
+                    restored_kinds.append("template")
+                    existing.template_mapping_json = mapping.to_dict()
+            if restored_kinds:
+                existing.workflow_status = "queued_theory"
+                existing.status = "queued_theory"
+                existing.error_message = None
+                existing.completed_at = None
+                add_activity(
+                    db,
+                    access,
+                    "elongation.job.sources.restored",
+                    "elongation_job",
+                    existing.id,
+                    {"sources": restored_kinds},
+                )
+                await commit_or_conflict(db, "No fue posible restaurar las fuentes del trabajo")
+                background_tasks.add_task(process_theory_job, existing.id)
+            for storage_key in set(uploaded_keys) - persisted_upload_keys:
                 await remove_stored_file(storage_key)
-            _resume_queued_theory_job(background_tasks, existing)
+            if not restored_kinds:
+                _resume_queued_theory_job(background_tasks, existing)
             return await response_for_job(db, existing)
         job = ElongationJob(
             company_id=access.company_id,
@@ -508,6 +647,7 @@ async def create_elongation_job(
             {"workflow_status": job.workflow_status, "template": template_upload.sha256},
         )
         await commit_or_conflict(db, "No fue posible guardar el trabajo de elongaciones")
+        persisted_upload_keys.update(uploaded_keys)
         # MySQL assigns created_at on the server.  Refresh before serializing so
         # Pydantic never triggers an implicit async lazy-load after the commit.
         await db.refresh(job)
@@ -515,7 +655,8 @@ async def create_elongation_job(
         return await response_for_job(db, job)
     except Exception:
         for storage_key in uploaded_keys:
-            await remove_stored_file(storage_key)
+            if storage_key not in persisted_upload_keys:
+                await remove_stored_file(storage_key)
         raise
 
 
