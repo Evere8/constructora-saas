@@ -67,6 +67,8 @@ export const projectsApi = {
     api.post<Task>(`${base(companyId)}/${projectId}/tasks`, input),
   updateTask: (companyId: string, projectId: string, taskId: string, input: Partial<TaskInput>) =>
     api.patch<Task>(`${base(companyId)}/${projectId}/tasks/${taskId}`, input),
+  deleteTask: (companyId: string, projectId: string, taskId: string) =>
+    api.del<void>(`${base(companyId)}/${projectId}/tasks/${taskId}`),
 };
 
 export interface LevelInput {

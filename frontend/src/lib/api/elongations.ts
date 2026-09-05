@@ -52,6 +52,8 @@ export const elongationsApi = {
     api.get<ElongationJobV2>(`${base(companyId, projectId)}/${jobId}`, undefined, signal),
   create: (companyId: string, projectId: string, input: ElongationJobInput) =>
     api.upload<ElongationJobV2>(base(companyId, projectId), creationForm(input)),
+  deleteJob: (companyId: string, projectId: string, jobId: string) =>
+    api.del<void>(`${base(companyId, projectId)}/${jobId}`),
   retry: (companyId: string, projectId: string, jobId: string) =>
     api.post<ElongationJobV2>(`${base(companyId, projectId)}/${jobId}/retry`),
   updateItem: (

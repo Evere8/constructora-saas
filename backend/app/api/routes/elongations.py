@@ -18,7 +18,7 @@ from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Uploa
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, Response
 from PIL import Image, ImageOps
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.api.dependencies import CurrentCompanyAccess, DbSession
 from app.api.routes.operations import (
@@ -46,6 +46,7 @@ from app.api.schemas.elongations import (
 from app.core.config import get_settings
 from app.db.models import (
     ElongationClassificationZone,
+    ElongationExport,
     ElongationItem,
     ElongationJob,
     ElongationJobFile,
@@ -668,6 +669,49 @@ async def get_elongation_job(
 ) -> ElongationJobV2Response:
     job = await require_job(db, access.company_id, project_id, job_id)
     return await response_for_job(db, job)
+
+
+@router.delete(
+    "/projects/{project_id}/elongation-jobs/{job_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_elongation_job(
+    project_id: str,
+    job_id: str,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+) -> Response:
+    """Delete one documentation workflow and all of its private stored files."""
+
+    require_role(access, WORK_EDITOR_ROLES)
+    job = await require_job(db, access.company_id, project_id, job_id)
+    file_keys = list(
+        (
+            await db.execute(
+                select(ElongationJobFile.storage_key).where(ElongationJobFile.job_id == job.id)
+            )
+        ).scalars()
+    )
+    storage_keys = set(file_keys)
+    if job.source_storage_key:
+        storage_keys.add(job.source_storage_key)
+
+    # Exports reference a file with a restrictive FK, so remove those rows before
+    # the job's cascading delete removes the associated job files.
+    await db.execute(delete(ElongationExport).where(ElongationExport.job_id == job.id))
+    add_activity(
+        db,
+        access,
+        "elongation.job.deleted",
+        "elongation_job",
+        job.id,
+        {"title": job.title, "file_count": len(storage_keys)},
+    )
+    await db.delete(job)
+    await commit_or_conflict(db, "No fue posible eliminar el trabajo de elongaciones")
+    for storage_key in storage_keys:
+        await remove_stored_file(storage_key)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(

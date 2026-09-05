@@ -1,6 +1,8 @@
 from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, HTTPException, Query, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 
@@ -22,6 +24,7 @@ from app.api.schemas.operations import (
 from app.db.models import (
     ActivityLog,
     AppUser,
+    ChecklistEvidence,
     ChecklistItem,
     CompanyMembership,
     PlanDocument,
@@ -30,6 +33,7 @@ from app.db.models import (
     ProjectLevel,
     Task,
 )
+from app.services.file_storage import remove_stored_file
 
 router = APIRouter()
 
@@ -89,7 +93,10 @@ def add_activity(
             action=action,
             entity_type=entity_type,
             entity_id=entity_id,
-            metadata_json=metadata,
+            # Pydantic turns date inputs from the checklist into ``date`` objects.
+            # SQLAlchemy's JSON encoder cannot persist those directly, which used to
+            # make a completed checklist item fail at commit time.
+            metadata_json=jsonable_encoder(metadata) if metadata is not None else None,
         )
     )
 
@@ -539,3 +546,45 @@ async def update_task(
     await commit_or_conflict(db, "No fue posible actualizar la tarea")
     await db.refresh(task)
     return task
+
+
+@router.delete(
+    "/projects/{project_id}/tasks/{task_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_task(
+    project_id: str,
+    task_id: str,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+) -> Response:
+    """Delete a task and its dependent controls, keeping no uploaded evidence behind."""
+
+    require_role(access, WORK_EDITOR_ROLES)
+    await require_project(db, access.company_id, project_id)
+    task = await require_task(db, access.company_id, project_id, task_id)
+    evidence_keys = list(
+        (
+            await db.execute(
+                select(ChecklistEvidence.storage_key).where(
+                    ChecklistEvidence.company_id == access.company_id,
+                    ChecklistEvidence.project_id == project_id,
+                    ChecklistEvidence.task_id == task.id,
+                    ChecklistEvidence.storage_key.is_not(None),
+                )
+            )
+        ).scalars()
+    )
+    add_activity(
+        db,
+        access,
+        "task.deleted",
+        "task",
+        task.id,
+        {"title": task.title, "evidence_count": len(evidence_keys)},
+    )
+    await db.delete(task)
+    await commit_or_conflict(db, "No fue posible eliminar la tarea")
+    for storage_key in set(evidence_keys):
+        await remove_stored_file(storage_key)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { FilePlus2, FileSpreadsheet, ListChecks, ScanLine } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { FilePlus2, FileSpreadsheet, ListChecks, ScanLine, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { useCan } from '@/auth/useCan';
 import { elongationsApi } from '@/lib/api/elongations';
 import { EmptyState, ErrorState, LoadingState } from '@/components/common/states';
@@ -47,6 +48,16 @@ export function ElongationJobsPanel({ companyId, projectId }: { companyId: strin
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['elongation-jobs', companyId, projectId] });
   };
+  const deleteJob = useMutation({
+    mutationFn: (jobId: string) => elongationsApi.deleteJob(companyId, projectId, jobId),
+    onSuccess: () => {
+      toast.success('Trabajo eliminado');
+      setSelectedId(null);
+      setMode('list');
+      refresh();
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : 'No se pudo eliminar el trabajo.'),
+  });
 
   if (mode === 'create') {
     return <ElongationWizard companyId={companyId} projectId={projectId} onBack={() => setMode('list')} onCreated={(job) => { refresh(); openJob(job.id); }} />;
@@ -86,7 +97,23 @@ export function ElongationJobsPanel({ companyId, projectId }: { companyId: strin
                   <span><strong>{job.progress.unresolved_conflicts}</strong><br />conflictos</span>
                 </div>
                 {job.error_message ? <p className="text-xs text-amber-700">{job.error_message}</p> : null}
-                <Button size="sm" variant="outline" onClick={() => openJob(job.id)}><ListChecks /> Abrir asistente</Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={() => openJob(job.id)}><ListChecks /> Abrir asistente</Button>
+                  {canEdit ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={deleteJob.isPending}
+                      onClick={() => {
+                        if (window.confirm(`¿Eliminar "${job.title}"? Se borrarán sus archivos y exportaciones.`)) {
+                          deleteJob.mutate(job.id);
+                        }
+                      }}
+                    >
+                      <Trash2 /> Eliminar
+                    </Button>
+                  ) : null}
+                </div>
               </CardContent>
             </Card>
           ))}

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Eye, ListChecks, Pencil, Plus } from 'lucide-react';
+import { Eye, ListChecks, Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { projectsApi, type TaskFilters } from '@/lib/api/projects';
 import type { Task, TaskStatus, TaskType } from '@/types/api';
@@ -85,6 +85,19 @@ export function TareasTab({ companyId, projectId }: { companyId: string; project
       void queryClient.invalidateQueries({ queryKey: ['reports-advanced', companyId] });
     },
     onError: () => toast.error('No se pudo actualizar el estado'),
+  });
+  const deleteMutation = useMutation({
+    mutationFn: (taskId: string) => projectsApi.deleteTask(companyId, projectId, taskId),
+    onSuccess: () => {
+      toast.success('Tarea eliminada');
+      setWorkspaceTask(undefined);
+      void queryClient.invalidateQueries({ queryKey: ['tasks', companyId, projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['checklist', companyId, projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['checklist-progress', companyId, projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['notifications', companyId] });
+      void queryClient.invalidateQueries({ queryKey: ['reports-advanced', companyId] });
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : 'No se pudo eliminar la tarea'),
   });
 
   const tasks = asItems(query.data);
@@ -200,9 +213,23 @@ export function TareasTab({ companyId, projectId }: { companyId: string; project
                             <Eye className="h-4 w-4" /> Abrir
                           </Button>
                           {canEdit ? (
-                          <Button variant="ghost" size="sm" onClick={() => openEdit(task)}>
-                            <Pencil className="h-4 w-4" /> Editar
-                          </Button>
+                            <>
+                              <Button variant="ghost" size="sm" onClick={() => openEdit(task)}>
+                                <Pencil className="h-4 w-4" /> Editar
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={deleteMutation.isPending}
+                                onClick={() => {
+                                  if (window.confirm(`¿Eliminar la tarea "${task.title}"? También se eliminarán sus controles y evidencias.`)) {
+                                    deleteMutation.mutate(task.id);
+                                  }
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" /> Eliminar
+                              </Button>
+                            </>
                           ) : null}
                         </div>
                       </TableCell>
