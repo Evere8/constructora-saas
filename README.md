@@ -11,14 +11,15 @@ Backend inicial para el SaaS de constructoras. Está preparado para:
 - Perfil autenticado vinculado a `app_users`.
 - Panel de plataforma para administrar planes, constructoras y membresías.
 - Auditoría de operaciones administrativas.
-- Gestión operativa de obras, niveles y tareas con aislamiento multiempresa.
+- Gestión operativa de obras, niveles, cronograma y tareas con ubicación e inicio planificado.
 - Checklist dentro de cada tarea, con responsables, etapas, vencimientos y porcentaje de avance.
 - Evidencias privadas de checklist mediante fotos, PDF y observaciones, aisladas por constructora.
 - Planos privados por obra con versiones y anotaciones auditadas.
 - Documentación técnica desde PDF o fotografía, OCR local, revisión humana y exportación Excel.
 - Inventario de máquinas, herramientas y materiales con movimientos entre depósito y obras.
 - Personal de la constructora con invitaciones, roles y asignación a tareas y controles.
-- Reporte consolidado de obras, avance, inventario y personal.
+- Alertas automáticas de vencimientos, tareas sin responsable y recursos faltantes.
+- Reportes por obra, período y responsable con exportación CSV.
 - CI automático para lint y pruebas del backend.
 - Respaldo diario cifrado de MySQL y archivos privados hacia Google Drive mediante rclone.
 - Contrato y encargo versionado para generar el frontend con Emergent.
@@ -89,6 +90,7 @@ La API queda enlazada solo a `127.0.0.1:8000`. Nginx es el único servicio públ
 - `GET/POST/PATCH /api/v1/companies/{company_id}/projects`: obras de la constructora.
 - `GET/POST/PATCH /api/v1/companies/{company_id}/projects/{project_id}/levels`: niveles.
 - `GET/POST/PATCH /api/v1/companies/{company_id}/projects/{project_id}/tasks`: tareas.
+- `GET/POST/PATCH/DELETE /api/v1/companies/{company_id}/projects/{project_id}/tasks/{task_id}/requirements`: recursos requeridos.
 - `GET/POST/PATCH /api/v1/companies/{company_id}/projects/{project_id}/checklist`: controles.
 - `GET /api/v1/companies/{company_id}/projects/{project_id}/checklist/progress`: avance.
 - `GET/POST /api/v1/companies/{company_id}/projects/{project_id}/checklist/{item_id}/evidence`: evidencias.
@@ -99,6 +101,9 @@ La API queda enlazada solo a `127.0.0.1:8000`. Nginx es el único servicio públ
 - `GET/POST/PATCH /api/v1/companies/{company_id}/inventory`: herramientas y movimientos.
 - `GET/POST/PATCH /api/v1/companies/{company_id}/members`: personal empresarial.
 - `GET /api/v1/companies/{company_id}/reports/overview`: indicadores consolidados.
+- `GET/PATCH /api/v1/companies/{company_id}/notifications`: alertas operativas y estado por usuario.
+- `GET /api/v1/companies/{company_id}/reports/advanced`: filtros por fechas, obra y responsable.
+- `GET /api/v1/companies/{company_id}/reports/advanced.csv`: exportación del reporte filtrado.
 - `GET/PATCH /api/v1/companies/{company_id}/settings`: configuración general de la constructora.
 
 Las rutas `/platform` requieren `is_platform_admin = 1`. La migración

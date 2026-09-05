@@ -99,14 +99,18 @@ final** y los `403` se manejan de forma explícita.
 | `/login` | Inicio de sesión. |
 | `/recuperar` | Solicitud de recuperación de contraseña. |
 | `/restablecer` | Definir nueva contraseña (enlace de Supabase). |
-| `/` | Resumen (dashboard con métricas y accesos rápidos). |
+| `/` | Resumen con métricas, accesos rápidos y alertas operativas. |
 | `/obras` | Lista, búsqueda, filtros, alta y edición de obras. |
-| `/obras/:id` | Detalle de obra con Resumen, Niveles, Tareas y Avance. Cada tarea contiene su checklist y evidencias. |
+| `/obras/:id` | Detalle con Resumen, Niveles, Cronograma, Tareas, Avance, Planos y Documentación. Cada tarea contiene checklist, evidencias y recursos requeridos. |
 | `/tareas`, `/checklist` | Compatibilidad: redirigen a Obras para conservar la jerarquía operativa. |
 | `/plataforma` | Panel de plataforma: empresas, planes y membresías (solo platform admin). |
 | `/perfil` | Perfil, estado de sesión y membresías. |
 | `/mas` | Menú adicional (móvil). |
-| `/inventario`, `/planos`, `/elongaciones`, `/personal`, `/reportes`, `/configuracion` | `Próximamente`. |
+| `/inventario` | Herramientas, máquinas, materiales y movimientos entre depósito y obras. |
+| `/planos`, `/elongaciones` | Redirigen a Obras; ambos flujos viven dentro de cada obra. |
+| `/personal` | Invitaciones, roles, estados y cargas asignadas. |
+| `/reportes` | Indicadores filtrables por fechas, obra y responsable, con exportación CSV. |
+| `/configuracion` | Datos generales de la constructora. |
 
 ## Despliegue
 
@@ -122,18 +126,12 @@ Nginx no privilegiado enlazado únicamente a `127.0.0.1:8080`.
      contenedor de la API.
    - Probar login, refresh, cambio de empresa y cierre de sesión.
 
-## Limitaciones y `Próximamente`
+## Alcance pendiente
 
-Estos módulos **no tienen endpoint publicado** en el contrato actual, por lo que se
-muestran como `Próximamente` sin datos simulados:
+- Suscripciones, límites comerciales por plan y facturación.
+- Envío programado de alertas por correo; las alertas dentro de la aplicación ya funcionan.
+- Pruebas E2E contra un entorno piloto y restauración periódica de archivos.
 
-- Planos por obra, Documentación/OCR, Herramientas, Personal, Reportes y Notificaciones.
-- Pestañas de obra deshabilitadas: Planos, Documentación e Historial.
-- Acciones rápidas sin API: **Escanear QR** y **Registrar movimiento**.
-
-Otras notas:
-
-- Tareas y checklist ya no aparecen como módulos globales: se accede a ellos desde
-  una obra y los controles se crean dentro de la tarea correspondiente.
-- La asignación de responsables no ofrece selector de usuarios porque aún no existe un
-  endpoint para listarlos.
+Tareas y checklist no aparecen como módulos globales: se accede a ellos desde una
+obra. Los responsables se eligen desde los miembros activos y los recursos requeridos
+se contrastan con el inventario de la constructora.
