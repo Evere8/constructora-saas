@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertsSummaryCard } from '@/components/notifications/NotificationCenter';
 import { RelocationRequestsCard } from '@/components/inventory/RelocationRequestsCard';
+import { DailyTasksCard } from '@/components/tasks/DailyTasksCard';
 
 const BANNER = 'https://images.pexels.com/photos/18078304/pexels-photo-18078304.jpeg?auto=compress&cs=tinysrgb&w=1400';
 const QUICK_ACTIONS = [
@@ -28,6 +29,7 @@ const QUICK_ACTIONS = [
   { label: 'Planos por obra', icon: Map, to: '/obras' },
   { label: 'PDF a Excel', icon: FileSpreadsheet, to: '/obras' },
   { label: 'Herramientas', icon: Wrench, to: '/inventario' },
+  { label: 'Mis tareas', icon: CalendarClock, to: '/tareas' },
   { label: 'Personal', icon: Users, to: '/personal' },
 ] as const;
 
@@ -96,7 +98,7 @@ export function DashboardPage() {
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
           Accesos rapidos
         </h2>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           {QUICK_ACTIONS.map((action) => (
             <Link
               key={action.label}
@@ -109,6 +111,8 @@ export function DashboardPage() {
           ))}
         </div>
       </div>
+
+      <DailyTasksCard companyId={activeCompanyId} />
 
       <RelocationRequestsCard companyId={activeCompanyId} />
 

@@ -87,7 +87,7 @@ class ProjectListResponse(BaseModel):
 
 class LevelCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
-    sort_order: int = Field(default=0, ge=-10000, le=10000)
+    sort_order: int | None = Field(default=None, ge=-10000, le=10000)
     building_name: str | None = Field(default=None, min_length=1, max_length=120)
     work_status: LevelWorkStatus = "pending"
     concreted_at: date | None = None
@@ -135,6 +135,8 @@ class LevelResponse(BaseModel):
 
 
 class TaskCreate(BaseModel):
+    template_id: str | None = Field(default=None, min_length=36, max_length=36)
+    inventory_item_ids: list[str] = Field(default_factory=list, max_length=60)
     level_id: str | None = Field(default=None, min_length=36, max_length=36)
     task_type: TaskType = "work"
     title: str = Field(min_length=2, max_length=220)
@@ -180,6 +182,7 @@ class TaskResponse(BaseModel):
     id: str
     company_id: str
     project_id: str
+    template_id: str | None
     level_id: str | None
     task_type: str
     title: str

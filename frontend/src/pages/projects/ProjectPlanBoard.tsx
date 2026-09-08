@@ -8,10 +8,15 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Hand,
+  Highlighter,
+  Maximize2,
   MessageSquarePlus,
+  Minimize2,
   PencilLine,
   RefreshCw,
+  Ruler,
   Trash2,
+  Wand2,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -38,7 +43,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
 type Point = { x: number; y: number };
-type Tool = 'pan' | 'note' | 'draw' | 'map-level';
+type Tool = 'pan' | 'note' | 'draw' | 'highlight' | 'straight' | 'map-level';
 
 const BOARD_REFRESH_MS = 2_000;
 
@@ -102,20 +107,20 @@ function BuildingSummary({ levels }: { levels: Level[] }) {
   if (groups.length === 0) return null;
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      {groups.map(([building, buildingLevels]) => {
-        const concreted = buildingLevels.filter((level) => level.work_status === 'concreted');
+      {groups.map(([sector, sectorLevels]) => {
+        const concreted = sectorLevels.filter((level) => level.work_status === 'concreted');
         const latest = concreted
           .map((level) => level.concreted_at)
           .filter((value): value is string => Boolean(value))
           .sort();
         const latestConcreted = latest[latest.length - 1];
         return (
-          <Card key={building} className="border-primary/15">
+          <Card key={sector} className="border-primary/15">
             <CardContent className="space-y-1.5 p-4">
-              <p className="font-medium">{building}</p>
-              <p className="text-sm text-muted-foreground">Total de losas: {buildingLevels.length}</p>
+              <p className="font-medium">Sector · {sector}</p>
+              <p className="text-sm text-muted-foreground">Total de losas: {sectorLevels.length}</p>
               <p className="text-sm text-muted-foreground">Losas hormigonadas: {concreted.length}</p>
-              <p className="text-sm text-muted-foreground">Losas restantes: {buildingLevels.length - concreted.length}</p>
+              <p className="text-sm text-muted-foreground">Losas restantes: {sectorLevels.length - concreted.length}</p>
               <p className="pt-1 text-xs text-muted-foreground">Último hormigonado: {formatDate(latestConcreted)}</p>
             </CardContent>
           </Card>
@@ -197,7 +202,7 @@ function LevelChecklistCard({
         <div>
           <CardTitle className="text-base">Checklist · {level.name}</CardTitle>
           <p className="mt-1 text-sm text-muted-foreground">
-            {level.building_name || 'Obra general'} · Personal asignado: {assignedPeople}
+            Sector: {level.building_name || 'Obra general'} · Personal asignado: {assignedPeople}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -309,6 +314,7 @@ function PlanCanvas({
   onCreateAnnotation: (input: {
     annotation_type: PlanAnnotation['annotation_type'];
     geometry_json: Record<string, unknown>;
+    style_json?: Record<string, unknown>;
     comment?: string | null;
     level_id?: string | null;
   }) => void;
@@ -319,18 +325,28 @@ function PlanCanvas({
   const contentRef = useRef<HTMLDivElement>(null);
   const interaction = useRef<
     | { kind: 'pan'; clientX: number; clientY: number; offsetX: number; offsetY: number }
-    | { kind: 'draw' }
+    | { kind: 'draw'; mode: 'draw' | 'highlight' }
+    | { kind: 'straight' }
     | { kind: 'map-level' }
     | null
   >(null);
   const drawingRef = useRef<Point[]>([]);
+  const straightRef = useRef<{ start: Point; end: Point } | null>(null);
   const mappingRef = useRef<{ start: Point; end: Point } | null>(null);
+  const touchPointers = useRef(new Map<number, Point>());
+  const pinchRef = useRef<{ distance: number; scale: number } | null>(null);
+  const lastTapRef = useRef<{ at: number; x: number; y: number } | null>(null);
   const [tool, setTool] = useState<Tool>('pan');
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [drawing, setDrawing] = useState<Point[]>([]);
+  const [drawingMode, setDrawingMode] = useState<'draw' | 'highlight'>('draw');
+  const [straightLine, setStraightLine] = useState<{ start: Point; end: Point } | null>(null);
   const [mapping, setMapping] = useState<{ start: Point; end: Point } | null>(null);
   const [note, setNote] = useState<{ point: Point; text: string } | null>(null);
+  const [pencilColor, setPencilColor] = useState('#2563eb');
+  const [strokeWidth, setStrokeWidth] = useState(4);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const mappedLevels = levels.filter(
     (level) => level.plan_version_id === version.id && level.plan_page_number === 1 && level.plan_geometry_json,
@@ -345,11 +361,47 @@ function PlanCanvas({
     };
   };
 
+  const pointerDistance = (points: Point[]): number => {
+    if (points.length < 2) return 0;
+    return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+  };
+
+  const annotationStyle = (mode: 'draw' | 'highlight' | 'straight') => ({
+    stroke: pencilColor,
+    stroke_width: mode === 'highlight' ? Math.max(strokeWidth + 10, 16) : strokeWidth,
+    opacity: mode === 'highlight' ? 0.34 : 1,
+    tool: mode,
+  });
+
   const pointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
     const point = pointFromEvent(event);
     if (!point) return;
     event.currentTarget.setPointerCapture(event.pointerId);
+    if (event.pointerType === 'touch') {
+      touchPointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      const pointers = Array.from(touchPointers.current.values());
+      if (pointers.length === 2) {
+        pinchRef.current = { distance: pointerDistance(pointers), scale };
+        interaction.current = null;
+        event.preventDefault();
+        return;
+      }
+      const now = Date.now();
+      const lastTap = lastTapRef.current;
+      if (
+        tool === 'pan'
+        && lastTap
+        && now - lastTap.at < 280
+        && Math.hypot(event.clientX - lastTap.x, event.clientY - lastTap.y) < 36
+      ) {
+        setScale((value) => Math.min(3, value * 1.7));
+        lastTapRef.current = null;
+        event.preventDefault();
+        return;
+      }
+      lastTapRef.current = { at: now, x: event.clientX, y: event.clientY };
+    }
     if (tool === 'pan') {
       interaction.current = {
         kind: 'pan',
@@ -365,10 +417,18 @@ function PlanCanvas({
       setNote({ point, text: '' });
       return;
     }
-    if (tool === 'draw') {
-      interaction.current = { kind: 'draw' };
+    if (tool === 'draw' || tool === 'highlight') {
+      const mode = tool === 'highlight' ? 'highlight' : 'draw';
+      interaction.current = { kind: 'draw', mode };
       drawingRef.current = [point];
       setDrawing([point]);
+      setDrawingMode(mode);
+      return;
+    }
+    if (tool === 'straight') {
+      interaction.current = { kind: 'straight' };
+      straightRef.current = { start: point, end: point };
+      setStraightLine(straightRef.current);
       return;
     }
     if (tool === 'map-level' && selectedLevelId) {
@@ -379,6 +439,16 @@ function PlanCanvas({
   };
 
   const pointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'touch' && touchPointers.current.has(event.pointerId)) {
+      touchPointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      const pinch = pinchRef.current;
+      if (pinch && touchPointers.current.size >= 2) {
+        const distance = pointerDistance(Array.from(touchPointers.current.values()));
+        if (distance > 0) setScale(Math.min(3, Math.max(0.65, pinch.scale * (distance / pinch.distance))));
+        event.preventDefault();
+        return;
+      }
+    }
     const active = interaction.current;
     if (!active) return;
     if (active.kind === 'pan') {
@@ -397,6 +467,10 @@ function PlanCanvas({
         setDrawing(drawingRef.current);
       }
     }
+    if (active.kind === 'straight' && straightRef.current) {
+      straightRef.current = { ...straightRef.current, end: point };
+      setStraightLine(straightRef.current);
+    }
     if (active.kind === 'map-level' && mappingRef.current) {
       mappingRef.current = { ...mappingRef.current, end: point };
       setMapping(mappingRef.current);
@@ -404,9 +478,13 @@ function PlanCanvas({
   };
 
   const pointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const wasPinching = pinchRef.current !== null;
+    touchPointers.current.delete(event.pointerId);
+    if (touchPointers.current.size < 2) pinchRef.current = null;
     const active = interaction.current;
     interaction.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (wasPinching) return;
     if (!active) return;
     if (active.kind === 'draw') {
       const points = drawingRef.current;
@@ -416,6 +494,20 @@ function PlanCanvas({
         onCreateAnnotation({
           annotation_type: 'line',
           geometry_json: { points },
+          style_json: annotationStyle(active.mode),
+          level_id: selectedLevelId,
+        });
+      }
+    }
+    if (active.kind === 'straight' && straightRef.current) {
+      const points = [straightRef.current.start, straightRef.current.end];
+      straightRef.current = null;
+      setStraightLine(null);
+      if (Math.abs(points[0].x - points[1].x) + Math.abs(points[0].y - points[1].y) > 0.002) {
+        onCreateAnnotation({
+          annotation_type: 'line',
+          geometry_json: { points },
+          style_json: annotationStyle('straight'),
           level_id: selectedLevelId,
         });
       }
@@ -441,9 +533,13 @@ function PlanCanvas({
   };
 
   const mappingGeometry = mapping ? geometryFromPoints(mapping.start, mapping.end) : null;
+  const selectedLevel = levels.find((level) => level.id === selectedLevelId);
+  const previewWidth = drawingMode === 'highlight' ? Math.max(strokeWidth + 10, 16) : strokeWidth;
+  const previewOpacity = drawingMode === 'highlight' ? 0.34 : 1;
 
   return (
-    <div className="space-y-3">
+    <div className={isFullscreen ? 'fixed inset-0 z-50 overflow-y-auto bg-background p-4 sm:p-6' : 'space-y-3'}>
+      <div className={isFullscreen ? 'mx-auto max-w-[1600px] space-y-3' : 'space-y-3'}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant={tool === 'pan' ? 'secondary' : 'outline'} onClick={() => setTool('pan')}>
@@ -456,6 +552,12 @@ function PlanCanvas({
               </Button>
               <Button size="sm" variant={tool === 'draw' ? 'secondary' : 'outline'} onClick={() => setTool('draw')}>
                 <PencilLine /> Dibujar
+              </Button>
+              <Button size="sm" variant={tool === 'highlight' ? 'secondary' : 'outline'} onClick={() => setTool('highlight')}>
+                <Highlighter /> Iluminador
+              </Button>
+              <Button size="sm" variant={tool === 'straight' ? 'secondary' : 'outline'} onClick={() => setTool('straight')}>
+                <Ruler /> Trazo recto
               </Button>
               <Button
                 size="sm"
@@ -481,12 +583,32 @@ function PlanCanvas({
           </Button>
         </div>
       </div>
+      {canEdit && (tool === 'draw' || tool === 'highlight' || tool === 'straight') ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          <Label className="text-xs" htmlFor="plan-color">Color</Label>
+          <input id="plan-color" aria-label="Color del trazo" className="h-7 w-9 cursor-pointer rounded border p-0.5" type="color" value={pencilColor} onChange={(event) => setPencilColor(event.target.value)} />
+          <Label className="text-xs" htmlFor="plan-width">Grosor</Label>
+          <select id="plan-width" className="h-7 rounded border bg-background px-2 text-xs" value={strokeWidth} onChange={(event) => setStrokeWidth(Number(event.target.value))}>
+            <option value={2}>Fino</option><option value={4}>Medio</option><option value={7}>Grueso</option>
+          </select>
+          <span>{tool === 'highlight' ? 'El iluminador es semitransparente.' : 'Arrastra sobre el plano para dibujar.'}</span>
+        </div>
+      ) : null}
       {tool === 'map-level' ? (
         <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          Arrastra sobre el plano para marcar el área de <strong>{levels.find((level) => level.id === selectedLevelId)?.name}</strong>.
+          Arrastra sobre el plano para marcar el área de <strong>{selectedLevel ? `${selectedLevel.building_name || 'Obra general'} · ${selectedLevel.name}` : 'este nivel'}</strong>.
         </p>
       ) : null}
-      <div className="relative h-[620px] overflow-hidden rounded-lg border bg-slate-100 shadow-inner">
+      <div className={`relative overflow-hidden rounded-lg border bg-slate-100 shadow-inner ${isFullscreen ? 'h-[calc(100vh-154px)] min-h-[560px]' : 'h-[620px]'}`}>
+        <Button
+          className="absolute left-1/2 top-3 z-20 -translate-x-1/2 shadow-md"
+          size="sm"
+          variant="secondary"
+          onClick={() => setIsFullscreen((value) => !value)}
+        >
+          {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+          {isFullscreen ? 'Volver' : 'Pantalla completa'}
+        </Button>
         <div
           ref={contentRef}
           className="absolute left-0 top-0 w-full touch-none select-none"
@@ -495,6 +617,7 @@ function PlanCanvas({
           onPointerMove={pointerMove}
           onPointerUp={pointerUp}
           onPointerCancel={pointerUp}
+          onDoubleClick={() => setScale((value) => Math.min(3, value * 1.7))}
         >
           <img className="block w-full" draggable={false} src={planUrl} alt={`Vista del plano ${version.original_filename}`} />
           <svg className="absolute inset-0 h-full w-full" viewBox="0 0 1000 1000" preserveAspectRatio="none">
@@ -537,6 +660,10 @@ function PlanCanvas({
             {annotations.map((annotation) => {
               if (annotation.page_number !== 1 || annotation.status === 'resolved') return null;
               const color = typeof annotation.style_json.stroke === 'string' ? annotation.style_json.stroke : '#f97316';
+              const configuredWidth = annotation.style_json.stroke_width;
+              const configuredOpacity = annotation.style_json.opacity;
+              const lineWidth = typeof configuredWidth === 'number' ? configuredWidth : 4;
+              const opacity = typeof configuredOpacity === 'number' ? configuredOpacity : 1;
               if (annotation.annotation_type === 'line') {
                 const points = annotationPoints(annotation);
                 if (points.length < 2) return null;
@@ -545,7 +672,8 @@ function PlanCanvas({
                     key={annotation.id}
                     fill="none"
                     stroke={color}
-                    strokeWidth="4"
+                    strokeWidth={lineWidth}
+                    strokeOpacity={opacity}
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     points={points.map((point) => `${point.x * 1000},${point.y * 1000}`).join(' ')}
@@ -569,11 +697,23 @@ function PlanCanvas({
             {drawing.length > 1 ? (
               <polyline
                 fill="none"
-                stroke="#2563eb"
-                strokeWidth="4"
+                stroke={pencilColor}
+                strokeWidth={previewWidth}
+                strokeOpacity={previewOpacity}
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 points={drawing.map((point) => `${point.x * 1000},${point.y * 1000}`).join(' ')}
+              />
+            ) : null}
+            {straightLine ? (
+              <line
+                x1={straightLine.start.x * 1000}
+                y1={straightLine.start.y * 1000}
+                x2={straightLine.end.x * 1000}
+                y2={straightLine.end.y * 1000}
+                stroke={pencilColor}
+                strokeWidth={strokeWidth}
+                strokeLinecap="round"
               />
             ) : null}
             {mappingGeometry ? (
@@ -622,7 +762,7 @@ function PlanCanvas({
         <div className="flex flex-wrap gap-2">
           {annotations.slice(-6).map((annotation) => (
             <div key={annotation.id} className="flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs">
-              <span>{annotation.annotation_type === 'line' ? 'Dibujo' : annotation.comment || 'Nota'}</span>
+              <span>{annotation.annotation_type === 'line' ? annotation.style_json.tool === 'highlight' ? 'Iluminador' : annotation.style_json.tool === 'straight' ? 'Trazo recto' : 'Dibujo' : annotation.comment || 'Nota'}</span>
               {canEdit ? (
                 <button className="rounded p-0.5 text-muted-foreground hover:text-destructive" aria-label="Eliminar anotación" onClick={() => onDeleteAnnotation(annotation.id)}>
                   <Trash2 className="h-3.5 w-3.5" />
@@ -632,6 +772,7 @@ function PlanCanvas({
           ))}
         </div>
       ) : null}
+      </div>
     </div>
   );
 }
@@ -649,7 +790,11 @@ export function ProjectPlanBoard({ companyId, project }: { companyId: string; pr
     refetchInterval: BOARD_REFRESH_MS,
   });
   const plans = plansQuery.data ?? [];
-  const levels = [...asItems(levelsQuery.data)].sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
+  const levels = [...asItems(levelsQuery.data)].sort((a, b) =>
+    (a.building_name || 'Obra general').localeCompare(b.building_name || 'Obra general')
+    || a.sort_order - b.sort_order
+    || a.name.localeCompare(b.name),
+  );
   const versions = latestVersions(plans);
   const version = versions.find((item) => item.id === project.overview_plan_version_id) ?? versions[0] ?? null;
   const [selectedLevelId, setSelectedLevelId] = useState<string | null>(null);
@@ -710,6 +855,14 @@ export function ProjectPlanBoard({ companyId, project }: { companyId: string; pr
     },
     onError: (error: Error) => toast.error(error.message),
   });
+  const detectLevelsMutation = useMutation({
+    mutationFn: (versionId: string) => plansApi.detectLevels(companyId, project.id, versionId),
+    onSuccess: (result) => {
+      toast.success(result.message);
+      invalidateBoard();
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
   const deleteAnnotationMutation = useMutation({
     mutationFn: (annotationId: string) => plansApi.deleteAnnotation(companyId, project.id, annotationId),
     onSuccess: invalidateBoard,
@@ -741,6 +894,17 @@ export function ProjectPlanBoard({ companyId, project }: { companyId: string; pr
           <p className="text-sm text-muted-foreground">{version.original_filename} · vista principal de la obra</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {canEditPlan ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={levels.length === 0 || detectLevelsMutation.isPending}
+              onClick={() => detectLevelsMutation.mutate(version.id)}
+            >
+              {detectLevelsMutation.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+              Detectar niveles del PDF
+            </Button>
+          ) : null}
           {levels.map((level) => (
             <Button
               key={level.id}
@@ -748,11 +912,20 @@ export function ProjectPlanBoard({ companyId, project }: { companyId: string; pr
               variant={selectedLevelId === level.id ? 'default' : 'outline'}
               onClick={() => setSelectedLevelId(level.id)}
             >
-              {level.name}
+              {level.building_name || 'Obra general'} · {level.name}
               <span className="h-2 w-2 rounded-full" style={{ backgroundColor: LEVEL_STATUS[level.work_status].color }} />
             </Button>
           ))}
         </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        El PDF puede detectar etiquetas que coincidan con los nombres de los niveles y colorearlas automáticamente. Revisa o ajusta cada zona con <strong>Ubicar nivel</strong> antes de usarla como referencia.
+      </p>
+      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">Avance en plano:</span>
+        {Object.entries(LEVEL_STATUS).map(([status, value]) => (
+          <span key={status} className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: value.color }} />{value.label}</span>
+        ))}
       </div>
       <BuildingSummary levels={levels} />
       {previewQuery.isLoading ? (

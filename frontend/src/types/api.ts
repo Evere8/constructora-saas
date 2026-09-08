@@ -85,7 +85,9 @@ export interface LevelPlanGeometry {
 
 export interface Task {
   id: string;
+  company_id?: string;
   project_id: string;
+  template_id?: string | null;
   level_id?: string | null;
   title: string;
   description?: string | null;
@@ -223,6 +225,20 @@ export interface PlanAnnotation {
   created_by_user_id: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface PlanLevelDetection {
+  level_id: string;
+  level_name: string;
+  page_number: number;
+  geometry_json: LevelPlanGeometry;
+  confidence: number;
+}
+
+export interface PlanLevelDetectionResponse {
+  detected: PlanLevelDetection[];
+  unmatched_level_ids: string[];
+  message: string;
 }
 
 export interface DocumentItem {
@@ -472,6 +488,79 @@ export interface TaskRequirement {
   availability_status: 'unchecked' | 'available' | 'partial' | 'missing';
   inventory_code?: string | null;
   inventory_name?: string | null;
+}
+
+export interface TaskTemplateResource {
+  id: string;
+  inventory_item_id?: string | null;
+  description: string;
+  required_quantity: string;
+  unit: string;
+  sort_order: number;
+  inventory_code?: string | null;
+  inventory_name?: string | null;
+}
+
+export interface TaskTemplateChecklistItem {
+  id: string;
+  title: string;
+  description?: string | null;
+  sort_order: number;
+}
+
+export interface TaskTemplate {
+  id: string;
+  company_id: string;
+  title: string;
+  description?: string | null;
+  task_type: TaskType;
+  priority: TaskPriority;
+  default_location_text?: string | null;
+  is_active: boolean;
+  created_by_user_id?: string | null;
+  created_at: string;
+  updated_at: string;
+  resources: TaskTemplateResource[];
+  checklist_items: TaskTemplateChecklistItem[];
+}
+
+export type DailyTaskStatus = 'pending' | 'in_progress' | 'completed';
+
+export interface DailyTaskChecklistItem {
+  id: string;
+  daily_task_id: string;
+  title: string;
+  description?: string | null;
+  sort_order: number;
+  status: DailyTaskStatus;
+  completed_at?: string | null;
+}
+
+export interface DailyTask {
+  id: string;
+  company_id: string;
+  template_id?: string | null;
+  assigned_user_id: string;
+  task_date: string;
+  title: string;
+  description?: string | null;
+  status: DailyTaskStatus;
+  created_at: string;
+  updated_at: string;
+  checklist_items: DailyTaskChecklistItem[];
+}
+
+export interface DailyTaskTemplate {
+  id: string;
+  company_id: string;
+  assigned_user_id: string;
+  title: string;
+  description?: string | null;
+  auto_renew_daily: boolean;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  checklist_items: TaskTemplateChecklistItem[];
 }
 
 export interface OperationalNotification {

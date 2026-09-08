@@ -1,4 +1,5 @@
 from datetime import UTC, date, datetime
+from decimal import Decimal
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.encoders import jsonable_encoder
@@ -34,6 +35,10 @@ from app.db.models import (
     Project,
     ProjectLevel,
     Task,
+    TaskMaterialRequirement,
+    TaskTemplate,
+    TaskTemplateChecklistItem,
+    TaskTemplateRequirement,
 )
 from app.services.file_storage import remove_stored_file
 
@@ -130,6 +135,23 @@ async def require_task(
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada")
     return task
+
+
+async def require_task_template(
+    db: DbSession, company_id: str, template_id: str | None
+) -> TaskTemplate | None:
+    if template_id is None:
+        return None
+    template = await db.scalar(
+        select(TaskTemplate).where(
+            TaskTemplate.id == template_id,
+            TaskTemplate.company_id == company_id,
+            TaskTemplate.is_active.is_(True),
+        )
+    )
+    if template is None:
+        raise HTTPException(status_code=422, detail="La tarea predeterminada no está disponible")
+    return template
 
 
 async def require_level(db: DbSession, project_id: str, level_id: str | None) -> None:
@@ -291,6 +313,15 @@ async def create_level(
     require_role(access, WORK_EDITOR_ROLES)
     await require_project(db, access.company_id, project_id)
     data = payload.model_dump()
+    data["building_name"] = (data["building_name"] or "Obra general").strip()
+    if data["sort_order"] is None:
+        last_order = await db.scalar(
+            select(func.max(ProjectLevel.sort_order)).where(
+                ProjectLevel.project_id == project_id,
+                ProjectLevel.building_name == data["building_name"],
+            )
+        )
+        data["sort_order"] = (last_order or 0) + 1
     await require_plan_version(db, access.company_id, project_id, data["plan_version_id"])
     if data["work_status"] == "concreted" and data["concreted_at"] is None:
         data["concreted_at"] = date.today()
@@ -484,18 +515,132 @@ async def create_task(
     await require_project(db, access.company_id, project_id)
     await require_level(db, project_id, payload.level_id)
     await require_assignee(db, access.company_id, payload.assigned_user_id)
-    values = payload.model_dump()
+    template = await require_task_template(db, access.company_id, payload.template_id)
+    values = payload.model_dump(exclude={"template_id", "inventory_item_ids"})
     task = Task(
         company_id=access.company_id,
         project_id=project_id,
         created_by_user_id=access.user.id,
+        template_id=template.id if template else None,
         **values,
     )
     if task.status == "completed":
         task.completed_at = datetime.now(UTC).replace(tzinfo=None)
     db.add(task)
     await flush_or_conflict(db, "No fue posible crear la tarea")
-    add_activity(db, access, "task.created", "task", task.id)
+    # A task can require several tools/machines.  The resources are created in
+    # the same database transaction as the task, including any relocations, so
+    # a transport request never loses the identity of the equipment involved.
+    from app.api.routes.alerts import (
+        create_relocation_if_needed,
+        derive_availability,
+        needs_relocation,
+        require_inventory_item,
+    )
+
+    template_requirements: list[TaskTemplateRequirement] = []
+    template_checklist: list[TaskTemplateChecklistItem] = []
+    if template is not None:
+        template_requirements = list(
+            (
+                await db.execute(
+                    select(TaskTemplateRequirement)
+                    .where(TaskTemplateRequirement.template_id == template.id)
+                    .order_by(
+                        TaskTemplateRequirement.sort_order,
+                        TaskTemplateRequirement.description,
+                    )
+                )
+            ).scalars()
+        )
+        template_checklist = list(
+            (
+                await db.execute(
+                    select(TaskTemplateChecklistItem)
+                    .where(TaskTemplateChecklistItem.template_id == template.id)
+                    .order_by(TaskTemplateChecklistItem.sort_order, TaskTemplateChecklistItem.title)
+                )
+            ).scalars()
+        )
+
+    seen_inventory_ids = {
+        requirement.inventory_item_id
+        for requirement in template_requirements
+        if requirement.inventory_item_id
+    }
+    resource_specs: list[tuple[str | None, str, Decimal, str]] = [
+        (
+            requirement.inventory_item_id,
+            requirement.description,
+            requirement.required_quantity,
+            requirement.unit,
+        )
+        for requirement in template_requirements
+    ]
+    for item_id in dict.fromkeys(payload.inventory_item_ids):
+        if item_id in seen_inventory_ids:
+            continue
+        item = await require_inventory_item(db, access.company_id, item_id)
+        assert item is not None
+        resource_specs.append((item.id, item.name, Decimal("1"), item.unit))
+        seen_inventory_ids.add(item.id)
+
+    resolved_resources = []
+    relocation_required = False
+    for item_id, description, quantity, unit in resource_specs:
+        item = await require_inventory_item(db, access.company_id, item_id)
+        resolved_resources.append((item, description, quantity, unit))
+        relocation_required = relocation_required or needs_relocation(item, project_id)
+    if relocation_required:
+        await require_assignee(db, access.company_id, task.assigned_user_id)
+
+    requirements: list[TaskMaterialRequirement] = []
+    for item, description, quantity, unit in resolved_resources:
+        requirement = TaskMaterialRequirement(
+            task_id=task.id,
+            inventory_item_id=item.id if item else None,
+            description=description,
+            required_quantity=quantity,
+            unit=unit,
+            availability_status=(
+                derive_availability(item, project_id, quantity) if item else "unchecked"
+            ),
+        )
+        db.add(requirement)
+        requirements.append(requirement)
+        await create_relocation_if_needed(
+            db,
+            company_id=access.company_id,
+            project_id=project_id,
+            task_id=task.id,
+            item=item,
+            assignee_id=task.assigned_user_id,
+            requested_by_user_id=access.user.id,
+        )
+
+    for item in template_checklist:
+        db.add(
+            ChecklistItem(
+                company_id=access.company_id,
+                project_id=project_id,
+                task_id=task.id,
+                title=item.title,
+                description=item.description,
+                status="pending",
+            )
+        )
+    add_activity(
+        db,
+        access,
+        "task.created",
+        "task",
+        task.id,
+        {
+            "template_id": template.id if template else None,
+            "resources": len(requirements),
+            "checklist_items": len(template_checklist),
+        },
+    )
     await commit_or_conflict(db, "No fue posible crear la tarea")
     await db.refresh(task)
     return task

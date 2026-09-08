@@ -21,8 +21,7 @@ import {
 
 const schema = z.object({
   name: z.string().min(1, 'El nombre es obligatorio'),
-  sort_order: z.coerce.number().int().min(0).optional(),
-  building_name: z.string().max(120).optional(),
+  building_name: z.string().trim().min(1, 'El sector es obligatorio').max(120),
   work_status: z.enum(['pending', 'in_progress', 'concreted']),
   concreted_at: z.string().optional(),
 });
@@ -55,8 +54,7 @@ export function LevelFormDialog({
     resolver: zodResolver(schema),
     defaultValues: {
       name: level?.name ?? '',
-      sort_order: level?.sort_order ?? undefined,
-      building_name: level?.building_name ?? '',
+      building_name: level?.building_name ?? 'Obra general',
       work_status: level?.work_status ?? 'pending',
       concreted_at: level?.concreted_at ?? '',
     },
@@ -66,8 +64,7 @@ export function LevelFormDialog({
     mutationFn: (values: FormValues) => {
       const payload = {
         name: values.name,
-        sort_order: values.sort_order,
-        building_name: values.building_name?.trim() || null,
+        building_name: values.building_name.trim(),
         work_status: values.work_status,
         concreted_at: values.work_status === 'concreted' ? values.concreted_at || null : null,
       };
@@ -97,17 +94,15 @@ export function LevelFormDialog({
         </DialogHeader>
         <form onSubmit={onSubmit} className="space-y-4" noValidate>
           <div className="space-y-2">
-            <Label htmlFor="level-name">Nombre</Label>
-            <Input id="level-name" placeholder="Nivel 1, Sotano, Planta baja..." {...register('name')} />
+            <Label htmlFor="level-name">Nivel o losa</Label>
+            <Input id="level-name" placeholder="Nivel 1, Losa 3, Planta baja..." {...register('name')} />
             {errors.name ? <p className="text-sm text-destructive">{errors.name.message}</p> : null}
           </div>
           <div className="space-y-2">
-            <Label htmlFor="level-order">Orden</Label>
-            <Input id="level-order" type="number" min={0} {...register('sort_order')} />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="level-building">Edificio o sector</Label>
-            <Input id="level-building" placeholder="Torre Habitacional 1" {...register('building_name')} />
+            <Label htmlFor="level-building">Sector</Label>
+            <Input id="level-building" placeholder="Torre A, sector norte, bloque 2..." {...register('building_name')} />
+            {errors.building_name ? <p className="text-sm text-destructive">{errors.building_name.message}</p> : null}
+            <p className="text-xs text-muted-foreground">Puedes repetir el mismo nivel o losa en sectores distintos.</p>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">

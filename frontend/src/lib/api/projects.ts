@@ -73,7 +73,7 @@ export const projectsApi = {
 
 export interface LevelInput {
   name: string;
-  sort_order?: number;
+  sort_order?: number | null;
   building_name?: string | null;
   work_status?: LevelWorkStatus;
   concreted_at?: string | null;
@@ -83,6 +83,8 @@ export interface LevelInput {
 }
 
 export interface TaskInput {
+  template_id?: string | null;
+  inventory_item_ids?: string[];
   title: string;
   description?: string | null;
   task_type: TaskType;

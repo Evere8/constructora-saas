@@ -20,7 +20,11 @@ export function NivelesTab({ companyId, projectId }: { companyId: string; projec
     queryFn: ({ signal }) => projectsApi.listLevels(companyId, projectId, signal),
   });
 
-  const levels = [...asItems(query.data)].sort((a, b) => a.sort_order - b.sort_order);
+  const levels = [...asItems(query.data)].sort((a, b) =>
+    (a.building_name || 'Obra general').localeCompare(b.building_name || 'Obra general')
+    || a.sort_order - b.sort_order
+    || a.name.localeCompare(b.name),
+  );
 
   const openCreate = () => {
     setEditing(undefined);
@@ -51,7 +55,7 @@ export function NivelesTab({ companyId, projectId }: { companyId: string; projec
       ) : levels.length === 0 ? (
         <EmptyState
           title="Sin niveles"
-          description="Agrega niveles (plantas, sotanos, etc.) para organizar el trabajo."
+          description="Agrega losas o niveles por sector para organizar el trabajo."
           icon={<Layers className="h-6 w-6" />}
           action={
             canEdit ? (
@@ -68,10 +72,11 @@ export function NivelesTab({ companyId, projectId }: { companyId: string; projec
               <CardContent className="flex items-center justify-between p-4">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 font-semibold text-primary">
-                    {level.sort_order}
+                    <Layers className="h-5 w-5" />
                   </div>
                   <div>
                     <p className="font-medium">{level.name}</p>
+                    <p className="text-xs text-muted-foreground">Sector: {level.building_name || 'Obra general'}</p>
                   </div>
                 </div>
                 {canEdit ? (

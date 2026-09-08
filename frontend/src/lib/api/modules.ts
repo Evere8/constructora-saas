@@ -9,6 +9,7 @@ import type {
   InventoryRelocationRequest,
   NotificationList,
   PlanDocument,
+  PlanLevelDetectionResponse,
   PlanAnnotation,
   ReportOverview,
   ReportAdvanced,
@@ -51,6 +52,10 @@ export const plansApi = {
     api.blob(`${projectBase(companyId, projectId)}/plans/versions/${versionId}/download`),
   preview: (companyId: string, projectId: string, versionId: string, page = 1) =>
     api.blob(`${projectBase(companyId, projectId)}/plans/versions/${versionId}/preview`, { page }),
+  detectLevels: (companyId: string, projectId: string, versionId: string, overwrite = false) =>
+    api.post<PlanLevelDetectionResponse>(
+      `${projectBase(companyId, projectId)}/plans/versions/${versionId}/detect-levels?overwrite=${overwrite}`,
+    ),
   setOverview: (companyId: string, projectId: string, planVersionId: string | null) =>
     api.patch<{ plan_version_id: string | null }>(
       `${projectBase(companyId, projectId)}/plans/overview`,

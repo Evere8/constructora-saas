@@ -40,6 +40,7 @@ def test_openapi_exposes_project_plan_board_routes() -> None:
 
     assert f"{prefix}/plans/overview" in paths
     assert f"{prefix}/plans/versions/{{version_id}}/preview" in paths
+    assert f"{prefix}/plans/versions/{{version_id}}/detect-levels" in paths
     assert f"{prefix}/plans/annotations/{{annotation_id}}" in paths
     assert f"{prefix}/levels/{{level_id}}/checklist-template" in paths
 
@@ -51,6 +52,16 @@ def test_openapi_exposes_inventory_relocation_actions() -> None:
     assert f"{prefix}/start" in paths
     assert f"{prefix}/complete" in paths
     assert f"{prefix}/cancel" in paths
+
+
+def test_openapi_exposes_task_library_and_daily_task_routes() -> None:
+    paths = app.openapi()["paths"]
+    prefix = "/api/v1/companies/{company_id}"
+
+    assert f"{prefix}/task-templates" in paths
+    assert f"{prefix}/task-templates/{{template_id}}" in paths
+    assert f"{prefix}/daily-tasks" in paths
+    assert f"{prefix}/daily-tasks/{{daily_task_id}}/checklist/{{item_id}}" in paths
 
 
 def test_activity_metadata_serializes_checklist_dates() -> None:

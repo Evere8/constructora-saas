@@ -26,6 +26,9 @@ const InventoryPage = lazy(() =>
 const DashboardPage = lazy(() =>
   import('@/pages/DashboardPage').then((module) => ({ default: module.DashboardPage })),
 );
+const TaskLibraryPage = lazy(() =>
+  import('@/pages/TaskLibraryPage').then((module) => ({ default: module.TaskLibraryPage })),
+);
 const ProjectsListPage = lazy(() =>
   import('@/pages/projects/ProjectsListPage').then((module) => ({ default: module.ProjectsListPage })),
 );
@@ -76,7 +79,7 @@ export default function App() {
                         <Route index element={<DashboardPage />} />
                         <Route path="obras" element={<ProjectsListPage />} />
                         <Route path="obras/:projectId" element={<ProjectDetailPage />} />
-                        <Route path="tareas" element={<Navigate to="/obras" replace />} />
+                        <Route path="tareas" element={<TaskLibraryPage />} />
                         <Route path="checklist" element={<Navigate to="/obras" replace />} />
                         <Route path="mas" element={<MorePage />} />
                         <Route path="perfil" element={<ProfilePage />} />

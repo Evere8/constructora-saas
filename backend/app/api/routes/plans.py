@@ -1,5 +1,7 @@
 import subprocess
 import tempfile
+import unicodedata
+import xml.etree.ElementTree as ET
 from io import BytesIO
 from pathlib import Path
 from typing import Annotated
@@ -25,12 +27,13 @@ from app.api.schemas.modules import (
     AnnotationPatch,
     AnnotationResponse,
     PlanDocumentResponse,
+    PlanLevelDetectionResponse,
     PlanVersionResponse,
     ProjectOverviewPlanPatch,
     ProjectOverviewPlanResponse,
 )
 from app.core.config import get_settings
-from app.db.models import Annotation, PlanDocument, PlanVersion
+from app.db.models import Annotation, PlanDocument, PlanVersion, ProjectLevel
 from app.services.file_storage import remove_stored_file, storage_path, store_upload
 
 router = APIRouter()
@@ -119,6 +122,148 @@ def preview_png(path: Path, mime_type: str, page: int) -> bytes:
             return output.getvalue()
     except (OSError, ValueError) as exc:
         raise ValueError("No fue posible preparar la vista previa de la imagen") from exc
+
+
+def normalized_plan_label(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", value)
+    return "".join(
+        character.lower()
+        for character in decomposed
+        if character.isalnum() and not unicodedata.combining(character)
+    )
+
+
+def clamp_unit(value: float) -> float:
+    return min(1.0, max(0.0, value))
+
+
+def detect_level_labels_in_pdf(
+    path: Path,
+    levels: list[tuple[str, str, str | None]],
+) -> list[dict]:
+    """Find level labels in a PDF text layer and return safe, editable starter zones.
+
+    Construction PDFs often contain a selectable label for each slab/level.  We
+    deliberately return a modest rectangle around that label instead of trying
+    to infer the whole slab boundary: users can still resize it, while the
+    automatic result is predictable and never paints an invented structural area.
+    """
+
+    with tempfile.TemporaryDirectory(prefix="obrixapy-plan-detect-") as directory:
+        output = Path(directory) / "page.html"
+        try:
+            subprocess.run(
+                ["pdftotext", "-f", "1", "-l", "1", "-bbox-layout", str(path), str(output)],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            root = ET.parse(output).getroot()
+        except (
+            FileNotFoundError,
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            ET.ParseError,
+        ):
+            return []
+
+    page = next(
+        (
+            element
+            for element in root.iter()
+            if element.tag.rsplit("}", 1)[-1] == "page"
+        ),
+        None,
+    )
+    if page is None:
+        return []
+    try:
+        page_width = float(page.attrib["width"])
+        page_height = float(page.attrib["height"])
+    except (KeyError, TypeError, ValueError):
+        return []
+    if page_width <= 0 or page_height <= 0:
+        return []
+
+    words: list[tuple[str, float, float, float, float]] = []
+    for element in page.iter():
+        if element.tag.rsplit("}", 1)[-1] != "word" or not element.text:
+            continue
+        try:
+            words.append(
+                (
+                    element.text.strip(),
+                    float(element.attrib["xMin"]),
+                    float(element.attrib["yMin"]),
+                    float(element.attrib["xMax"]),
+                    float(element.attrib["yMax"]),
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+
+    name_counts: dict[str, int] = {}
+    for _, level_name, _ in levels:
+        name = normalized_plan_label(level_name)
+        name_counts[name] = name_counts.get(name, 0) + 1
+
+    detections: list[dict] = []
+    for level_id, level_name, sector_name in levels:
+        normalized_name = normalized_plan_label(level_name)
+        if len(normalized_name) < 2:
+            continue
+        # A repeated number is ambiguous across sectors.  In that case require
+        # the PDF to expose both labels together rather than painting two slabs
+        # on the same text occurrence.
+        targets = [normalized_name]
+        normalized_sector = normalized_plan_label(sector_name or "")
+        if name_counts[normalized_name] > 1:
+            if len(normalized_sector) < 2:
+                continue
+            targets = [
+                f"{normalized_sector}{normalized_name}",
+                f"{normalized_name}{normalized_sector}",
+            ]
+        best: tuple[float, int, int] | None = None
+        for start in range(len(words)):
+            for end in range(start + 1, min(len(words), start + 8) + 1):
+                candidate = normalized_plan_label(" ".join(word[0] for word in words[start:end]))
+                for target in targets:
+                    if candidate == target:
+                        best = (0.96, start, end)
+                        break
+                    if target in candidate and len(candidate) <= len(target) + 18:
+                        score = 0.76 + min(0.16, len(target) / max(len(candidate), 1) * 0.16)
+                        if best is None or score > best[0]:
+                            best = (score, start, end)
+                if best and best[0] >= 0.96:
+                    break
+            if best and best[0] >= 0.96:
+                break
+        if best is None:
+            continue
+        confidence, start, end = best
+        label_words = words[start:end]
+        x_min = min(word[1] for word in label_words) / page_width
+        y_min = min(word[2] for word in label_words) / page_height
+        x_max = max(word[3] for word in label_words) / page_width
+        y_max = max(word[4] for word in label_words) / page_height
+        width = max(0.14, x_max - x_min + 0.08)
+        height = max(0.10, y_max - y_min + 0.06)
+        x = clamp_unit(x_min - 0.04)
+        y = clamp_unit(y_min - 0.03)
+        width = min(width, 1 - x)
+        height = min(height, 1 - y)
+        detections.append(
+            {
+                "level_id": level_id,
+                "level_name": level_name,
+                "page_number": 1,
+                "geometry_json": {"x": x, "y": y, "width": width, "height": height},
+                "confidence": round(confidence, 2),
+            }
+        )
+    return detections
 
 
 @router.get(
@@ -301,6 +446,90 @@ async def preview_plan_version(
         content=content,
         media_type="image/png",
         headers={"Cache-Control": "private, max-age=300"},
+    )
+
+
+@router.post(
+    "/projects/{project_id}/plans/versions/{version_id}/detect-levels",
+    response_model=PlanLevelDetectionResponse,
+)
+async def detect_plan_levels(
+    project_id: str,
+    version_id: str,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+    overwrite: bool = False,
+) -> PlanLevelDetectionResponse:
+    """Suggest level locations from selectable labels in the overview PDF."""
+
+    require_role(access, WORK_EDITOR_ROLES)
+    version, _ = await require_version(db, access.company_id, project_id, version_id)
+    levels = list(
+        (
+            await db.execute(
+                select(ProjectLevel)
+                .where(ProjectLevel.project_id == project_id)
+                .order_by(ProjectLevel.sort_order, ProjectLevel.name)
+            )
+        ).scalars()
+    )
+    if version.mime_type != "application/pdf":
+        return PlanLevelDetectionResponse(
+            unmatched_level_ids=[level.id for level in levels],
+            message=(
+                "La detección automática funciona con PDFs que contienen etiquetas de texto. "
+                "En imágenes, usa Ubicar nivel."
+            ),
+        )
+    candidates = [
+        level
+        for level in levels
+        if overwrite or not level.plan_geometry_json
+    ]
+    if not candidates:
+        return PlanLevelDetectionResponse(
+            message=(
+                "Todos los niveles ya tienen una ubicación. "
+                "Usa Ubicar nivel para ajustar cualquier zona."
+            ),
+        )
+    path = storage_path(version.storage_key)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="El archivo del plano no está disponible")
+    detections = await run_in_threadpool(
+        detect_level_labels_in_pdf,
+        path,
+        [(level.id, level.name, level.building_name) for level in candidates],
+    )
+    by_level = {level.id: level for level in candidates}
+    for detected in detections:
+        level = by_level[detected["level_id"]]
+        level.plan_version_id = version.id
+        level.plan_page_number = detected["page_number"]
+        level.plan_geometry_json = detected["geometry_json"]
+    if detections:
+        add_activity(
+            db,
+            access,
+            "plan.levels.detected",
+            "plan_version",
+            version.id,
+            {"detected": len(detections)},
+        )
+        await commit_or_conflict(db, "No fue posible guardar las ubicaciones detectadas")
+    detected_ids = {item["level_id"] for item in detections}
+    message = (
+        f"Se sugirieron {len(detections)} ubicaciones. Revisa y ajusta cada zona si es necesario."
+        if detections
+        else (
+            "No se encontraron etiquetas de niveles en el PDF. "
+            "Ubícalos manualmente sobre el plano."
+        )
+    )
+    return PlanLevelDetectionResponse(
+        detected=detections,
+        unmatched_level_ids=[level.id for level in candidates if level.id not in detected_ids],
+        message=message,
     )
 
 

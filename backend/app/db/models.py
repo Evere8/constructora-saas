@@ -114,7 +114,14 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class ProjectLevel(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "project_levels"
-    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_project_level_name"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "building_name",
+            "name",
+            name="uq_project_level_sector_name",
+        ),
+    )
 
     project_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
@@ -145,6 +152,9 @@ class Task(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     project_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    template_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("task_templates.id", ondelete="SET NULL"), nullable=True
     )
     level_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("project_levels.id", ondelete="SET NULL"), nullable=True
@@ -182,6 +192,141 @@ class TaskMaterialRequirement(UUIDPrimaryKeyMixin, Base):
     availability_status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="unchecked"
     )
+
+
+class TaskTemplate(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Reusable company task definition with its default resources and checklist."""
+
+    __tablename__ = "task_templates"
+    __table_args__ = (Index("ix_task_templates_company_active", "company_id", "is_active"),)
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    task_type: Mapped[str] = mapped_column(String(20), nullable=False, default="work")
+    priority: Mapped[str] = mapped_column(String(15), nullable=False, default="normal")
+    default_location_text: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class TaskTemplateRequirement(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "task_template_requirements"
+    __table_args__ = (Index("ix_task_template_requirements_template", "template_id"),)
+
+    template_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("task_templates.id", ondelete="CASCADE"), nullable=False
+    )
+    inventory_item_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("inventory_items.id", ondelete="SET NULL"), nullable=True
+    )
+    description: Mapped[str] = mapped_column(String(220), nullable=False)
+    required_quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False)
+    unit: Mapped[str] = mapped_column(String(30), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class TaskTemplateChecklistItem(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "task_template_checklist_items"
+    __table_args__ = (Index("ix_task_template_checklist_template", "template_id", "sort_order"),)
+
+    template_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("task_templates.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class DailyTaskTemplate(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Personal recurring task definition, materialised each day when needed."""
+
+    __tablename__ = "daily_task_templates"
+    __table_args__ = (
+        Index(
+            "ix_daily_task_templates_company_assignee_active",
+            "company_id",
+            "assigned_user_id",
+            "is_active",
+        ),
+    )
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    assigned_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    auto_renew_daily: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class DailyTaskTemplateChecklistItem(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "daily_task_template_checklist_items"
+    __table_args__ = (
+        Index("ix_daily_task_template_checklist_template", "template_id", "sort_order"),
+    )
+
+    template_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("daily_task_templates.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class DailyTask(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "daily_tasks"
+    __table_args__ = (
+        UniqueConstraint("template_id", "task_date", name="uq_daily_task_template_date"),
+        Index(
+            "ix_daily_tasks_company_assignee_date_status",
+            "company_id",
+            "assigned_user_id",
+            "task_date",
+            "status",
+        ),
+    )
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    template_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("daily_task_templates.id", ondelete="SET NULL"), nullable=True
+    )
+    assigned_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="CASCADE"), nullable=False
+    )
+    task_date: Mapped[date] = mapped_column(Date, nullable=False)
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(25), nullable=False, default="pending")
+    created_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class DailyTaskChecklistItem(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "daily_task_checklist_items"
+    __table_args__ = (Index("ix_daily_task_checklist_task", "daily_task_id", "sort_order"),)
+
+    daily_task_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("daily_tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(25), nullable=False, default="pending")
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class ChecklistItem(UUIDPrimaryKeyMixin, Base):

@@ -44,7 +44,6 @@ class ProjectOverviewPlanResponse(BaseModel):
 class AnnotationCreate(BaseModel):
     page_number: int = Field(ge=1, le=10000)
     level_id: str | None = Field(default=None, min_length=36, max_length=36)
-    level_id: str | None = Field(default=None, min_length=36, max_length=36)
     annotation_type: Literal["pin", "note", "line", "area"]
     geometry_json: dict
     style_json: dict = Field(default_factory=dict)
@@ -69,7 +68,6 @@ class AnnotationResponse(BaseModel):
     company_id: str
     plan_version_id: str
     level_id: str | None
-    level_id: str | None
     page_number: int
     annotation_type: str
     geometry_json: dict
@@ -79,6 +77,20 @@ class AnnotationResponse(BaseModel):
     created_by_user_id: str
     created_at: datetime
     updated_at: datetime
+
+
+class PlanLevelDetection(BaseModel):
+    level_id: str
+    level_name: str
+    page_number: int
+    geometry_json: dict
+    confidence: float
+
+
+class PlanLevelDetectionResponse(BaseModel):
+    detected: list[PlanLevelDetection] = Field(default_factory=list)
+    unmatched_level_ids: list[str] = Field(default_factory=list)
+    message: str
 
 
 ItemType = Literal["machine", "tool", "material"]

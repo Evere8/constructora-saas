@@ -13,6 +13,7 @@ from app.api.routes import (
     plans,
     platform,
     reports,
+    task_library,
 )
 
 api_router = APIRouter()
@@ -63,4 +64,9 @@ api_router.include_router(
     reports.router,
     prefix="/v1/companies/{company_id}",
     tags=["reports"],
+)
+api_router.include_router(
+    task_library.router,
+    prefix="/v1/companies/{company_id}",
+    tags=["task-library"],
 )
