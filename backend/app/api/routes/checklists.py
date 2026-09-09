@@ -1,4 +1,5 @@
 import hashlib
+from collections.abc import Iterable
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Annotated
@@ -30,7 +31,7 @@ from app.api.schemas.checklists import (
     ChecklistResponse,
 )
 from app.core.config import get_settings
-from app.db.models import ChecklistEvidence, ChecklistItem
+from app.db.models import ChecklistEvidence, ChecklistItem, ProjectLevel
 
 router = APIRouter()
 
@@ -42,6 +43,64 @@ ALLOWED_EVIDENCE_MIME_TYPES = {
     "image/webp": ".webp",
     "application/pdf": ".pdf",
 }
+
+
+def derive_level_work_status(statuses: Iterable[str]) -> str:
+    """Translate a level checklist into the color shown on the plan.
+
+    A level remains pending until someone starts a control, becomes in progress
+    as soon as work is recorded, and becomes concreted only when every
+    applicable control is complete.  This lives in the API instead of only in
+    the browser so every active user sees the same colour.
+    """
+
+    applicable = [item_status for item_status in statuses if item_status != "not_applicable"]
+    if not applicable:
+        return "pending"
+    if all(item_status == "completed" for item_status in applicable):
+        return "concreted"
+    if any(item_status in {"completed", "in_progress", "blocked"} for item_status in applicable):
+        return "in_progress"
+    return "pending"
+
+
+async def sync_level_work_status(
+    db: DbSession,
+    *,
+    company_id: str,
+    project_id: str,
+    level_id: str | None,
+) -> None:
+    """Keep the level status in sync with its individual checklist."""
+
+    if level_id is None:
+        return
+    statuses = list(
+        (
+            await db.execute(
+                select(ChecklistItem.status).where(
+                    ChecklistItem.company_id == company_id,
+                    ChecklistItem.project_id == project_id,
+                    ChecklistItem.level_id == level_id,
+                )
+            )
+        ).scalars()
+    )
+    if not statuses:
+        return
+    level = await db.scalar(
+        select(ProjectLevel).where(
+            ProjectLevel.id == level_id,
+            ProjectLevel.project_id == project_id,
+        )
+    )
+    if level is None:
+        return
+    work_status = derive_level_work_status(statuses)
+    if level.work_status == work_status:
+        return
+    level.work_status = work_status
+    level.concreted_at = date.today() if work_status == "concreted" else None
 
 
 async def require_checklist_item(
@@ -220,6 +279,12 @@ async def create_checklist_item(
         item.performed_on = item.performed_on or date.today()
     db.add(item)
     await flush_or_conflict(db, "No fue posible crear el punto de control")
+    await sync_level_work_status(
+        db,
+        company_id=access.company_id,
+        project_id=project_id,
+        level_id=item.level_id,
+    )
     add_activity(db, access, "checklist.created", "checklist_item", item.id)
     await commit_or_conflict(db, "No fue posible crear el punto de control")
     await db.refresh(item)
@@ -239,6 +304,7 @@ async def update_checklist_item(
 ) -> ChecklistItem:
     await require_project(db, access.company_id, project_id)
     item = await require_checklist_item(db, access.company_id, project_id, item_id)
+    previous_level_id = item.level_id
 
     changes = payload.model_dump(exclude_unset=True)
     if access.role not in WORK_EDITOR_ROLES:
@@ -279,6 +345,14 @@ async def update_checklist_item(
             item.performed_on = None
     for field, value in changes.items():
         setattr(item, field, value)
+    await flush_or_conflict(db, "No fue posible actualizar el punto de control")
+    for level_id in {previous_level_id, item.level_id}:
+        await sync_level_work_status(
+            db,
+            company_id=access.company_id,
+            project_id=project_id,
+            level_id=level_id,
+        )
     add_activity(db, access, "checklist.updated", "checklist_item", item.id, changes)
     await commit_or_conflict(db, "No fue posible actualizar el punto de control")
     await db.refresh(item)

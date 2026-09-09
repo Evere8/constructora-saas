@@ -81,6 +81,8 @@ export interface LevelPlanGeometry {
   y: number;
   width: number;
   height: number;
+  checklist_x?: number;
+  checklist_y?: number;
 }
 
 export interface Task {

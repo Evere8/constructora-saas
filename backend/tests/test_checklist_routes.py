@@ -1,3 +1,4 @@
+from app.api.routes.checklists import derive_level_work_status
 from app.main import app
 
 
@@ -16,3 +17,10 @@ def test_openapi_exposes_checklist_routes() -> None:
     assert "get" in paths[evidence_path]
     assert "post" in paths[evidence_path]
     assert "get" in paths[evidence_file_path]
+
+
+def test_level_status_follows_its_checklist_progress() -> None:
+    assert derive_level_work_status(["pending", "pending"]) == "pending"
+    assert derive_level_work_status(["completed", "pending"]) == "in_progress"
+    assert derive_level_work_status(["blocked", "pending"]) == "in_progress"
+    assert derive_level_work_status(["completed", "not_applicable"]) == "concreted"
