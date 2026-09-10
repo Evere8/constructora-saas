@@ -48,7 +48,13 @@ type Point = { x: number; y: number };
 type Tool = 'pan' | 'note' | 'draw' | 'highlight' | 'straight' | 'map-level';
 type DrawMode = 'draw' | 'highlight';
 
-const BOARD_REFRESH_MS = 2_000;
+// The board has several independent requests (levels, sectors, annotations and
+// the selected checklist).  Refreshing all of them every two seconds made a
+// slow/proxying connection continually replace their data and visually flash
+// the whole Resumen.  Annotations and the selected checklist remain near-live;
+// structural data is refreshed less often and always keeps the previous view.
+const BOARD_REFRESH_MS = 8_000;
+const COLLABORATION_REFRESH_MS = 2_000;
 const PENCIL_COLORS = ['#f97316', '#2563eb', '#16a34a', '#dc2626', '#7c3aed', '#111827'];
 const STROKE_OPTIONS = [
   { value: 2, label: 'Fino' },
@@ -333,7 +339,9 @@ function FloatingLevelChecklist({
   const checklistQuery = useQuery({
     queryKey: ['checklist', companyId, projectId, { level_id: level.id, limit: 200 }],
     queryFn: ({ signal }) => checklistApi.list(companyId, projectId, { level_id: level.id, limit: 200 }, signal),
-    refetchInterval: BOARD_REFRESH_MS,
+    placeholderData: (previousData) => previousData,
+    refetchInterval: COLLABORATION_REFRESH_MS,
+    refetchIntervalInBackground: false,
   });
 
   const refresh = () => {
@@ -879,18 +887,33 @@ export function ProjectPlanBoard({ companyId, project }: { companyId: string; pr
   const levelsQuery = useQuery({
     queryKey: ['levels', companyId, project.id],
     queryFn: ({ signal }) => projectsApi.listLevels(companyId, project.id, signal),
+    placeholderData: (previousData) => previousData,
     refetchInterval: BOARD_REFRESH_MS,
+    refetchIntervalInBackground: false,
   });
   const sectorsQuery = useQuery({
     queryKey: ['project-sectors', companyId, project.id],
     queryFn: ({ signal }) => projectsApi.listSectors(companyId, project.id, signal),
+    // Sectors are an enhancement of the board.  Keeping the previous value
+    // means a temporary API failure cannot blank the plan or its levels.
+    placeholderData: (previousData) => previousData,
     refetchInterval: BOARD_REFRESH_MS,
+    refetchIntervalInBackground: false,
   });
   const plans = plansQuery.data ?? [];
-  const levels = [...asItems(levelsQuery.data)].sort((left, right) => sectorName(left).localeCompare(sectorName(right)) || left.sort_order - right.sort_order || left.name.localeCompare(right.name));
-  const sectors = [...(sectorsQuery.data ?? [])].sort((left, right) => left.sort_order - right.sort_order || left.name.localeCompare(right.name));
-  const versions = latestVersions(plans);
-  const version = versions.find((item) => item.id === project.overview_plan_version_id) ?? versions[0] ?? null;
+  const levels = useMemo(
+    () => [...asItems(levelsQuery.data)].sort((left, right) => sectorName(left).localeCompare(sectorName(right)) || left.sort_order - right.sort_order || left.name.localeCompare(right.name)),
+    [levelsQuery.data],
+  );
+  const sectors = useMemo(
+    () => [...(sectorsQuery.data ?? [])].sort((left, right) => left.sort_order - right.sort_order || left.name.localeCompare(right.name)),
+    [sectorsQuery.data],
+  );
+  const versions = useMemo(() => latestVersions(plans), [plans]);
+  const version = useMemo(
+    () => versions.find((item) => item.id === project.overview_plan_version_id) ?? versions[0] ?? null,
+    [project.overview_plan_version_id, versions],
+  );
   const [selectedLevelId, setSelectedLevelId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -918,7 +941,9 @@ export function ProjectPlanBoard({ companyId, project }: { companyId: string; pr
     queryKey: ['plan-annotations', companyId, project.id, version?.id],
     queryFn: ({ signal }) => plansApi.listAnnotations(companyId, project.id, version!.id, signal),
     enabled: Boolean(version),
-    refetchInterval: BOARD_REFRESH_MS,
+    placeholderData: (previousData) => previousData,
+    refetchInterval: COLLABORATION_REFRESH_MS,
+    refetchIntervalInBackground: false,
   });
   const invalidateBoard = () => {
     void queryClient.invalidateQueries({ queryKey: ['plan-annotations', companyId, project.id] });
@@ -954,7 +979,22 @@ export function ProjectPlanBoard({ companyId, project }: { companyId: string; pr
     onError: (error: Error) => toast.error(error.message),
   });
 
-  if (plansQuery.isLoading || levelsQuery.isLoading || sectorsQuery.isLoading) return <Card><CardContent className="p-6 text-sm text-muted-foreground">Preparando tablero de obra…</CardContent></Card>;
+  // Do not let the optional sectors request repeatedly remount the whole
+  // canvas.  The plan stays usable with its legacy building_name grouping if
+  // that request is temporarily unavailable.
+  if (plansQuery.isPending || levelsQuery.isPending) return <Card><CardContent className="p-6 text-sm text-muted-foreground">Preparando tablero de obra…</CardContent></Card>;
+  if (levelsQuery.isError) {
+    const detail = levelsQuery.error instanceof Error ? levelsQuery.error.message : 'No se pudieron cargar los niveles.';
+    return (
+      <Card>
+        <CardContent className="space-y-3 p-6 text-sm">
+          <p className="font-semibold text-destructive">No se pudieron cargar los niveles.</p>
+          <p className="text-muted-foreground">{detail}</p>
+          <Button size="sm" variant="outline" onClick={() => void levelsQuery.refetch()}>Reintentar</Button>
+        </CardContent>
+      </Card>
+    );
+  }
   if (!version) {
     return <Card><CardContent className="space-y-2 p-6 text-sm text-muted-foreground"><p className="text-base font-semibold text-foreground">Tablero de obra</p><p>Para usar el resumen visual, carga un PDF o una imagen desde la pestaña <strong>Planos</strong>.</p><p>Luego pulsa <strong>Mostrar en resumen</strong> en la versión que quieres compartir con el equipo.</p></CardContent></Card>;
   }
