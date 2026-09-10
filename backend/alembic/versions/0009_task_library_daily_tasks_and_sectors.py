@@ -9,6 +9,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 
 from alembic import op
+from app.db.migration_support import ResumableDDL
 
 revision: str = "0009_task_library_daily_tasks_and_sectors"
 down_revision: str | None = "0008_inventory_relocations"
@@ -17,7 +18,11 @@ depends_on: str | None = None
 
 
 def upgrade() -> None:
-    op.create_table(
+    ddl = ResumableDDL(op)
+    # This revision has 41 characters; Alembic's default VARCHAR(32) could
+    # not record it, leaving committed MySQL tables behind on every retry.
+    ddl.ensure_version_capacity()
+    ddl.create_table(
         "task_templates",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column(
@@ -47,12 +52,12 @@ def upgrade() -> None:
             onupdate=sa.func.now(),
         ),
     )
-    op.create_index(
+    ddl.create_index(
         "ix_task_templates_company_active",
         "task_templates",
         ["company_id", "is_active"],
     )
-    op.create_table(
+    ddl.create_table(
         "task_template_requirements",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column(
@@ -72,12 +77,12 @@ def upgrade() -> None:
         sa.Column("unit", sa.String(30), nullable=False),
         sa.Column("sort_order", sa.Integer(), nullable=False, server_default="0"),
     )
-    op.create_index(
+    ddl.create_index(
         "ix_task_template_requirements_template",
         "task_template_requirements",
         ["template_id"],
     )
-    op.create_table(
+    ddl.create_table(
         "task_template_checklist_items",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column(
@@ -90,13 +95,13 @@ def upgrade() -> None:
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("sort_order", sa.Integer(), nullable=False, server_default="0"),
     )
-    op.create_index(
+    ddl.create_index(
         "ix_task_template_checklist_template",
         "task_template_checklist_items",
         ["template_id", "sort_order"],
     )
-    op.add_column("tasks", sa.Column("template_id", sa.String(36), nullable=True))
-    op.create_foreign_key(
+    ddl.add_column("tasks", sa.Column("template_id", sa.String(36), nullable=True))
+    ddl.create_foreign_key(
         "fk_tasks_template",
         "tasks",
         "task_templates",
@@ -105,7 +110,7 @@ def upgrade() -> None:
         ondelete="SET NULL",
     )
 
-    op.create_table(
+    ddl.create_table(
         "daily_task_templates",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column(
@@ -139,12 +144,12 @@ def upgrade() -> None:
             onupdate=sa.func.now(),
         ),
     )
-    op.create_index(
+    ddl.create_index(
         "ix_daily_task_templates_company_assignee_active",
         "daily_task_templates",
         ["company_id", "assigned_user_id", "is_active"],
     )
-    op.create_table(
+    ddl.create_table(
         "daily_task_template_checklist_items",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column(
@@ -157,12 +162,12 @@ def upgrade() -> None:
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("sort_order", sa.Integer(), nullable=False, server_default="0"),
     )
-    op.create_index(
+    ddl.create_index(
         "ix_daily_task_template_checklist_template",
         "daily_task_template_checklist_items",
         ["template_id", "sort_order"],
     )
-    op.create_table(
+    ddl.create_table(
         "daily_tasks",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column(
@@ -203,12 +208,12 @@ def upgrade() -> None:
         ),
         sa.UniqueConstraint("template_id", "task_date", name="uq_daily_task_template_date"),
     )
-    op.create_index(
+    ddl.create_index(
         "ix_daily_tasks_company_assignee_date_status",
         "daily_tasks",
         ["company_id", "assigned_user_id", "task_date", "status"],
     )
-    op.create_table(
+    ddl.create_table(
         "daily_task_checklist_items",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column(
@@ -223,7 +228,7 @@ def upgrade() -> None:
         sa.Column("status", sa.String(25), nullable=False, server_default="pending"),
         sa.Column("completed_at", sa.DateTime(), nullable=True),
     )
-    op.create_index(
+    ddl.create_index(
         "ix_daily_task_checklist_task",
         "daily_task_checklist_items",
         ["daily_task_id", "sort_order"],
@@ -235,12 +240,14 @@ def upgrade() -> None:
         "UPDATE project_levels SET building_name = 'Obra general' "
         "WHERE building_name IS NULL OR TRIM(building_name) = ''"
     )
-    op.drop_constraint("uq_project_level_name", "project_levels", type_="unique")
-    op.create_unique_constraint(
+    # A replacement index must exist before removing the index MySQL uses
+    # for project_levels.project_id's foreign key (otherwise error 1553).
+    ddl.create_unique_constraint(
         "uq_project_level_sector_name",
         "project_levels",
         ["project_id", "building_name", "name"],
     )
+    ddl.drop_unique_if_present("uq_project_level_name", "project_levels")
 
 
 def downgrade() -> None:

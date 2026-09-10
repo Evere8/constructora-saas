@@ -1,0 +1,42 @@
+name: MySQL migration recovery
+
+on:
+  push:
+    branches: [main, codex/fix-sector-migrations]
+    paths: ["backend/**", ".github/workflows/mysql-migrations.yml"]
+  pull_request:
+    paths: ["backend/**", ".github/workflows/mysql-migrations.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  recovery:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci-only-disposable-mysql
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-only-disposable-mysql"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    env:
+      MYSQL_PASSWORD: test-only-password
+      MIGRATION_TEST_MYSQL_HOST: 127.0.0.1
+      MIGRATION_TEST_MYSQL_PASSWORD: ci-only-disposable-mysql
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv python install 3.12
+      - run: uv sync --frozen --extra dev
+      - run: uv run ruff check .
+      - run: uv run pytest -q
