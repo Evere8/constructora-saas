@@ -5,7 +5,9 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_APP_NAME: ${VITE_APP_NAME:-Obrixapy}
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://api.obrixapy.online/api}
+        # The frontend nginx proxies this path to the API service on the
+        # private Docker network.  Do not compile a public API hostname here.
+        VITE_API_BASE_URL: /api
         VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:?Define VITE_SUPABASE_URL in frontend.env}
         VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:?Define VITE_SUPABASE_PUBLISHABLE_KEY in frontend.env}
     container_name: constructora-frontend

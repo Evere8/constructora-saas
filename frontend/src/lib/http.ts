@@ -31,7 +31,10 @@ async function getAccessToken(): Promise<string | null> {
 function buildUrl(path: string, params?: QueryParams): string {
   const base = env.apiBaseUrl.replace(/\/$/, '');
   const suffix = path.startsWith('/') ? path : `/${path}`;
-  const url = new URL(`${base}${suffix}`);
+  // ``VITE_API_BASE_URL`` may be a same-origin path ("/api") in the Docker
+  // deployment or a full URL during external/local development.
+  const origin = typeof window === 'undefined' ? 'http://localhost' : window.location.origin;
+  const url = new URL(`${base}${suffix}`, origin);
   if (params) {
     for (const [key, value] of Object.entries(params)) {
       if (value !== undefined && value !== null && value !== '') {
@@ -61,6 +64,10 @@ async function doFetch(
     }
   }
   return fetch(url, { method, headers, body: payload, signal });
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
 }
 
 function defaultMessage(status: number): string {
@@ -129,6 +136,10 @@ export async function apiRequest<T>(
   try {
     response = await doFetch(method, url, token, options.body, options.signal);
   } catch (error) {
+    // TanStack Query cancels an obsolete request when a view changes.  It is
+    // not a server outage and must not replace the board with a false
+    // "No se pudo conectar" error.
+    if (isAbortError(error)) throw error;
     throw new ApiError(0, 'No se pudo conectar con el servidor. Verifica tu conexion.', error);
   }
 
@@ -140,6 +151,7 @@ export async function apiRequest<T>(
       try {
         response = await doFetch(method, url, token, options.body, options.signal);
       } catch (fetchError) {
+        if (isAbortError(fetchError)) throw fetchError;
         throw new ApiError(0, 'No se pudo conectar con el servidor. Verifica tu conexion.', fetchError);
       }
     }

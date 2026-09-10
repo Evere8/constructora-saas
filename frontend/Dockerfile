@@ -10,7 +10,7 @@ RUN npm ci --no-audit --no-fund
 COPY . .
 
 ARG VITE_APP_NAME=Obrixapy
-ARG VITE_API_BASE_URL=https://api.obrixapy.online/api
+ARG VITE_API_BASE_URL=/api
 ARG VITE_SUPABASE_URL
 ARG VITE_SUPABASE_PUBLISHABLE_KEY
 
