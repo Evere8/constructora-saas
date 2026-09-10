@@ -73,8 +73,8 @@ def parse_handwritten_values(text: str) -> list[Decimal]:
 
 
 def expand_measurement_slots(
-    strand_count: int, values: list[Decimal]
-) -> tuple[list[MeasurementRead], list[Decimal]]:
+    strand_count: int, values: list[Decimal | None]
+) -> tuple[list[MeasurementRead], list[Decimal | None]]:
     """Create exactly the physical ``S`` slots and retain extras separately.
 
     Extras deliberately do not become invented tendons.  Callers must keep them in the file/job
@@ -87,7 +87,9 @@ def expand_measurement_slots(
         MeasurementRead(
             ordinal=ordinal,
             measured_elongation_cm=values[ordinal - 1] if ordinal <= len(values) else None,
-            status="pending" if ordinal <= len(values) else "missing",
+            status="pending"
+            if ordinal <= len(values) and values[ordinal - 1] is not None
+            else "missing",
         )
         for ordinal in range(1, strand_count + 1)
     ]
@@ -179,11 +181,7 @@ def _document_quad(image: Image.Image) -> tuple[float, ...] | None:
     top_span = top_right - top_left
     bottom_span = bottom_right - bottom_left
     vertical_span = bottom_y - top_y
-    if (
-        top_span < minimum_span
-        or bottom_span < minimum_span
-        or vertical_span < sample_height // 3
-    ):
+    if top_span < minimum_span or bottom_span < minimum_span or vertical_span < sample_height // 3:
         return None
     inverse_scale = 1 / scale
     # Pillow QUAD expects source corners in UL, LL, LR, UR order.

@@ -34,6 +34,9 @@ export type ElongationMeasurementPatch = Partial<
   >
 >;
 
+export type ElongationManualItem = Pick<ElongationItemV2,
+  'label' | 'classification' | 'length_m' | 'strand_count' | 'calculated_elongation'> & { source_page: number };
+
 function creationForm(input: ElongationJobInput): FormData {
   const body = new FormData();
   body.set('title', input.title);
@@ -45,7 +48,11 @@ function creationForm(input: ElongationJobInput): FormData {
   return body;
 }
 
+export const readingBusy = (job: ElongationJobV2) => /^(queued|processing)_/.test(job.workflow_status);
+
 export const elongationsApi = {
+  ocrStatus: (companyId: string, projectId: string) =>
+    api.get<{ visual_enabled: boolean; handwriting_enabled: boolean; model: string | null; provider: string }>(`/v1/companies/${companyId}/projects/${projectId}/elongation-ocr-status`),
   list: (companyId: string, projectId: string, signal?: AbortSignal) =>
     api.get<ElongationJobV2[]>(base(companyId, projectId), undefined, signal),
   get: (companyId: string, projectId: string, jobId: string, signal?: AbortSignal) =>
@@ -56,6 +63,14 @@ export const elongationsApi = {
     api.del<void>(`${base(companyId, projectId)}/${jobId}`),
   retry: (companyId: string, projectId: string, jobId: string) =>
     api.post<ElongationJobV2>(`${base(companyId, projectId)}/${jobId}/retry`),
+  rereadTheory: (companyId: string, projectId: string, jobId: string) =>
+    api.post<ElongationJobV2>(`${base(companyId, projectId)}/${jobId}/reread-theory`),
+  createItem: (companyId: string, projectId: string, jobId: string, input: ElongationManualItem) =>
+    api.post<ElongationJobV2>(`${base(companyId, projectId)}/${jobId}/items`, input),
+  reviewTheories: (companyId: string, projectId: string, jobId: string, itemIds: string[], version: number) =>
+    api.post<ElongationJobV2>(`${base(companyId, projectId)}/${jobId}/review-theories`, { item_ids: itemIds, expected_version: version }),
+  resolveReadings: (companyId: string, projectId: string, jobId: string, fileId: string, reason: string) =>
+    api.post<ElongationJobV2>(`${base(companyId, projectId)}/${jobId}/files/${fileId}/resolve-readings`, { reason }),
   updateItem: (
     companyId: string,
     projectId: string,

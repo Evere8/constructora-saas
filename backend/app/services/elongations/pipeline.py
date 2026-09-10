@@ -12,12 +12,11 @@ from decimal import Decimal
 from typing import Any
 
 from fastapi.concurrency import run_in_threadpool
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
     ActivityLog,
-    ElongationClassificationZone,
     ElongationExport,
     ElongationItem,
     ElongationJob,
@@ -28,8 +27,6 @@ from app.db.session import SessionLocal
 from app.services.elongations.classification import propose_classifications
 from app.services.elongations.measurements import (
     expand_measurement_slots,
-    extract_measurement_text,
-    parse_labeled_measurements,
     tolerance_status,
 )
 from app.services.elongations.template import TemplateMapping, build_export_xlsx
@@ -134,9 +131,7 @@ def _mapping_from_json(data: dict[str, Any]) -> TemplateMapping:
 
     return TemplateMapping(
         sheet_name=data["sheet_name"],
-        sections={
-            key: TemplateSection(**value) for key, value in data["sections"].items()
-        },
+        sections={key: TemplateSection(**value) for key, value in data["sections"].items()},
         columns={key: int(value) for key, value in data["columns"].items()},
         formula_seeds=dict(data["formula_seeds"]),
         tolerance_percent=Decimal(str(data["tolerance_percent"])),
@@ -216,20 +211,42 @@ async def process_theory_job(job_id: str) -> None:
                     storage_path(source.storage_key),
                     source.mime_type,
                 )
-                await session.execute(
-                    delete(ElongationMeasurement).where(ElongationMeasurement.job_id == job.id)
-                )
-                await session.execute(delete(ElongationItem).where(ElongationItem.job_id == job.id))
-                await session.execute(
-                    delete(ElongationClassificationZone).where(
-                        ElongationClassificationZone.job_id == job.id
-                    )
-                )
+                existing_items = {
+                    item.label: item
+                    for item in (
+                        await session.scalars(
+                            select(ElongationItem).where(ElongationItem.job_id == job.id)
+                        )
+                    ).all()
+                }
                 ordered_candidates = sorted(
                     extraction.candidates, key=lambda value: natural_label_key(value.label)
                 )
                 geometry_proposals = propose_classifications(ordered_candidates)
                 for sort_order, candidate in enumerate(ordered_candidates, start=1):
+                    existing = existing_items.get(candidate.label)
+                    if existing is not None:
+                        # Re-reading enriches a job; never deletes measurements, manual edits,
+                        # review evidence or classification zones from an earlier version.
+                        changed = (
+                            existing.strand_count,
+                            existing.length_m,
+                            existing.calculated_elongation,
+                        ) != candidate.values_key()
+                        if changed or candidate.conflict:
+                            existing.theory_review_status = "conflict"
+                            existing.field_confidence_json = {
+                                **(existing.field_confidence_json or {}),
+                                "reread_candidate": {
+                                    "strand_count": candidate.strand_count,
+                                    "length_m": str(candidate.length_m),
+                                    "calculated_elongation_cm": str(
+                                        candidate.calculated_elongation_cm
+                                    ),
+                                    "source": candidate.source_location(),
+                                },
+                            }
+                        continue
                     proposal = geometry_proposals[candidate.label]
                     item = ElongationItem(
                         job_id=job.id,
@@ -297,11 +314,67 @@ async def process_theory_job(job_id: str) -> None:
                     await session.commit()
 
 
+async def resume_interrupted_measurement_jobs() -> list[asyncio.Task[None]]:
+    async with SessionLocal() as session:
+        job_ids = list(
+            (
+                await session.scalars(
+                    select(ElongationJob.id).where(
+                        ElongationJob.workflow_status.in_(
+                            {"queued_measurements", "processing_measurements"}
+                        )
+                    )
+                )
+            ).all()
+        )
+        tasks = []
+        for job_id in job_ids:
+            file_ids = list(
+                (
+                    await session.scalars(
+                        select(ElongationJobFile.id).where(
+                            ElongationJobFile.job_id == job_id,
+                            ElongationJobFile.kind == "measurement_scan",
+                            ElongationJobFile.processing_status != "processed",
+                        )
+                    )
+                ).all()
+            )
+            if not file_ids:
+                await session.execute(
+                    update(ElongationJob)
+                    .where(ElongationJob.id == job_id)
+                    .values(workflow_status="measurement_review", status="review_required")
+                )
+                continue
+            await session.execute(
+                update(ElongationJob)
+                .where(ElongationJob.id == job_id)
+                .values(workflow_status="queued_measurements", status="queued_measurements")
+            )
+            tasks.append((job_id, file_ids))
+        await session.commit()
+    return [
+        asyncio.create_task(process_measurement_files(job_id, file_ids))
+        for job_id, file_ids in tasks
+    ]
+
+
 async def process_measurement_files(job_id: str, file_ids: list[str]) -> None:
-    """Read each uploaded scan locally and keep missing/excess values reviewable."""
+    """Read each uploaded scan and keep missing/excess values reviewable."""
 
     async with PROCESSING_LIMIT:
         async with SessionLocal() as session:
+            claim = await session.execute(
+                update(ElongationJob)
+                .where(
+                    ElongationJob.id == job_id,
+                    ElongationJob.workflow_status == "queued_measurements",
+                )
+                .values(workflow_status="processing_measurements", status="processing")
+            )
+            if claim.rowcount != 1:
+                return
             job = await session.get(ElongationJob, job_id)
             if job is None:
                 return
@@ -335,27 +408,55 @@ async def process_measurement_files(job_id: str, file_ids: list[str]) -> None:
             all_warnings: list[str] = []
             try:
                 for source in files:
-                    text, engine = await run_in_threadpool(
-                        extract_measurement_text,
+                    from app.services.elongations.readings import extract_measurements
+
+                    extraction = await run_in_threadpool(
+                        extract_measurements,
                         storage_path(source.storage_key),
                         source.mime_type,
                     )
                     summary: dict[str, Any] = {
-                        "engine": engine,
+                        "engine": extraction.engine,
                         "anchors": 0,
                         "unmatched_labels": [],
                         "extras": {},
                         "conflicts": [],
+                        "unassigned": [],
+                        "warnings": list(extraction.warnings),
                     }
-                    for label, raw_text, values in parse_labeled_measurements(text):
+                    warning_start = len(all_warnings)
+                    all_warnings.extend(extraction.warnings)
+                    for group in extraction.groups:
+                        label, raw_text, values = group.label, group.raw_text, list(group.values)
                         summary["anchors"] += 1
+                        if label is None:
+                            summary["unassigned"].append(
+                                {
+                                    "raw_text": raw_text,
+                                    "page": group.page,
+                                    "bbox": group.bbox,
+                                    "values": [str(v) if v is not None else None for v in values],
+                                }
+                            )
+                            continue
                         item = by_label.get(label)
                         if item is None:
                             summary["unmatched_labels"].append(label)
+                            summary["unassigned"].append(
+                                {
+                                    "label": label,
+                                    "raw_text": raw_text,
+                                    "page": group.page,
+                                    "bbox": group.bbox,
+                                    "values": [str(v) if v is not None else None for v in values],
+                                }
+                            )
                             continue
                         slots, extras = expand_measurement_slots(item.strand_count, values)
                         if extras:
-                            summary["extras"][label] = [str(value) for value in extras]
+                            summary["extras"][label] = [
+                                str(value) if value is not None else None for value in extras
+                            ]
                             all_warnings.append(f"{label} tiene {len(extras)} valores sobrantes")
                         item_measurements = await ensure_measurement_slots(
                             session, item, job_id=job.id
@@ -365,13 +466,27 @@ async def process_measurement_files(job_id: str, file_ids: list[str]) -> None:
                         }
                         if len(values) != item.strand_count:
                             all_warnings.append(
-                                f"{label} detectó {len(values)} lecturas "
-                                f"para S={item.strand_count}"
+                                f"{label} detectó {len(values)} lecturas para S={item.strand_count}"
                             )
                         for slot in slots:
                             if slot.measured_elongation_cm is None:
                                 continue
                             measurement = existing[slot.ordinal]
+                            if (
+                                measurement.match_method == "manual"
+                                or measurement.review_status == "approved"
+                            ):
+                                # Preserve signed/manual values; a different read is shown as an
+                                # alternative rather than silently replacing the technician.
+                                if measurement.measured_elongation != slot.measured_elongation_cm:
+                                    summary["conflicts"].append(
+                                        {
+                                            "label": label,
+                                            "ordinal": slot.ordinal,
+                                            "candidate": str(slot.measured_elongation_cm),
+                                        }
+                                    )
+                                continue
                             if (
                                 measurement.measured_elongation is not None
                                 and measurement.measured_elongation != slot.measured_elongation_cm
@@ -388,15 +503,30 @@ async def process_measurement_files(job_id: str, file_ids: list[str]) -> None:
                                 continue
                             measurement.measured_elongation = slot.measured_elongation_cm
                             measurement.raw_text = raw_text
-                            measurement.confidence = Decimal("0.5000")
-                            measurement.match_method = "label_anchor"
-                            measurement.review_status = "pending"
+                            measurement.confidence = (
+                                Decimal("0.5000") if group.uncertain else Decimal("0.8500")
+                            )
+                            measurement.match_method = (
+                                "spatial"
+                                if extraction.engine.startswith("openai")
+                                else "label_anchor"
+                            )
+                            measurement.review_status = "conflict" if group.uncertain else "pending"
                             measurement.source_file_id = source.id
-                            measurement.source_page = 1
-                            measurement.source_location_json = {"file": source.original_filename}
+                            measurement.source_page = group.page
+                            measurement.source_location_json = {
+                                "file": source.original_filename,
+                                "bbox": group.bbox,
+                            }
+                    if not extraction.groups:
+                        all_warnings.append(
+                            "No se detectaron mediciones; revise el motor de lectura y el escaneo"
+                        )
+                    summary["warnings"] = list(dict.fromkeys(all_warnings[warning_start:]))
                     source.processing_status = "processed"
                     source.processing_summary_json = summary
                     source.error_message = None
+                    source.page_count = extraction.page_count
                 job.workflow_status = "measurement_review"
                 job.status = "review_required"
                 job.error_message = None
@@ -500,8 +630,7 @@ def progress_for(
                 unresolved=unresolved,
             )
             requires_review = (
-                state in {"missing", "unresolved"}
-                or measurement.review_status != "approved"
+                state in {"missing", "unresolved"} or measurement.review_status != "approved"
             )
             if state == "outside":
                 outside += 1
@@ -513,9 +642,12 @@ def progress_for(
                 conflicts += 1
     for source in files:
         summary = source.processing_summary_json or {}
+        if summary.get("review_resolved"):
+            continue
         conflicts += len(summary.get("unmatched_labels") or [])
         conflicts += sum(len(values) for values in (summary.get("extras") or {}).values())
         conflicts += len(summary.get("conflicts") or [])
+        conflicts += len(summary.get("unassigned") or [])
     theory_blockers: list[str] = []
     if not items:
         theory_blockers.append("No hay grupos teóricos completos")

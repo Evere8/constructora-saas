@@ -2,7 +2,7 @@ name: MySQL migration recovery
 
 on:
   push:
-    branches: [main, codex/fix-sector-migrations]
+    branches: [main, codex/fix-sector-migrations, codex/fix-document-ocr]
     paths: ["backend/**", ".github/workflows/mysql-migrations.yml"]
   pull_request:
     paths: ["backend/**", ".github/workflows/mysql-migrations.yml"]

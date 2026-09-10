@@ -33,15 +33,18 @@ from app.api.routes.operations import (
 )
 from app.api.schemas.elongations import (
     ElongationBulkClassification,
+    ElongationBulkReview,
     ElongationClassificationZoneCreate,
     ElongationClassificationZoneResponse,
     ElongationFileResponse,
+    ElongationItemCreate,
     ElongationItemV2Patch,
     ElongationItemV2Response,
     ElongationJobV2Response,
     ElongationMeasurementPatch,
     ElongationMeasurementResponse,
     ElongationProgressResponse,
+    ElongationScanResolution,
 )
 from app.core.config import get_settings
 from app.db.models import (
@@ -122,8 +125,8 @@ def _preview_png(path: Path, mime_type: str, page: int) -> bytes:
                         str(page),
                         "-singlefile",
                         "-png",
-                        "-r",
-                        "150",
+                        "-scale-to",
+                        "4000",
                         str(path),
                         str(output),
                     ],
@@ -320,9 +323,7 @@ async def _create_source_file(
     return file
 
 
-async def _latest_source_file(
-    db: DbSession, job_id: str, kind: str
-) -> ElongationJobFile | None:
+async def _latest_source_file(db: DbSession, job_id: str, kind: str) -> ElongationJobFile | None:
     return await db.scalar(
         select(ElongationJobFile)
         .where(ElongationJobFile.job_id == job_id, ElongationJobFile.kind == kind)
@@ -728,18 +729,28 @@ async def retry_elongation_job(
 ) -> ElongationJobV2Response:
     require_role(access, WORK_EDITOR_ROLES)
     job = await require_job(db, access.company_id, project_id, job_id)
+    require_idle_job(job)
     items, _, files, _ = await load_job_data(db, job)
     measurement_files = [file.id for file in files if file.kind == "measurement_scan"]
     if job.workflow_status in {
         "failed_measurements",
         "processing_measurements",
         "measurement_review",
+        "approved",
+        "measurements_pending",
     }:
         if not measurement_files:
             raise HTTPException(
                 status_code=422,
                 detail="No hay archivos de mediciones para reintentar",
             )
+        if not job.theory_approved_at:
+            raise HTTPException(status_code=422, detail="Primero debe aprobarse la teoría")
+        if job.approved_at:
+            invalidate_final_approval(job)
+        for source in files:
+            if source.id in measurement_files:
+                source.processing_status = "uploaded"
         job.workflow_status = "queued_measurements"
         job.status = "queued_measurements"
         add_activity(db, access, "elongation.measurements.retry", "elongation_job", job.id)
@@ -768,6 +779,202 @@ async def retry_elongation_job(
     return await response_for_job(db, job)
 
 
+def require_idle_job(job: ElongationJob) -> None:
+    if job.workflow_status.startswith(("queued_", "processing_")):
+        raise HTTPException(
+            status_code=409, detail="La lectura está en curso; espere a que termine"
+        )
+
+
+@router.get("/projects/{project_id}/elongation-ocr-status")
+async def elongation_ocr_status(project_id: str, access: CurrentCompanyAccess, db: DbSession):
+    await require_project(db, access.company_id, project_id)
+    settings = get_settings()
+    configured = bool(settings.openai_api_key and settings.openai_api_key.get_secret_value())
+    enabled = settings.elongation_ocr_provider != "local" and configured
+    return {
+        "visual_enabled": enabled,
+        "model": settings.openai_ocr_model if enabled else None,
+        "provider": "openai" if enabled else "local",
+        "handwriting_enabled": enabled,
+    }
+
+
+@router.post(
+    "/projects/{project_id}/elongation-jobs/{job_id}/reread-theory",
+    response_model=ElongationJobV2Response,
+    status_code=202,
+)
+async def reread_elongation_theory(
+    project_id: str,
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+):
+    require_role(access, WORK_EDITOR_ROLES)
+    job = await require_job(db, access.company_id, project_id, job_id)
+    require_idle_job(job)
+    source = await _latest_source_file(db, job.id, "plan")
+    if not await _source_file_is_available(source):
+        raise HTTPException(status_code=422, detail="No está disponible el plano original")
+    if job.theory_approved_at or job.approved_at:
+        invalidate_approvals(job)
+        await invalidate_measurement_reviews(db, job.id)
+    job.workflow_status = "queued_theory"
+    job.status = "queued_theory"
+    job.error_message = None
+    add_activity(db, access, "elongation.theory.reread", "elongation_job", job.id)
+    await commit_or_conflict(db, "No fue posible programar la relectura")
+    background_tasks.add_task(process_theory_job, job.id)
+    return await response_for_job(db, job)
+
+
+@router.post(
+    "/projects/{project_id}/elongation-jobs/{job_id}/items",
+    response_model=ElongationJobV2Response,
+    status_code=201,
+)
+async def create_manual_elongation_item(
+    project_id: str,
+    job_id: str,
+    payload: ElongationItemCreate,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+):
+    require_role(access, WORK_EDITOR_ROLES)
+    job = await require_job(db, access.company_id, project_id, job_id)
+    require_idle_job(job)
+    source = await _latest_source_file(db, job.id, "plan")
+    _, number = normalise_label(payload.label)
+    item = ElongationItem(
+        job_id=job.id,
+        **payload.model_dump(),
+        label_number=number,
+        sort_order=number,
+        raw_label=payload.label,
+        raw_text="Carga manual desde el plano",
+        review_status="pending",
+        theory_review_status="pending",
+        source_file_id=source.id if source else None,
+        source_location_json={"method": "manual", "page": payload.source_page},
+    )
+    db.add(item)
+    await flush_or_conflict(db, "Ya existe ese Label en este trabajo")
+    await ensure_measurement_slots(db, item)
+    if job.theory_approved_at or job.approved_at:
+        invalidate_approvals(job)
+        await invalidate_measurement_reviews(db, job.id)
+    job.workflow_status, job.status = "theory_review", "review_required"
+    add_activity(
+        db,
+        access,
+        "elongation.item.manual",
+        "elongation_item",
+        item.id,
+        json_safe(payload.model_dump()),
+    )
+    await commit_or_conflict(db, "No fue posible agregar el grupo teórico")
+    return await response_for_job(db, job)
+
+
+@router.post(
+    "/projects/{project_id}/elongation-jobs/{job_id}/review-theories",
+    response_model=ElongationJobV2Response,
+)
+async def review_elongation_theories(
+    project_id: str,
+    job_id: str,
+    payload: ElongationBulkReview,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+):
+    require_document_approver(access)
+    job = await require_job(db, access.company_id, project_id, job_id)
+    require_idle_job(job)
+    if job.version_number != payload.expected_version:
+        raise HTTPException(status_code=409, detail="El trabajo cambió; actualice antes de revisar")
+    items = list(
+        (
+            await db.scalars(
+                select(ElongationItem).where(
+                    ElongationItem.job_id == job.id, ElongationItem.id.in_(payload.item_ids)
+                )
+            )
+        ).all()
+    )
+    if len(items) != len(set(payload.item_ids)):
+        raise HTTPException(status_code=404, detail="Uno o más grupos no pertenecen al trabajo")
+    blocked = [
+        item.label
+        for item in items
+        if item.classification == "unknown" or item.theory_review_status in {"conflict", "rejected"}
+    ]
+    if blocked:
+        raise HTTPException(
+            status_code=422, detail="Clasifique o revise individualmente: " + ", ".join(blocked)
+        )
+    for item in items:
+        item.theory_review_status = "approved"
+        item.reviewed_by_user_id = access.user.id
+        item.reviewed_at = utcnow()
+    add_activity(
+        db,
+        access,
+        "elongation.theories.reviewed",
+        "elongation_job",
+        job.id,
+        {"item_ids": payload.item_ids},
+    )
+    await commit_or_conflict(db, "No fue posible revisar las teorías")
+    return await response_for_job(db, job)
+
+
+@router.post(
+    "/projects/{project_id}/elongation-jobs/{job_id}/files/{file_id}/resolve-readings",
+    response_model=ElongationJobV2Response,
+)
+async def resolve_scan_readings(
+    project_id: str,
+    job_id: str,
+    file_id: str,
+    payload: ElongationScanResolution,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+):
+    require_document_approver(access)
+    job = await require_job(db, access.company_id, project_id, job_id)
+    require_idle_job(job)
+    source = await db.scalar(
+        select(ElongationJobFile).where(
+            ElongationJobFile.id == file_id,
+            ElongationJobFile.job_id == job.id,
+            ElongationJobFile.kind == "measurement_scan",
+        )
+    )
+    if source is None:
+        raise HTTPException(status_code=404, detail="Escaneo no encontrado")
+    source.processing_summary_json = {
+        **(source.processing_summary_json or {}),
+        "review_resolved": True,
+        "resolution_reason": payload.reason,
+        "resolved_by": access.user.id,
+        "resolved_at": utcnow().isoformat(),
+    }
+    if job.approved_at:
+        invalidate_final_approval(job)
+    add_activity(
+        db,
+        access,
+        "elongation.scan.resolved",
+        "elongation_job_file",
+        source.id,
+        {"reason": payload.reason},
+    )
+    await commit_or_conflict(db, "No fue posible guardar la revisión del escaneo")
+    return await response_for_job(db, job)
+
+
 @router.patch(
     "/projects/{project_id}/elongation-jobs/{job_id}/items/{item_id}",
     response_model=ElongationItemV2Response,
@@ -782,6 +989,7 @@ async def update_elongation_item(
 ) -> ElongationItemV2Response:
     require_role(access, WORK_EDITOR_ROLES)
     job = await require_job(db, access.company_id, project_id, job_id)
+    require_idle_job(job)
     item = await db.scalar(
         select(ElongationItem).where(ElongationItem.id == item_id, ElongationItem.job_id == job.id)
     )
@@ -875,6 +1083,7 @@ async def classify_elongation_items(
 ) -> ElongationJobV2Response:
     require_role(access, WORK_EDITOR_ROLES)
     job = await require_job(db, access.company_id, project_id, job_id)
+    require_idle_job(job)
     items = list(
         (
             await db.execute(
@@ -893,7 +1102,8 @@ async def classify_elongation_items(
     }
     for item in items:
         item.classification = payload.classification
-        item.theory_review_status = "pending"
+        if item.theory_review_status not in {"conflict", "rejected"}:
+            item.theory_review_status = "pending"
     if previous_classification:
         await invalidate_measurement_reviews(db, job.id)
     if previous_classification and (
@@ -931,6 +1141,7 @@ async def create_classification_zone(
 
     require_role(access, WORK_EDITOR_ROLES)
     job = await require_job(db, access.company_id, project_id, job_id)
+    require_idle_job(job)
     geometry = payload.geometry.model_dump(mode="json")
     zone = ElongationClassificationZone(
         job_id=job.id,
@@ -941,11 +1152,7 @@ async def create_classification_zone(
     )
     db.add(zone)
     items = list(
-        (
-            await db.execute(
-                select(ElongationItem).where(ElongationItem.job_id == job.id)
-            )
-        ).scalars()
+        (await db.execute(select(ElongationItem).where(ElongationItem.job_id == job.id))).scalars()
     )
     previous_classification: dict[str, str] = {}
     for item in items:
@@ -954,7 +1161,8 @@ async def create_classification_zone(
         if item.classification != payload.classification:
             previous_classification[item.id] = item.classification
             item.classification = payload.classification
-            item.theory_review_status = "pending"
+            if item.theory_review_status not in {"conflict", "rejected"}:
+                item.theory_review_status = "pending"
     if previous_classification:
         await invalidate_measurement_reviews(db, job.id)
         if job.theory_approved_at is not None or job.approved_at is not None:
@@ -1020,6 +1228,7 @@ async def approve_elongation_theory(
 ) -> ElongationJobV2Response:
     require_document_approver(access)
     job = await require_job(db, access.company_id, project_id, job_id)
+    require_idle_job(job)
     items, measurements, files, _ = await load_job_data(db, job)
     progress = progress_for(job, items, measurements, files)
     if not progress["can_approve_theory"]:
@@ -1048,6 +1257,7 @@ async def upload_measurement_files(
 ) -> ElongationJobV2Response:
     require_role(access, WORK_EDITOR_ROLES)
     job = await require_job(db, access.company_id, project_id, job_id)
+    require_idle_job(job)
     if job.theory_approved_at is None:
         raise HTTPException(status_code=422, detail="Primero debe aprobarse la teoría")
     if job.approved_at is not None:
@@ -1115,6 +1325,7 @@ async def update_elongation_measurement(
 ) -> ElongationMeasurementResponse:
     require_role(access, WORK_EDITOR_ROLES)
     job = await require_job(db, access.company_id, project_id, job_id)
+    require_idle_job(job)
     measurement = await db.scalar(
         select(ElongationMeasurement).where(
             ElongationMeasurement.id == measurement_id, ElongationMeasurement.job_id == job.id
@@ -1194,6 +1405,7 @@ async def approve_elongation_final(
 ) -> ElongationJobV2Response:
     require_document_approver(access)
     job = await require_job(db, access.company_id, project_id, job_id)
+    require_idle_job(job)
     items, measurements, files, _ = await load_job_data(db, job)
     progress = progress_for(job, items, measurements, files)
     if not progress["can_approve_final"]:

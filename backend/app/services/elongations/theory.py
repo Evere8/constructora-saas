@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from PIL import Image
+from pypdf import PdfReader
 
 TENDON_PATTERN = re.compile(
     r"\b(?:tendon|tend[oó]n|tend0n|tendqn)\s*(?:n(?:[oº°.]|ro)?\s*)?[#№]?\s*"
@@ -172,6 +173,10 @@ def parse_theory_candidates(
     for index, tendon_match in enumerate(matches):
         next_start = matches[index + 1].start() if index + 1 < len(matches) else None
         block = _window_after_label(text, tendon_match.start(), next_start)
+        # Never borrow a later label's Elong when this label's value is unreadable.
+        # Dense OCR can omit the second word 'Tendon' while retaining S/L/Elong.
+        if len(STRAND_PATTERN.findall(block)) > 1 or len(LENGTH_PATTERN.findall(block)) > 1:
+            continue
         strand_match = STRAND_PATTERN.search(block)
         length_match = LENGTH_PATTERN.search(block)
         elongation_match = ELONGATION_PATTERN.search(block)
@@ -288,6 +293,9 @@ def _vector_blocks(
     blocks: list[tuple[str, int, dict[str, Decimal] | None]] = []
     pages = list(root.findall(".//{*}page"))
     for page_number, page in enumerate(pages, start=1):
+        # Poppler reports PDF point coordinates, not the OCR raster dimensions.
+        width = Decimal(page.attrib.get("width", str(rendered_width)))
+        height = Decimal(page.attrib.get("height", str(rendered_height)))
         for block in page.findall(".//{*}block"):
             words = [word.text or "" for word in block.findall(".//{*}word")]
             block_text = " ".join(word for word in words if word).strip()
@@ -298,12 +306,61 @@ def _vector_blocks(
                         page_number,
                         _normalised_bbox(
                             block.attrib,
-                            Decimal(rendered_width),
-                            Decimal(rendered_height),
+                            width,
+                            height,
                         ),
                     )
                 )
     return blocks, len(pages)
+
+
+def _cad_blocks(path: Path) -> tuple[list[tuple[str, int, dict[str, Decimal]]], set[int]]:
+    """AutoCAD plots SHX letters as strokes but retains the exact text in annotations.
+
+    These aren't captured by pdftotext. Read the original S/L/Elong rather than OCRing
+    the strokes, and transform PDF bottom-left rectangles into the rotated viewer.
+    """
+    blocks, covered = [], set()
+    reader = PdfReader(path)
+    for page_number, page in enumerate(reader.pages, 1):
+        crop = page.cropbox
+        width, height = float(crop.width), float(crop.height)
+        rotation = int(page.rotation or 0) % 360
+        for reference in page.get("/Annots", []):
+            annotation = reference.get_object()
+            if str(annotation.get("/T", "")).lower() != "autocad shx text":
+                continue
+            text = str(annotation.get("/Contents", "")).strip()
+            if not TENDON_PATTERN.search(text):
+                continue
+            rect = annotation.get("/Rect")
+            if not rect or len(rect) != 4:
+                continue
+            corners = []
+            for x in (float(rect[0]), float(rect[2])):
+                for y in (float(rect[1]), float(rect[3])):
+                    u, v = (x - float(crop.left)) / width, (float(crop.top) - y) / height
+                    if rotation == 90:
+                        u, v = 1 - v, u
+                    elif rotation == 180:
+                        u, v = 1 - u, 1 - v
+                    elif rotation == 270:
+                        u, v = v, 1 - u
+                    corners.append((min(1, max(0, u)), min(1, max(0, v))))
+            left, top = min(x for x, _ in corners), min(y for _, y in corners)
+            right, bottom = max(x for x, _ in corners), max(y for _, y in corners)
+            box = {
+                key: Decimal(str(round(value, 6)))
+                for key, value in {
+                    "x": left,
+                    "y": top,
+                    "width": right - left,
+                    "height": bottom - top,
+                }.items()
+            }
+            blocks.append((text, page_number, box))
+            covered.add(page_number)
+    return blocks, covered
 
 
 def _parse_tsv_blocks(
@@ -379,16 +436,10 @@ def _parse_tsv_blocks(
             "y": (Decimal(mapped_top + y_offset) / Decimal(page_height)).quantize(
                 Decimal("0.000001")
             ),
-            "width": (Decimal(mapped_width) / Decimal(page_width)).quantize(
-                Decimal("0.000001")
-            ),
-            "height": (Decimal(mapped_height) / Decimal(page_height)).quantize(
-                Decimal("0.000001")
-            ),
+            "width": (Decimal(mapped_width) / Decimal(page_width)).quantize(Decimal("0.000001")),
+            "height": (Decimal(mapped_height) / Decimal(page_height)).quantize(Decimal("0.000001")),
         }
-        result.append(
-            (" ".join(values), page_number, bbox, confidence.quantize(Decimal("0.0001")))
-        )
+        result.append((" ".join(values), page_number, bbox, confidence.quantize(Decimal("0.0001"))))
     return result
 
 
@@ -451,6 +502,37 @@ def _semantic_ocr_blocks(
     """
 
     composite: list[tuple[str, int, dict[str, Decimal] | None, Decimal]] = []
+    # In CAD fonts Tesseract splits the word 'Tendon' from '203;S=1;...'.
+    # Rejoin only collinear boxes, never a numeric block on the next cable.
+    joined = []
+    for text, page, box, confidence in blocks:
+        if box is None or not re.fullmatch(r"tend[oó]n", text.strip(), re.IGNORECASE):
+            continue
+        nearby = []
+        for tail, tail_page, tail_box, tail_confidence in blocks:
+            if tail_page != page or tail_box is None:
+                continue
+            if not re.match(r"^\d{1,6}\s*[;,]?\s*(?:S|\$)\s*=", tail, re.IGNORECASE):
+                continue
+            horizontal = abs(
+                (box["y"] + box["height"] / 2) - (tail_box["y"] + tail_box["height"] / 2)
+            ) <= min(box["height"], tail_box["height"])
+            vertical = abs(
+                (box["x"] + box["width"] / 2) - (tail_box["x"] + tail_box["width"] / 2)
+            ) <= min(box["width"], tail_box["width"])
+            if (horizontal or vertical) and _box_distance(box, tail_box) <= Decimal("0.01"):
+                nearby.append((tail, tail_box, tail_confidence))
+        if len(nearby) == 1:
+            tail, tail_box, tail_confidence = nearby[0]
+            joined.append(
+                (
+                    f"{text} {tail}",
+                    page,
+                    _union_bbox([box, tail_box]),
+                    min(confidence, tail_confidence),
+                )
+            )
+    blocks = [*blocks, *joined]
     threshold = Decimal("0.030000")
     for anchor_text, page, anchor_bbox, anchor_confidence in blocks:
         if anchor_bbox is None or TENDON_PATTERN.search(anchor_text) is None:
@@ -471,9 +553,7 @@ def _semantic_ocr_blocks(
             if not matches:
                 selected = []
                 break
-            selected.append(
-                min(matches, key=lambda value: _box_distance(anchor_bbox, value[1]))
-            )
+            selected.append(min(matches, key=lambda value: _box_distance(anchor_bbox, value[1])))
         if not selected:
             continue
         ordered = sorted(selected, key=lambda value: (value[1]["y"], value[1]["x"]))
@@ -503,9 +583,7 @@ def _pdf_layout(path: Path, max_pdf_pages: int) -> tuple[int, int, int]:
     page_count = int(pages_match.group("pages"))
     if page_count <= 0 or page_count > max_pdf_pages:
         raise RuntimeError(f"El PDF supera el máximo de {max_pdf_pages} páginas para OCR")
-    width = int(
-        (Decimal(size_match.group("width")) * OCR_DPI / Decimal("72")).to_integral_value()
-    )
+    width = int((Decimal(size_match.group("width")) * OCR_DPI / Decimal("72")).to_integral_value())
     height = int(
         (Decimal(size_match.group("height")) * OCR_DPI / Decimal("72")).to_integral_value()
     )
@@ -648,11 +726,29 @@ def extract_theory(path: Path, mime_type: str, max_pdf_pages: int = 25) -> Theor
     successful extraction until at least one complete Tendon/S/L/Elong group exists.
     """
 
+    from app.services.elongations.vision import extract_visual_theory, visual_enabled
+
     vector_candidates: list[TheoryCandidate] = []
     text_parts: list[str] = []
     page_count = 0
+    cad_covered: set[int] = set()
+    cad_incomplete = False
     if mime_type == "application/pdf":
         page_count, rendered_width, rendered_height = _pdf_layout(path, max_pdf_pages)
+        cad_blocks, cad_covered = _cad_blocks(path)
+        for block, page, bbox in cad_blocks:
+            values = parse_theory_candidates(
+                block,
+                page=page,
+                bbox=bbox,
+                field_confidence={
+                    key: Decimal("1")
+                    for key in ("label", "strand_count", "length_m", "calculated_elongation_cm")
+                },
+            )
+            cad_incomplete = cad_incomplete or not values
+            text_parts.append(block)
+            vector_candidates.extend(values)
         vector_blocks, page_count = _vector_blocks(
             path,
             rendered_width=rendered_width,
@@ -673,13 +769,22 @@ def extract_theory(path: Path, mime_type: str, max_pdf_pages: int = 25) -> Theor
                     },
                 )
             )
-    if vector_candidates:
+    # Native CAD data is complete and deterministic; no cloud cost for these pages.
+    if vector_candidates and len(cad_covered) == page_count and not cad_incomplete:
         candidates = deduplicate_candidates(vector_candidates)
         return TheoryExtraction(
             extracted_text="\n".join(text_parts)[:60000],
             candidates=tuple(candidates),
             page_count=page_count,
-            engine="pdftotext-bbox",
+            engine="autocad-shx+pdftotext",
+        )
+
+    if visual_enabled():
+        visual = extract_visual_theory(path, mime_type)
+        # Preserve native readings as well; disagreements are explicitly marked.
+        return replace(
+            visual,
+            candidates=tuple(deduplicate_candidates([*vector_candidates, *visual.candidates])),
         )
 
     ocr_blocks, engine, ocr_page_count = _ocr_blocks(path, mime_type, max_pdf_pages)
@@ -702,7 +807,7 @@ def extract_theory(path: Path, mime_type: str, max_pdf_pages: int = 25) -> Theor
         )
     return TheoryExtraction(
         extracted_text="\n".join(text_parts)[:60000],
-        candidates=tuple(deduplicate_candidates(ocr_candidates)),
+        candidates=tuple(deduplicate_candidates([*vector_candidates, *ocr_candidates])),
         page_count=page_count or ocr_page_count,
         engine=engine,
         warnings=("No hubo candidatos completos en texto vectorial; se aplicó OCR por bloques.",),

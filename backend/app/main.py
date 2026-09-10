@@ -7,7 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.db.session import engine
-from app.services.elongations.pipeline import resume_interrupted_theory_jobs
+from app.services.elongations.pipeline import (
+    resume_interrupted_measurement_jobs,
+    resume_interrupted_theory_jobs,
+)
 
 settings = get_settings()
 
@@ -15,6 +18,7 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     recovery_tasks = await resume_interrupted_theory_jobs()
+    recovery_tasks.extend(await resume_interrupted_measurement_jobs())
     try:
         yield
     finally:

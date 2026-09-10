@@ -1,7 +1,8 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
@@ -27,6 +28,11 @@ class Settings(BaseSettings):
     evidence_max_bytes: int = 10 * 1024 * 1024
     document_max_bytes: int = 50 * 1024 * 1024
     ocr_max_pdf_pages: int = 25
+    elongation_ocr_provider: Literal["auto", "local", "openai"] = "auto"
+    openai_api_key: SecretStr | None = None
+    openai_ocr_model: str = "gpt-5.4"
+    openai_ocr_max_requests: int = Field(default=32, ge=1, le=100)
+    openai_ocr_timeout_seconds: int = Field(default=180, ge=10, le=300)
 
     @property
     def database_url(self) -> URL:

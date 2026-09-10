@@ -64,6 +64,36 @@ class ElongationBulkClassification(BaseModel):
     classification: Literal["band", "distributed"]
 
 
+class ElongationItemCreate(BaseModel):
+    label: str = Field(min_length=1, max_length=50)
+    classification: Literal["band", "distributed", "unknown"] = "unknown"
+    length_m: Decimal = Field(gt=0, max_digits=12, decimal_places=3)
+    strand_count: int = Field(gt=0, le=1000)
+    calculated_elongation: Decimal = Field(ge=0, max_digits=12, decimal_places=3)
+    source_page: int = Field(default=1, ge=1, le=25)
+
+    @field_validator("label")
+    @classmethod
+    def valid_label(cls, value):
+        from app.services.elongations.theory import normalise_label
+
+        return normalise_label(value)[0]
+
+    @field_validator("length_m", "calculated_elongation", mode="before")
+    @classmethod
+    def normalise_decimal(cls, value):
+        return _normalise_decimal_input(value)
+
+
+class ElongationBulkReview(BaseModel):
+    item_ids: list[str] = Field(min_length=1, max_length=1000)
+    expected_version: int = Field(ge=1)
+
+
+class ElongationScanResolution(BaseModel):
+    reason: str = Field(min_length=5, max_length=2000)
+
+
 class ElongationZoneGeometry(BaseModel):
     page: int = Field(default=1, ge=1, le=25)
     x: Decimal = Field(ge=0, le=1)
