@@ -38,6 +38,7 @@ import type {
   PlanAnnotation,
   PlanVersion,
   Project,
+  ProjectSector,
 } from '@/types/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -54,6 +55,12 @@ const STROKE_OPTIONS = [
   { value: 4, label: 'Medio' },
   { value: 7, label: 'Grueso' },
   { value: 11, label: 'Marcado' },
+];
+const BAND_THICKNESS_OPTIONS = [
+  { value: 0.018, label: 'Fino' },
+  { value: 0.028, label: 'Medio' },
+  { value: 0.04, label: 'Grueso' },
+  { value: 0.055, label: 'Muy grueso' },
 ];
 
 const LEVEL_STATUS = {
@@ -118,23 +125,54 @@ function progressFromStatuses(statuses: string[]): {
   return { total, completed, percent, status };
 }
 
-function horizontalBandFromPoints(start: Point, end: Point): LevelPlanGeometry | null {
+function horizontalBandFromPoints(start: Point, end: Point, thickness = 0.028): LevelPlanGeometry | null {
   const x = Math.min(start.x, end.x);
   const y = Math.min(start.y, end.y);
   const width = Math.abs(end.x - start.x);
   const height = Math.abs(end.y - start.y);
   if (width < 0.01 && height < 0.01) return null;
   if (width >= height) {
-    const thickness = Math.max(0.018, Math.min(0.055, Math.max(height, width * 0.055)));
-    const bandY = clamp((start.y + end.y) / 2 - thickness / 2);
+    const normalizedThickness = clampRange(thickness, 0.012, 0.08);
+    const bandY = clamp((start.y + end.y) / 2 - normalizedThickness / 2);
     return {
       x,
-      y: Math.min(bandY, 1 - thickness),
+      y: Math.min(bandY, 1 - normalizedThickness),
       width: Math.max(width, 0.018),
-      height: thickness,
+      height: normalizedThickness,
+      band_thickness: normalizedThickness,
     };
   }
   return { x, y, width, height };
+}
+
+function rectanglesOverlap(first: LevelPlanGeometry, second: LevelPlanGeometry): boolean {
+  return first.x < second.x + second.width
+    && first.x + first.width > second.x
+    && first.y < second.y + second.height
+    && first.y + first.height > second.y;
+}
+
+function keepBandClearOfLevels(
+  candidate: LevelPlanGeometry,
+  occupied: LevelPlanGeometry[],
+): LevelPlanGeometry {
+  // Bands placed over different towers may share the same elevation.  Only
+  // bands that overlap horizontally are separated, and the closest available
+  // row is chosen to preserve the line the user drew.
+  if (candidate.width < candidate.height * 2 || !occupied.some((item) => rectanglesOverlap(candidate, item))) {
+    return candidate;
+  }
+  const gap = 0.006;
+  const candidates = [candidate.y];
+  for (const item of occupied) {
+    if (candidate.x >= item.x + item.width || candidate.x + candidate.width <= item.x) continue;
+    candidates.push(item.y - candidate.height - gap, item.y + item.height + gap);
+  }
+  const valid = candidates
+    .filter((y) => y >= 0 && y + candidate.height <= 1)
+    .map((y) => ({ ...candidate, y }));
+  return valid.find((option) => !occupied.some((item) => rectanglesOverlap(option, item)))
+    ?? candidate;
 }
 
 function snapStraight(start: Point, end: Point): Point {
@@ -189,21 +227,26 @@ function ProgressRing({ value, color, label }: { value: number; color: string; l
   );
 }
 
-function BuildingSummary({ levels }: { levels: Level[] }) {
-  const sectors = useMemo(() => {
+function BuildingSummary({ levels, sectors }: { levels: Level[]; sectors: ProjectSector[] }) {
+  const sectorGroups = useMemo(() => {
     const groups = new Map<string, Level[]>();
+    for (const sector of sectors) groups.set(sector.id, []);
     for (const level of levels) {
-      const sector = sectorName(level);
-      groups.set(sector, [...(groups.get(sector) ?? []), level]);
+      const key = level.sector_id || `legacy:${sectorName(level)}`;
+      groups.set(key, [...(groups.get(key) ?? []), level]);
     }
-    return Array.from(groups.entries());
-  }, [levels]);
+    return Array.from(groups.entries()).map(([sectorId, sectorLevels]) => {
+      const name = sectors.find((sector) => sector.id === sectorId)?.name
+        ?? (sectorLevels[0] ? sectorName(sectorLevels[0]) : 'Obra general');
+      return [name, sectorLevels] as const;
+    });
+  }, [levels, sectors]);
 
-  if (sectors.length === 0) return null;
+  if (sectorGroups.length === 0) return null;
 
   return (
     <div className="grid gap-3 lg:grid-cols-4">
-      {sectors.map(([sector, sectorLevels]) => {
+      {sectorGroups.map(([sector, sectorLevels]) => {
         const completed = sectorLevels.filter((level) => level.work_status === 'concreted');
         const inProgress = sectorLevels.some((level) => level.work_status === 'in_progress');
         const percent = sectorLevels.length ? Math.round((completed.length / sectorLevels.length) * 100) : 0;
@@ -473,11 +516,26 @@ function PlanCanvas({
   const [note, setNote] = useState<{ point: Point; text: string } | null>(null);
   const [pencilColor, setPencilColor] = useState('#f97316');
   const [strokeWidth, setStrokeWidth] = useState(4);
+  const [bandThickness, setBandThickness] = useState(0.028);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   const mappedLevels = levels.filter((level) => level.plan_version_id === version.id && level.plan_page_number === 1 && level.plan_geometry_json);
   const selectedLevel = levels.find((level) => level.id === selectedLevelId) ?? null;
   const selectedGeometry = selectedLevel?.plan_geometry_json;
+  const arrangeMappedBand = (geometry: LevelPlanGeometry): LevelPlanGeometry =>
+    keepBandClearOfLevels(
+      geometry,
+      mappedLevels
+        .filter((level) => level.id !== selectedLevelId)
+        .map((level) => level.plan_geometry_json as LevelPlanGeometry),
+    );
+
+  useEffect(() => {
+    const configuredThickness = selectedGeometry?.band_thickness ?? selectedGeometry?.height;
+    if (selectedGeometry && configuredThickness && selectedGeometry.width >= selectedGeometry.height * 2) {
+      setBandThickness(clampRange(configuredThickness, 0.012, 0.08));
+    }
+  }, [selectedLevelId, selectedGeometry?.band_thickness, selectedGeometry?.height, selectedGeometry?.width]);
 
   const pointFromEvent = (event: ReactPointerEvent<HTMLDivElement>): Point | null => {
     const rect = contentRef.current?.getBoundingClientRect();
@@ -611,11 +669,20 @@ function PlanCanvas({
       if (Math.abs(points[0].x - points[1].x) + Math.abs(points[0].y - points[1].y) > 0.002) onCreateAnnotation({ annotation_type: 'line', geometry_json: { points }, style_json: annotationStyle('straight'), level_id: selectedLevelId });
     }
     if (active.kind === 'map-level' && selectedLevelId && mappingRef.current) {
-      const geometry = horizontalBandFromPoints(mappingRef.current.start, mappingRef.current.end);
+      const geometry = horizontalBandFromPoints(mappingRef.current.start, mappingRef.current.end, bandThickness);
       mappingRef.current = null;
       setMapping(null);
       if (geometry) {
-        onSaveLevelGeometry(selectedLevelId, geometry, true);
+        const previousGeometry = selectedLevel?.plan_geometry_json;
+        onSaveLevelGeometry(
+          selectedLevelId,
+          {
+            ...arrangeMappedBand(geometry),
+            checklist_x: previousGeometry?.checklist_x,
+            checklist_y: previousGeometry?.checklist_y,
+          },
+          true,
+        );
         setTool('pan');
       }
     }
@@ -628,7 +695,8 @@ function PlanCanvas({
     setTool('pan');
   };
 
-  const mappingGeometry = mapping ? horizontalBandFromPoints(mapping.start, mapping.end) : null;
+  const rawMappingGeometry = mapping ? horizontalBandFromPoints(mapping.start, mapping.end, bandThickness) : null;
+  const mappingGeometry = rawMappingGeometry ? arrangeMappedBand(rawMappingGeometry) : null;
   const previewWidth = drawingMode === 'highlight' ? Math.max(strokeWidth * 3, 14) : strokeWidth;
   const previewOpacity = drawingMode === 'highlight' ? 0.32 : 1;
   const boardClass = isFullscreen ? 'fixed inset-0 z-50 overflow-y-auto bg-slate-50 p-3 sm:p-6' : 'space-y-3';
@@ -672,7 +740,16 @@ function PlanCanvas({
           </div>
         ) : null}
 
-        {tool === 'map-level' ? <div className="rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-900">Traza una línea sobre <strong>{selectedLevel ? sectorName(selectedLevel) + ' · ' + selectedLevel.name : 'el nivel seleccionado'}</strong>. El sistema la convierte en una franja gruesa con su pin; arrastra hasta el final de la losa.</div> : null}
+        {tool === 'map-level' ? (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-900">
+            <span>Traza una línea sobre <strong>{selectedLevel ? sectorName(selectedLevel) + ' · ' + selectedLevel.name : 'el nivel seleccionado'}</strong>. La franja se ajusta para no encimarse con otra del mismo sector.</span>
+            <label className="flex items-center gap-2 text-xs font-semibold">Grosor del nivel
+              <select className="h-8 rounded-md border border-orange-200 bg-white px-2 text-xs font-normal text-foreground" value={bandThickness} onChange={(event) => setBandThickness(Number(event.target.value))}>
+                {BAND_THICKNESS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+          </div>
+        ) : null}
 
         <div className={'relative overflow-hidden rounded-2xl border bg-slate-100 shadow-inner ' + (isFullscreen ? 'h-[calc(100vh-158px)] min-h-[560px]' : 'h-[650px]')}>
           <Button className="absolute left-1/2 top-3 z-40 -translate-x-1/2 rounded-full bg-white/95 shadow-md hover:bg-white" size="sm" variant="secondary" onClick={() => setIsFullscreen((value) => !value)}>
@@ -702,12 +779,35 @@ function PlanCanvas({
                 const labelX = pinOnLeft ? pinX - labelWidth : pinX;
                 const textX = pinOnLeft ? pinX - labelWidth / 2 : pinX + labelWidth / 2;
                 return (
-                  <g key={level.id} className="cursor-pointer" onClick={(event) => { if (tool !== 'pan') return; event.stopPropagation(); onSelectLevel(level.id); }}>
-                    <rect x={geometry.x * 1000} y={geometry.y * 1000} width={geometry.width * 1000} height={geometry.height * 1000} fill={status.color} fillOpacity={selected ? 0.36 : 0.18} stroke={status.color} strokeWidth={selected ? 8 : 4} rx="4" />
-                    <path d={'M ' + String((geometry.x + geometry.width / 2) * 1000) + ' ' + String(pinY) + ' L ' + String(pinX) + ' ' + String(pinY)} fill="none" stroke={status.color} strokeWidth={selected ? 6 : 4} strokeLinecap="round" />
-                    <rect x={labelX} y={pinY - 20} width={labelWidth} height="40" rx="12" fill={status.color} />
-                    <circle cx={pinOnLeft ? labelX + labelWidth - 14 : labelX + 14} cy={pinY} r="7" fill="white" opacity="0.95" />
-                    <text x={textX} y={pinY + 6} textAnchor="middle" fill="white" fontSize="18" fontWeight="700" pointerEvents="none">{label}</text>
+                  <g
+                    key={level.id}
+                    className="cursor-pointer"
+                    onPointerDown={(event) => {
+                      if (tool !== 'pan') return;
+                      event.stopPropagation();
+                      onSelectLevel(level.id);
+                    }}
+                  >
+                    <rect
+                      x={geometry.x * 1000}
+                      y={geometry.y * 1000}
+                      width={geometry.width * 1000}
+                      height={geometry.height * 1000}
+                      fill={status.color}
+                      fillOpacity={selected ? 0.34 : 0.035}
+                      stroke={status.color}
+                      strokeOpacity={selected ? 1 : 0.32}
+                      strokeWidth={selected ? 8 : 3}
+                      rx="4"
+                    />
+                    {selected ? (
+                      <>
+                        <path d={'M ' + String((geometry.x + geometry.width / 2) * 1000) + ' ' + String(pinY) + ' L ' + String(pinX) + ' ' + String(pinY)} fill="none" stroke={status.color} strokeWidth="6" strokeLinecap="round" />
+                        <rect x={labelX} y={pinY - 20} width={labelWidth} height="40" rx="12" fill={status.color} />
+                        <circle cx={pinOnLeft ? labelX + labelWidth - 14 : labelX + 14} cy={pinY} r="7" fill="white" opacity="0.95" />
+                        <text x={textX} y={pinY + 6} textAnchor="middle" fill="white" fontSize="18" fontWeight="700" pointerEvents="none">{label}</text>
+                      </>
+                    ) : null}
                   </g>
                 );
               })}
@@ -781,8 +881,14 @@ export function ProjectPlanBoard({ companyId, project }: { companyId: string; pr
     queryFn: ({ signal }) => projectsApi.listLevels(companyId, project.id, signal),
     refetchInterval: BOARD_REFRESH_MS,
   });
+  const sectorsQuery = useQuery({
+    queryKey: ['project-sectors', companyId, project.id],
+    queryFn: ({ signal }) => projectsApi.listSectors(companyId, project.id, signal),
+    refetchInterval: BOARD_REFRESH_MS,
+  });
   const plans = plansQuery.data ?? [];
   const levels = [...asItems(levelsQuery.data)].sort((left, right) => sectorName(left).localeCompare(sectorName(right)) || left.sort_order - right.sort_order || left.name.localeCompare(right.name));
+  const sectors = [...(sectorsQuery.data ?? [])].sort((left, right) => left.sort_order - right.sort_order || left.name.localeCompare(right.name));
   const versions = latestVersions(plans);
   const version = versions.find((item) => item.id === project.overview_plan_version_id) ?? versions[0] ?? null;
   const [selectedLevelId, setSelectedLevelId] = useState<string | null>(null);
@@ -817,6 +923,7 @@ export function ProjectPlanBoard({ companyId, project }: { companyId: string; pr
   const invalidateBoard = () => {
     void queryClient.invalidateQueries({ queryKey: ['plan-annotations', companyId, project.id] });
     void queryClient.invalidateQueries({ queryKey: ['levels', companyId, project.id] });
+    void queryClient.invalidateQueries({ queryKey: ['project-sectors', companyId, project.id] });
     void queryClient.invalidateQueries({ queryKey: ['project', companyId, project.id] });
   };
   const annotationMutation = useMutation({
@@ -847,7 +954,7 @@ export function ProjectPlanBoard({ companyId, project }: { companyId: string; pr
     onError: (error: Error) => toast.error(error.message),
   });
 
-  if (plansQuery.isLoading || levelsQuery.isLoading) return <Card><CardContent className="p-6 text-sm text-muted-foreground">Preparando tablero de obra…</CardContent></Card>;
+  if (plansQuery.isLoading || levelsQuery.isLoading || sectorsQuery.isLoading) return <Card><CardContent className="p-6 text-sm text-muted-foreground">Preparando tablero de obra…</CardContent></Card>;
   if (!version) {
     return <Card><CardContent className="space-y-2 p-6 text-sm text-muted-foreground"><p className="text-base font-semibold text-foreground">Tablero de obra</p><p>Para usar el resumen visual, carga un PDF o una imagen desde la pestaña <strong>Planos</strong>.</p><p>Luego pulsa <strong>Mostrar en resumen</strong> en la versión que quieres compartir con el equipo.</p></CardContent></Card>;
   }
@@ -858,7 +965,7 @@ export function ProjectPlanBoard({ companyId, project }: { companyId: string; pr
         <div><h2 className="text-xl font-bold tracking-tight">Plano operativo</h2><p className="text-sm text-muted-foreground">{version.original_filename} · seguimiento visual de avance por sector</p></div>
         {canEditPlan ? <Button size="sm" variant="outline" disabled={levels.length === 0 || detectLevelsMutation.isPending} onClick={() => detectLevelsMutation.mutate(version.id)}>{detectLevelsMutation.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />} Detectar niveles del PDF</Button> : null}
       </div>
-      <BuildingSummary levels={levels} />
+      <BuildingSummary levels={levels} sectors={sectors} />
       <div className="rounded-xl border bg-white p-2 shadow-sm">
         <div className="flex flex-wrap gap-1.5">
           {levels.map((level) => {

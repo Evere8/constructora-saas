@@ -4,7 +4,7 @@ from decimal import Decimal
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import Response
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencies import CurrentCompanyAccess, DbSession
@@ -17,6 +17,9 @@ from app.api.schemas.operations import (
     ProjectListResponse,
     ProjectPatch,
     ProjectResponse,
+    SectorCreate,
+    SectorPatch,
+    SectorResponse,
     TaskCreate,
     TaskListResponse,
     TaskPatch,
@@ -34,6 +37,7 @@ from app.db.models import (
     PlanVersion,
     Project,
     ProjectLevel,
+    ProjectSector,
     Task,
     TaskMaterialRequirement,
     TaskTemplate,
@@ -169,6 +173,50 @@ async def require_level(db: DbSession, project_id: str, level_id: str | None) ->
         )
 
 
+async def require_sector(db: DbSession, project_id: str, sector_id: str) -> ProjectSector:
+    sector = await db.scalar(
+        select(ProjectSector).where(
+            ProjectSector.id == sector_id,
+            ProjectSector.project_id == project_id,
+        )
+    )
+    if sector is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="El sector no pertenece a esta obra",
+        )
+    return sector
+
+
+async def find_or_create_sector(
+    db: DbSession,
+    project_id: str,
+    name: str | None,
+) -> ProjectSector:
+    """Keep legacy ``building_name`` clients working while sectors are explicit."""
+
+    normalized_name = (name or "Obra general").strip() or "Obra general"
+    existing = await db.scalar(
+        select(ProjectSector).where(
+            ProjectSector.project_id == project_id,
+            ProjectSector.name == normalized_name,
+        )
+    )
+    if existing is not None:
+        return existing
+    last_order = await db.scalar(
+        select(func.max(ProjectSector.sort_order)).where(ProjectSector.project_id == project_id)
+    )
+    sector = ProjectSector(
+        project_id=project_id,
+        name=normalized_name,
+        sort_order=(last_order or 0) + 1,
+    )
+    db.add(sector)
+    await flush_or_conflict(db, "Ya existe un sector con ese nombre en la obra")
+    return sector
+
+
 async def require_plan_version(
     db: DbSession, company_id: str, project_id: str, version_id: str | None
 ) -> None:
@@ -294,9 +342,118 @@ async def list_levels(
     result = await db.execute(
         select(ProjectLevel)
         .where(ProjectLevel.project_id == project_id)
-        .order_by(ProjectLevel.sort_order, ProjectLevel.name)
+        .order_by(ProjectLevel.sector_id, ProjectLevel.sort_order, ProjectLevel.name)
     )
     return list(result.scalars())
+
+
+@router.get("/projects/{project_id}/sectors", response_model=list[SectorResponse])
+async def list_sectors(
+    project_id: str,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+) -> list[ProjectSector]:
+    await require_project(db, access.company_id, project_id)
+    result = await db.execute(
+        select(ProjectSector)
+        .where(ProjectSector.project_id == project_id)
+        .order_by(ProjectSector.sort_order, ProjectSector.name)
+    )
+    return list(result.scalars())
+
+
+@router.post(
+    "/projects/{project_id}/sectors",
+    response_model=SectorResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_sector(
+    project_id: str,
+    payload: SectorCreate,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+) -> ProjectSector:
+    require_role(access, WORK_EDITOR_ROLES)
+    await require_project(db, access.company_id, project_id)
+    data = payload.model_dump()
+    data["name"] = data["name"].strip()
+    if data["sort_order"] is None:
+        last_order = await db.scalar(
+            select(func.max(ProjectSector.sort_order)).where(ProjectSector.project_id == project_id)
+        )
+        data["sort_order"] = (last_order or 0) + 1
+    sector = ProjectSector(project_id=project_id, **data)
+    db.add(sector)
+    await flush_or_conflict(db, "Ya existe un sector con ese nombre en la obra")
+    add_activity(db, access, "project_sector.created", "project_sector", sector.id)
+    await commit_or_conflict(db, "Ya existe un sector con ese nombre en la obra")
+    await db.refresh(sector)
+    return sector
+
+
+@router.patch("/projects/{project_id}/sectors/{sector_id}", response_model=SectorResponse)
+async def update_sector(
+    project_id: str,
+    sector_id: str,
+    payload: SectorPatch,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+) -> ProjectSector:
+    require_role(access, WORK_EDITOR_ROLES)
+    await require_project(db, access.company_id, project_id)
+    sector = await require_sector(db, project_id, sector_id)
+    changes = payload.model_dump(exclude_unset=True)
+    if "name" in changes:
+        changes["name"] = changes["name"].strip()
+    for field, value in changes.items():
+        setattr(sector, field, value)
+    # ``building_name`` remains a readable legacy label for PDF detection.
+    if "name" in changes:
+        levels = list(
+            (
+                await db.execute(
+                    select(ProjectLevel).where(ProjectLevel.sector_id == sector.id)
+                )
+            ).scalars()
+        )
+        for level in levels:
+            level.building_name = sector.name
+    await flush_or_conflict(db, "Ya existe un sector con ese nombre en la obra")
+    add_activity(db, access, "project_sector.updated", "project_sector", sector.id, changes)
+    await commit_or_conflict(db, "No fue posible actualizar el sector")
+    await db.refresh(sector)
+    return sector
+
+
+@router.delete("/projects/{project_id}/sectors/{sector_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_sector(
+    project_id: str,
+    sector_id: str,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+) -> Response:
+    require_role(access, WORK_EDITOR_ROLES)
+    await require_project(db, access.company_id, project_id)
+    sector = await require_sector(db, project_id, sector_id)
+    level_count = await db.scalar(
+        select(func.count()).select_from(ProjectLevel).where(ProjectLevel.sector_id == sector.id)
+    )
+    if level_count:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Elimina o mueve primero los niveles de este sector",
+        )
+    add_activity(
+        db,
+        access,
+        "project_sector.deleted",
+        "project_sector",
+        sector.id,
+        {"name": sector.name},
+    )
+    await db.delete(sector)
+    await commit_or_conflict(db, "No fue posible eliminar el sector")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(
@@ -313,12 +470,17 @@ async def create_level(
     require_role(access, WORK_EDITOR_ROLES)
     await require_project(db, access.company_id, project_id)
     data = payload.model_dump()
-    data["building_name"] = (data["building_name"] or "Obra general").strip()
+    if data["sector_id"]:
+        sector = await require_sector(db, project_id, data["sector_id"])
+    else:
+        sector = await find_or_create_sector(db, project_id, data["building_name"])
+    data["sector_id"] = sector.id
+    data["building_name"] = sector.name
     if data["sort_order"] is None:
         last_order = await db.scalar(
             select(func.max(ProjectLevel.sort_order)).where(
                 ProjectLevel.project_id == project_id,
-                ProjectLevel.building_name == data["building_name"],
+                ProjectLevel.sector_id == sector.id,
             )
         )
         data["sort_order"] = (last_order or 0) + 1
@@ -327,7 +489,7 @@ async def create_level(
         data["concreted_at"] = date.today()
     level = ProjectLevel(project_id=project_id, **data)
     db.add(level)
-    await flush_or_conflict(db, "Ya existe un nivel con ese nombre en la obra")
+    await flush_or_conflict(db, "Ya existe ese nivel dentro del sector seleccionado")
     db.add_all(
         [
             ChecklistItem(
@@ -342,7 +504,7 @@ async def create_level(
         ]
     )
     add_activity(db, access, "project_level.created", "project_level", level.id)
-    await commit_or_conflict(db, "Ya existe un nivel con ese nombre en la obra")
+    await commit_or_conflict(db, "Ya existe ese nivel dentro del sector seleccionado")
     await db.refresh(level)
     return level
 
@@ -366,6 +528,18 @@ async def update_level(
     if level is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nivel no encontrado")
     changes = payload.model_dump(exclude_unset=True)
+    if "sector_id" in changes:
+        if changes["sector_id"] is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Seleccione un sector válido",
+            )
+        sector = await require_sector(db, project_id, changes["sector_id"])
+        changes["building_name"] = sector.name
+    elif "building_name" in changes:
+        sector = await find_or_create_sector(db, project_id, changes["building_name"])
+        changes["sector_id"] = sector.id
+        changes["building_name"] = sector.name
     final_plan_version_id = changes.get("plan_version_id", level.plan_version_id)
     await require_plan_version(db, access.company_id, project_id, final_plan_version_id)
     if changes.get("plan_geometry_json") is not None and final_plan_version_id is None:
@@ -382,9 +556,50 @@ async def update_level(
     for field, value in changes.items():
         setattr(level, field, value)
     add_activity(db, access, "project_level.updated", "project_level", level.id, changes)
-    await commit_or_conflict(db, "Ya existe un nivel con ese nombre en la obra")
+    await commit_or_conflict(db, "Ya existe ese nivel dentro del sector seleccionado")
     await db.refresh(level)
     return level
+
+
+@router.delete("/projects/{project_id}/levels/{level_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_level(
+    project_id: str,
+    level_id: str,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+) -> Response:
+    require_role(access, WORK_EDITOR_ROLES)
+    await require_project(db, access.company_id, project_id)
+    level = await db.scalar(
+        select(ProjectLevel).where(
+            ProjectLevel.id == level_id,
+            ProjectLevel.project_id == project_id,
+        )
+    )
+    if level is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nivel no encontrado")
+    # Default controls belong to the level and are removed with it.  Controls
+    # owned by a task remain intact; their level reference is set to null by
+    # the database so deleting a marker never erases unrelated task work.
+    await db.execute(
+        delete(ChecklistItem).where(
+            ChecklistItem.company_id == access.company_id,
+            ChecklistItem.project_id == project_id,
+            ChecklistItem.level_id == level.id,
+            ChecklistItem.task_id.is_(None),
+        )
+    )
+    add_activity(
+        db,
+        access,
+        "project_level.deleted",
+        "project_level",
+        level.id,
+        {"name": level.name, "sector": level.building_name},
+    )
+    await db.delete(level)
+    await commit_or_conflict(db, "No fue posible eliminar el nivel")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(

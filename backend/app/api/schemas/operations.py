@@ -17,6 +17,12 @@ class LevelPlanGeometry(BaseModel):
     y: float = Field(ge=0, le=1)
     width: float = Field(gt=0, le=1)
     height: float = Field(gt=0, le=1)
+    # Optional presentation metadata for the operational plan.  Keeping it in
+    # the same normalized geometry lets the floating checklist and the band
+    # retain their position across clients and screen sizes.
+    checklist_x: float | None = Field(default=None, ge=0, le=1)
+    checklist_y: float | None = Field(default=None, ge=0, le=1)
+    band_thickness: float | None = Field(default=None, gt=0, le=1)
 
     @model_validator(mode="after")
     def fit_inside_plan(self) -> "LevelPlanGeometry":
@@ -88,6 +94,7 @@ class ProjectListResponse(BaseModel):
 class LevelCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     sort_order: int | None = Field(default=None, ge=-10000, le=10000)
+    sector_id: str | None = Field(default=None, min_length=36, max_length=36)
     building_name: str | None = Field(default=None, min_length=1, max_length=120)
     work_status: LevelWorkStatus = "pending"
     concreted_at: date | None = None
@@ -105,6 +112,7 @@ class LevelCreate(BaseModel):
 class LevelPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     sort_order: int | None = Field(default=None, ge=-10000, le=10000)
+    sector_id: str | None = Field(default=None, min_length=36, max_length=36)
     building_name: str | None = Field(default=None, min_length=1, max_length=120)
     work_status: LevelWorkStatus | None = None
     concreted_at: date | None = None
@@ -124,6 +132,7 @@ class LevelResponse(BaseModel):
 
     id: str
     project_id: str
+    sector_id: str
     name: str
     sort_order: int
     building_name: str | None
@@ -132,6 +141,31 @@ class LevelResponse(BaseModel):
     plan_version_id: str | None
     plan_page_number: int | None
     plan_geometry_json: LevelPlanGeometry | None
+
+
+class SectorCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    sort_order: int | None = Field(default=None, ge=-10000, le=10000)
+
+
+class SectorPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    sort_order: int | None = Field(default=None, ge=-10000, le=10000)
+
+    @model_validator(mode="after")
+    def require_change(self) -> "SectorPatch":
+        if not self.model_fields_set:
+            raise ValueError("Debe indicar al menos un campo")
+        return self
+
+
+class SectorResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    project_id: str
+    name: str
+    sort_order: int
 
 
 class TaskCreate(BaseModel):

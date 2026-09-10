@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import func, select
 
 from app.api.dependencies import CurrentCompanyAccess, DbSession
@@ -32,6 +32,7 @@ from app.api.schemas.checklists import (
 )
 from app.core.config import get_settings
 from app.db.models import ChecklistEvidence, ChecklistItem, ProjectLevel
+from app.services.file_storage import remove_stored_file
 
 router = APIRouter()
 
@@ -86,8 +87,6 @@ async def sync_level_work_status(
             )
         ).scalars()
     )
-    if not statuses:
-        return
     level = await db.scalar(
         select(ProjectLevel).where(
             ProjectLevel.id == level_id,
@@ -95,6 +94,10 @@ async def sync_level_work_status(
         )
     )
     if level is None:
+        return
+    if not statuses:
+        level.work_status = "pending"
+        level.concreted_at = None
         return
     work_status = derive_level_work_status(statuses)
     if level.work_status == work_status:
@@ -357,6 +360,54 @@ async def update_checklist_item(
     await commit_or_conflict(db, "No fue posible actualizar el punto de control")
     await db.refresh(item)
     return item
+
+
+@router.delete(
+    "/projects/{project_id}/checklist/{item_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_checklist_item(
+    project_id: str,
+    item_id: str,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+) -> Response:
+    require_role(access, WORK_EDITOR_ROLES)
+    await require_project(db, access.company_id, project_id)
+    item = await require_checklist_item(db, access.company_id, project_id, item_id)
+    level_id = item.level_id
+    storage_keys = list(
+        (
+            await db.execute(
+                select(ChecklistEvidence.storage_key).where(
+                    ChecklistEvidence.company_id == access.company_id,
+                    ChecklistEvidence.project_id == project_id,
+                    ChecklistEvidence.checklist_item_id == item.id,
+                    ChecklistEvidence.storage_key.is_not(None),
+                )
+            )
+        ).scalars()
+    )
+    add_activity(
+        db,
+        access,
+        "checklist.deleted",
+        "checklist_item",
+        item.id,
+        {"title": item.title, "level_id": level_id},
+    )
+    await db.delete(item)
+    await db.flush()
+    await sync_level_work_status(
+        db,
+        company_id=access.company_id,
+        project_id=project_id,
+        level_id=level_id,
+    )
+    await commit_or_conflict(db, "No fue posible eliminar el punto de control")
+    for storage_key in set(storage_keys):
+        await remove_stored_file(storage_key)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(

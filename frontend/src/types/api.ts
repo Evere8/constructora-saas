@@ -66,6 +66,7 @@ export interface Project {
 export interface Level {
   id: string;
   project_id: string;
+  sector_id: string;
   name: string;
   sort_order: number;
   building_name?: string | null;
@@ -76,6 +77,13 @@ export interface Level {
   plan_geometry_json?: LevelPlanGeometry | null;
 }
 
+export interface ProjectSector {
+  id: string;
+  project_id: string;
+  name: string;
+  sort_order: number;
+}
+
 export interface LevelPlanGeometry {
   x: number;
   y: number;
@@ -83,6 +91,7 @@ export interface LevelPlanGeometry {
   height: number;
   checklist_x?: number;
   checklist_y?: number;
+  band_thickness?: number;
 }
 
 export interface Task {

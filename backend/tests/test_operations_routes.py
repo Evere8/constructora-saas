@@ -11,10 +11,13 @@ def test_openapi_exposes_company_operation_routes() -> None:
 
     assert f"{prefix}/projects" in paths
     assert f"{prefix}/projects/{{project_id}}/levels" in paths
+    assert f"{prefix}/projects/{{project_id}}/sectors" in paths
     assert f"{prefix}/projects/{{project_id}}/tasks" in paths
     assert "post" in paths[f"{prefix}/projects"]
     assert "patch" in paths[f"{prefix}/projects/{{project_id}}/tasks/{{task_id}}"]
     assert "delete" in paths[f"{prefix}/projects/{{project_id}}/tasks/{{task_id}}"]
+    assert "delete" in paths[f"{prefix}/projects/{{project_id}}/levels/{{level_id}}"]
+    assert "patch" in paths[f"{prefix}/projects/{{project_id}}/sectors/{{sector_id}}"]
 
 
 def test_openapi_exposes_company_onboarding_route() -> None:

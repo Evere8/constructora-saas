@@ -5,6 +5,7 @@ import type {
   LevelWorkStatus,
   Paginated,
   Project,
+  ProjectSector,
   ProjectStatus,
   Task,
   TaskPriority,
@@ -54,10 +55,20 @@ export const projectsApi = {
 
   listLevels: (companyId: string, projectId: string, signal?: AbortSignal) =>
     api.get<Paginated<Level> | Level[]>(`${base(companyId)}/${projectId}/levels`, undefined, signal),
+  listSectors: (companyId: string, projectId: string, signal?: AbortSignal) =>
+    api.get<ProjectSector[]>(`${base(companyId)}/${projectId}/sectors`, undefined, signal),
+  createSector: (companyId: string, projectId: string, input: SectorInput) =>
+    api.post<ProjectSector>(`${base(companyId)}/${projectId}/sectors`, input),
+  updateSector: (companyId: string, projectId: string, sectorId: string, input: Partial<SectorInput>) =>
+    api.patch<ProjectSector>(`${base(companyId)}/${projectId}/sectors/${sectorId}`, input),
+  deleteSector: (companyId: string, projectId: string, sectorId: string) =>
+    api.del<void>(`${base(companyId)}/${projectId}/sectors/${sectorId}`),
   createLevel: (companyId: string, projectId: string, input: LevelInput) =>
     api.post<Level>(`${base(companyId)}/${projectId}/levels`, input),
   updateLevel: (companyId: string, projectId: string, levelId: string, input: Partial<LevelInput>) =>
     api.patch<Level>(`${base(companyId)}/${projectId}/levels/${levelId}`, input),
+  deleteLevel: (companyId: string, projectId: string, levelId: string) =>
+    api.del<void>(`${base(companyId)}/${projectId}/levels/${levelId}`),
   initializeLevelChecklist: (companyId: string, projectId: string, levelId: string) =>
     api.post<ChecklistItem[]>(`${base(companyId)}/${projectId}/levels/${levelId}/checklist-template`),
 
@@ -74,12 +85,18 @@ export const projectsApi = {
 export interface LevelInput {
   name: string;
   sort_order?: number | null;
+  sector_id?: string | null;
   building_name?: string | null;
   work_status?: LevelWorkStatus;
   concreted_at?: string | null;
   plan_version_id?: string | null;
   plan_page_number?: number | null;
   plan_geometry_json?: LevelPlanGeometry | null;
+}
+
+export interface SectorInput {
+  name: string;
+  sort_order?: number | null;
 }
 
 export interface TaskInput {

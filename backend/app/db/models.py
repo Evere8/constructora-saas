@@ -112,19 +112,45 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     company: Mapped[Company] = relationship(back_populates="projects")
 
 
+class ProjectSector(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """A persistent work sector inside one project.
+
+    A sector is intentionally independent from its levels so a user can create
+    its column before loading the first slab.  ``building_name`` stays on the
+    level for backwards-compatible PDF label detection, while ``sector_id`` is
+    the authoritative relation used for uniqueness and ordering.
+    """
+
+    __tablename__ = "project_sectors"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_project_sector_name"),
+        Index("ix_project_sectors_project_order", "project_id", "sort_order"),
+    )
+
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
 class ProjectLevel(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "project_levels"
     __table_args__ = (
         UniqueConstraint(
             "project_id",
-            "building_name",
+            "sector_id",
             "name",
-            name="uq_project_level_sector_name",
+            name="uq_project_level_sector_id_name",
         ),
+        Index("ix_project_levels_project_sector_order", "project_id", "sector_id", "sort_order"),
     )
 
     project_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    sector_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("project_sectors.id", ondelete="RESTRICT"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

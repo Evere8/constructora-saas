@@ -39,6 +39,8 @@ export const checklistApi = {
     api.post<ChecklistItem>(base(companyId, projectId), input),
   update: (companyId: string, projectId: string, itemId: string, input: Partial<ChecklistInput>) =>
     api.patch<ChecklistItem>(`${base(companyId, projectId)}/${itemId}`, input),
+  delete: (companyId: string, projectId: string, itemId: string) =>
+    api.del<void>(`${base(companyId, projectId)}/${itemId}`),
   progress: (
     companyId: string,
     projectId: string,

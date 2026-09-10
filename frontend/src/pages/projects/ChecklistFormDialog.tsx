@@ -47,6 +47,7 @@ export function ChecklistFormDialog({
   companyId,
   projectId,
   taskId,
+  levelId,
   item,
   open,
   onOpenChange,
@@ -54,6 +55,7 @@ export function ChecklistFormDialog({
   companyId: string;
   projectId: string;
   taskId?: string;
+  levelId?: string;
   item?: ChecklistItem;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -90,6 +92,7 @@ export function ChecklistFormDialog({
     mutationFn: (values: FormValues) => {
       const payload: ChecklistInput = {
         task_id: taskId ?? item?.task_id ?? null,
+        level_id: levelId ?? item?.level_id ?? null,
         title: values.title,
         process_stage: values.process_stage,
         status: values.status,

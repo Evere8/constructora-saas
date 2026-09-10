@@ -12,6 +12,7 @@ def test_openapi_exposes_checklist_routes() -> None:
     assert "get" in paths[prefix]
     assert "post" in paths[prefix]
     assert "patch" in paths[f"{prefix}/{{item_id}}"]
+    assert "delete" in paths[f"{prefix}/{{item_id}}"]
     evidence_path = f"{prefix}/{{item_id}}/evidence"
     evidence_file_path = f"{evidence_path}/{{evidence_id}}/file"
     assert "get" in paths[evidence_path]

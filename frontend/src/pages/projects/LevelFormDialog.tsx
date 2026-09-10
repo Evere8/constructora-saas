@@ -6,7 +6,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { projectsApi } from '@/lib/api/projects';
-import type { Level } from '@/types/api';
+import type { Level, ProjectSector } from '@/types/api';
 import { ApiError } from '@/lib/http';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,7 +21,7 @@ import {
 
 const schema = z.object({
   name: z.string().min(1, 'El nombre es obligatorio'),
-  building_name: z.string().trim().min(1, 'El sector es obligatorio').max(120),
+  sector_id: z.string().min(1, 'Selecciona un sector'),
   work_status: z.enum(['pending', 'in_progress', 'concreted']),
   concreted_at: z.string().optional(),
 });
@@ -32,12 +32,16 @@ export function LevelFormDialog({
   companyId,
   projectId,
   level,
+  sectors,
+  defaultSectorId,
   open,
   onOpenChange,
 }: {
   companyId: string;
   projectId: string;
   level?: Level;
+  sectors: ProjectSector[];
+  defaultSectorId?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -54,7 +58,12 @@ export function LevelFormDialog({
     resolver: zodResolver(schema),
     defaultValues: {
       name: level?.name ?? '',
-      building_name: level?.building_name ?? 'Obra general',
+      sector_id:
+        level?.sector_id
+        ?? sectors.find((sector) => sector.name === level?.building_name)?.id
+        ?? defaultSectorId
+        ?? sectors[0]?.id
+        ?? '',
       work_status: level?.work_status ?? 'pending',
       concreted_at: level?.concreted_at ?? '',
     },
@@ -64,7 +73,7 @@ export function LevelFormDialog({
     mutationFn: (values: FormValues) => {
       const payload = {
         name: values.name,
-        building_name: values.building_name.trim(),
+        sector_id: values.sector_id,
         work_status: values.work_status,
         concreted_at: values.work_status === 'concreted' ? values.concreted_at || null : null,
       };
@@ -99,9 +108,16 @@ export function LevelFormDialog({
             {errors.name ? <p className="text-sm text-destructive">{errors.name.message}</p> : null}
           </div>
           <div className="space-y-2">
-            <Label htmlFor="level-building">Sector</Label>
-            <Input id="level-building" placeholder="Torre A, sector norte, bloque 2..." {...register('building_name')} />
-            {errors.building_name ? <p className="text-sm text-destructive">{errors.building_name.message}</p> : null}
+            <Label htmlFor="level-sector">Sector</Label>
+            <select
+              id="level-sector"
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              {...register('sector_id')}
+            >
+              <option value="">Selecciona un sector</option>
+              {sectors.map((sector) => <option key={sector.id} value={sector.id}>{sector.name}</option>)}
+            </select>
+            {errors.sector_id ? <p className="text-sm text-destructive">{errors.sector_id.message}</p> : null}
             <p className="text-xs text-muted-foreground">Puedes repetir el mismo nivel o losa en sectores distintos.</p>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
