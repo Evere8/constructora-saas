@@ -479,6 +479,43 @@ def _assert_export_groups(groups: list[dict[str, Any]], final: bool) -> None:
                     )
 
 
+def _write_project_header(ws: Any, project_name: str | None, *, before_row: int) -> None:
+    """Replace a stale ``OBRA: ...`` header without duplicating the project title.
+
+    Field templates are commonly reused between works.  The job knows the current project, so an
+    old project name in the static header must not accompany the generated values.  Some templates
+    also carry the current name in the neighbouring cell; clear that exact duplicate so text does
+    not overlap in Excel.
+    """
+
+    name = str(project_name or "").strip()
+    if not name:
+        return
+    name_key = _normalise(name)
+    header_limit = min(max(before_row - 1, 0), ws.max_row)
+    header_pattern = re.compile(r"^(\s*(?:obra|proyecto)\s*:).*$", re.IGNORECASE)
+    target = None
+    prefix = ""
+    for row in ws.iter_rows(min_row=1, max_row=header_limit):
+        for cell in row:
+            if not isinstance(cell.value, str):
+                continue
+            match = header_pattern.match(cell.value)
+            if match:
+                target = cell
+                prefix = match.group(1).strip()
+                break
+        if target is not None:
+            break
+    if target is None:
+        return
+
+    target.value = f"{prefix} {name}"
+    for cell in ws[target.row]:
+        if cell.column != target.column and _normalise(cell.value) == name_key:
+            cell.value = None
+
+
 def _add_control_sheets(
     workbook: Workbook,
     groups: list[dict[str, Any]],
@@ -551,6 +588,7 @@ def build_export_xlsx(
     *,
     final: bool,
     history: dict[str, Any],
+    project_name: str | None = None,
 ) -> bytes:
     """Rebuild the operational body while keeping a template's header and presentation.
 
@@ -562,6 +600,9 @@ def build_export_xlsx(
     validate_template_bytes(template_content)
     workbook = load_workbook(BytesIO(template_content), data_only=False, keep_vba=False)
     ws = workbook[mapping.sheet_name]
+    band_section = mapping.sections["band"]
+    distributed_section = mapping.sections["distributed"]
+    _write_project_header(ws, project_name, before_row=band_section.section_row)
     band_groups = sorted(
         [group for group in groups if group["classification"] == "band"],
         key=lambda item: int(item.get("label_number", 0)),
@@ -570,8 +611,6 @@ def build_export_xlsx(
         [group for group in groups if group["classification"] == "distributed"],
         key=lambda item: int(item.get("label_number", 0)),
     )
-    band_section = mapping.sections["band"]
-    distributed_section = mapping.sections["distributed"]
     band_prototype = _prototype(ws, band_section.formula_seed_row, mapping.columns)
     distributed_prototype = _prototype(ws, distributed_section.formula_seed_row, mapping.columns)
     _unmerge_body_ranges(ws, band_section.body_start_row)
