@@ -1311,6 +1311,101 @@ async def upload_measurement_files(
         raise
 
 
+@router.delete(
+    "/projects/{project_id}/elongation-jobs/{job_id}/files/{file_id}",
+    response_model=ElongationJobV2Response,
+)
+async def delete_measurement_source_file(
+    project_id: str,
+    job_id: str,
+    file_id: str,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+) -> ElongationJobV2Response:
+    """Delete one uploaded measurement scan and only its automatic readings.
+
+    A scan can be uploaded by mistake or be an obsolete duplicate.  Removing it must not
+    reprocess or delete the other scans.  Values the technician entered manually remain,
+    but lose the deleted file's provenance link.  Automatic values attributed to this exact
+    scan are cleared so the reconciliation shows them as missing instead of using evidence
+    that no longer exists.
+    """
+
+    require_role(access, WORK_EDITOR_ROLES)
+    job = await require_job(db, access.company_id, project_id, job_id)
+    require_idle_job(job)
+    source = await db.scalar(
+        select(ElongationJobFile).where(
+            ElongationJobFile.id == file_id,
+            ElongationJobFile.job_id == job.id,
+        )
+    )
+    if source is None:
+        raise HTTPException(status_code=404, detail="Archivo del trabajo no encontrado")
+    if source.kind != "measurement_scan":
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Solo se pueden eliminar escaneos de mediciones. El plano y la plantilla "
+                "se conservan para mantener el trabajo trazable."
+            ),
+        )
+
+    readings = list(
+        (
+            await db.execute(
+                select(ElongationMeasurement).where(
+                    ElongationMeasurement.job_id == job.id,
+                    ElongationMeasurement.source_file_id == source.id,
+                )
+            )
+        ).scalars()
+    )
+    cleared_readings = 0
+    retained_manual_values = 0
+    for measurement in readings:
+        # A manual correction is no longer an OCR suggestion.  Preserve the amount while
+        # removing the attachment reference that is about to disappear.
+        if measurement.match_method == "manual":
+            retained_manual_values += 1
+        else:
+            measurement.measured_elongation = None
+            measurement.raw_text = None
+            measurement.confidence = None
+            measurement.match_method = None
+            measurement.review_status = "pending"
+            measurement.override_reason = None
+            measurement.reviewed_by_user_id = None
+            measurement.reviewed_at = None
+            cleared_readings += 1
+        measurement.source_file_id = None
+        measurement.source_page = None
+        measurement.source_location_json = None
+
+    if job.approved_at is not None:
+        invalidate_final_approval(job)
+    elif job.theory_approved_at is not None:
+        job.workflow_status = "measurement_review"
+        job.status = "review_required"
+    await db.delete(source)
+    add_activity(
+        db,
+        access,
+        "elongation.measurement_scan.deleted",
+        "elongation_job",
+        job.id,
+        {
+            "file_id": source.id,
+            "filename": source.original_filename,
+            "cleared_readings": cleared_readings,
+            "retained_manual_values": retained_manual_values,
+        },
+    )
+    await commit_or_conflict(db, "No fue posible eliminar el escaneo de mediciones")
+    await remove_stored_file(source.storage_key)
+    return await response_for_job(db, job)
+
+
 @router.patch(
     "/projects/{project_id}/elongation-jobs/{job_id}/measurements/{measurement_id}",
     response_model=ElongationMeasurementResponse,

@@ -99,6 +99,8 @@ export const elongationsApi = {
     files.forEach((file) => body.append('files', file));
     return api.upload<ElongationJobV2>(`${base(companyId, projectId)}/${jobId}/measurement-files`, body);
   },
+  deleteMeasurementFile: (companyId: string, projectId: string, jobId: string, fileId: string) =>
+    api.del<ElongationJobV2>(`${base(companyId, projectId)}/${jobId}/files/${fileId}`),
   updateMeasurement: (
     companyId: string,
     projectId: string,

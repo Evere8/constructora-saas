@@ -9,6 +9,7 @@ import {
   RefreshCw,
   ScanLine,
   ShieldCheck,
+  Trash2,
   Upload,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -220,6 +221,8 @@ function SourceForm({
 }
 
 function SourceFiles({ companyId, projectId, job }: { companyId: string; projectId: string; job: ElongationJobV2 }) {
+  const canEdit = useCan('documents.edit');
+  const queryClient = useQueryClient();
   const open = async (file: ElongationJobFile) => {
     try {
       openFile(await elongationsApi.file(companyId, projectId, job.id, file.id));
@@ -227,14 +230,28 @@ function SourceFiles({ companyId, projectId, job }: { companyId: string; project
       toast.error(errorMessage(error, 'No se pudo abrir el archivo.'));
     }
   };
+  const deleteScan = useMutation({
+    mutationFn: (fileId: string) => elongationsApi.deleteMeasurementFile(companyId, projectId, job.id, fileId),
+    onSuccess: () => {
+      toast.success('Escaneo eliminado. Se retiraron únicamente sus lecturas automáticas.');
+      void queryClient.invalidateQueries({ queryKey: ['elongation-job', companyId, projectId, job.id] });
+      void queryClient.invalidateQueries({ queryKey: ['elongation-jobs', companyId, projectId] });
+    },
+    onError: (error) => toast.error(errorMessage(error, 'No se pudo eliminar el escaneo.')),
+  });
+  const displayKind = (kind: string) => (
+    kind === 'measurement_scan' ? 'Escaneo de mediciones' : kind === 'plan' ? 'Plano' : 'Plantilla XLSX'
+  );
   return (
     <Card>
-      <CardHeader><CardTitle>Fuentes del trabajo</CardTitle><CardDescription>Las originales se mantienen protegidas y cada versión conserva su SHA-256.</CardDescription></CardHeader>
+      <CardHeader><CardTitle>Fuentes del trabajo</CardTitle><CardDescription>Podés eliminar un escaneo de mediciones cargado por error. El plano y la plantilla se conservan para mantener el trabajo trazable.</CardDescription></CardHeader>
       <CardContent className="grid gap-2 sm:grid-cols-2">
         {job.files.filter((file) => ['plan', 'template', 'measurement_scan'].includes(file.kind)).map((file) => (
           <div key={file.id} className="flex items-center justify-between gap-2 rounded-md border p-3 text-sm">
-            <div className="min-w-0"><p className="truncate font-medium">{file.original_filename}</p><p className="text-xs text-muted-foreground">{file.kind} · v{file.version_number} · {file.processing_status}</p></div>
-            <Button size="sm" variant="outline" onClick={() => void open(file)}><FileImage /> Ver</Button>
+            <div className="min-w-0"><p className="truncate font-medium">{file.original_filename}</p><p className="text-xs text-muted-foreground">{displayKind(file.kind)} · v{file.version_number} · {file.processing_status}</p></div>
+            <div className="flex shrink-0 gap-1"><Button size="sm" variant="outline" onClick={() => void open(file)}><FileImage /> Ver</Button>{canEdit && file.kind === 'measurement_scan' ? <Button size="icon" variant="ghost" aria-label={`Eliminar escaneo ${file.original_filename}`} disabled={deleteScan.isPending || readingBusy(job)} onClick={() => {
+              if (window.confirm(`¿Eliminar “${file.original_filename}”? Se quitarán solo las lecturas automáticas que provienen de este escaneo. Las correcciones manuales se conservan.`)) deleteScan.mutate(file.id);
+            }}><Trash2 className="h-4 w-4 text-destructive" /></Button> : null}</div>
           </div>
         ))}
       </CardContent>

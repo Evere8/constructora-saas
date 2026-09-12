@@ -98,8 +98,8 @@ export function ScanReadingReview({ companyId, projectId, job, refresh }: Props)
   return <Card><CardContent className="space-y-3 p-4">
     <div className="flex flex-wrap items-center gap-2"><strong>Escaneos y observaciones</strong>
       {canEdit && <Button size="sm" variant="outline" disabled={!job.theory_approved_at || readingBusy(job) || retry.isPending} onClick={() => {
-        if (!job.approved_at || window.confirm('Releer requiere volver a aprobar el resultado final. ¿Continuar?')) retry.mutate();
-      }}><RefreshCw /> Releer mediciones guardadas</Button>}
+        if (window.confirm(`Esto volverá a leer los ${scans.length} escaneo(s) activo(s). Si uno no debe entrar en la conciliación, elimínalo primero desde Fuentes. ¿Continuar?`)) retry.mutate();
+      }}><RefreshCw /> Releer todos los escaneos</Button>}
       <Button size="sm" variant="outline" onClick={() => setPreview(!preview)}>{preview ? 'Ocultar escaneo' : 'Comparar con el escaneo'}</Button>
     </div>
     {job.error_message && <p role="alert" className="text-sm text-amber-800">{job.error_message}</p>}

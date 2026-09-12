@@ -33,6 +33,7 @@ def test_openapi_exposes_elongation_v2_routes_without_removing_legacy_documents(
     assert f"{prefix}/elongation-jobs" in paths
     assert f"{prefix}/elongation-jobs/{{job_id}}/approve-theory" in paths
     assert f"{prefix}/elongation-jobs/{{job_id}}/measurement-files" in paths
+    assert "delete" in paths[f"{prefix}/elongation-jobs/{{job_id}}/files/{{file_id}}"]
     assert f"{prefix}/elongation-jobs/{{job_id}}/exports/final" in paths
     assert "delete" in paths[f"{prefix}/elongation-jobs/{{job_id}}"]
 

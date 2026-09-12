@@ -603,10 +603,127 @@ def test_export_replaces_stale_project_header_without_overlapping_duplicate() ->
 
 def test_legacy_export_is_refreshed_once_after_a_rendering_fix() -> None:
     legacy = SimpleNamespace(snapshot_json={"job_version": 3, "render_revision": 2})
-    current = SimpleNamespace(snapshot_json={"job_version": 3, "render_revision": 3})
+    current = SimpleNamespace(snapshot_json={"job_version": 3, "render_revision": 4})
 
     assert _export_needs_render_refresh(legacy)
     assert not _export_needs_render_refresh(current)
+
+
+def test_delete_measurement_scan_clears_only_its_automatic_readings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Removing one bad scan must not re-read or erase unrelated/manual evidence."""
+
+    source = SimpleNamespace(
+        id="scan-1",
+        job_id="job-1",
+        kind="measurement_scan",
+        original_filename="duplicado.pdf",
+        storage_key="measurements/duplicado.pdf",
+    )
+    automatic = SimpleNamespace(
+        measured_elongation=Decimal("7.4"),
+        raw_text="7,4",
+        confidence=Decimal("0.85"),
+        match_method="label_anchor",
+        review_status="approved",
+        override_reason="nota antigua",
+        reviewed_by_user_id="engineer-1",
+        reviewed_at=datetime(2026, 9, 12, 8, 0),
+        source_file_id="scan-1",
+        source_page=1,
+        source_location_json={"file": "duplicado.pdf"},
+    )
+    manual = SimpleNamespace(
+        measured_elongation=Decimal("7.5"),
+        raw_text="corregido en obra",
+        confidence=None,
+        match_method="manual",
+        review_status="approved",
+        override_reason=None,
+        reviewed_by_user_id="engineer-1",
+        reviewed_at=datetime(2026, 9, 12, 8, 10),
+        source_file_id="scan-1",
+        source_page=1,
+        source_location_json={"file": "duplicado.pdf"},
+    )
+    job = SimpleNamespace(
+        id="job-1",
+        company_id="company-1",
+        created_by_user_id="owner-1",
+        workflow_status="approved",
+        status="approved",
+        theory_approved_at=datetime(2026, 9, 11, 8, 0),
+        approved_at=datetime(2026, 9, 12, 8, 20),
+        approved_by_user_id="engineer-1",
+        version_number=3,
+    )
+    deleted: list[object] = []
+    stored: list[str] = []
+    activity: list[object] = []
+
+    class Result:
+        def scalars(self) -> list[object]:
+            return [automatic, manual]
+
+    class Session:
+        async def scalar(self, _statement: object) -> object:
+            return source
+
+        async def execute(self, _statement: object) -> Result:
+            return Result()
+
+        async def delete(self, object_: object) -> None:
+            deleted.append(object_)
+
+        def add(self, object_: object) -> None:
+            activity.append(object_)
+
+        async def commit(self) -> None:
+            return None
+
+    async def return_job(*_args: object, **_kwargs: object) -> object:
+        return job
+
+    async def response(*_args: object, **_kwargs: object) -> str:
+        return "updated"
+
+    async def remove(storage_key: str) -> None:
+        stored.append(storage_key)
+
+    monkeypatch.setattr(elongations, "require_job", return_job)
+    monkeypatch.setattr(elongations, "response_for_job", response)
+    monkeypatch.setattr(elongations, "remove_stored_file", remove)
+
+    result = asyncio.run(
+        elongations.delete_measurement_source_file(
+            project_id="project-1",
+            job_id="job-1",
+            file_id="scan-1",
+            access=SimpleNamespace(
+                company_id="company-1",
+                role="owner",
+                user=SimpleNamespace(id="owner-1"),
+            ),
+            db=Session(),
+        )
+    )
+
+    assert result == "updated"
+    assert deleted == [source]
+    assert stored == ["measurements/duplicado.pdf"]
+    assert automatic.measured_elongation is None
+    assert automatic.match_method is None
+    assert automatic.review_status == "pending"
+    assert automatic.source_file_id is None
+    assert manual.measured_elongation == Decimal("7.5")
+    assert manual.match_method == "manual"
+    assert manual.source_file_id is None
+    assert manual.source_location_json is None
+    assert job.approved_at is None
+    assert job.version_number == 4
+    assert job.workflow_status == "measurement_review"
+    assert activity[0].action == "elongation.measurement_scan.deleted"
 
 
 def test_create_job_refreshes_server_timestamp_before_returning_response(

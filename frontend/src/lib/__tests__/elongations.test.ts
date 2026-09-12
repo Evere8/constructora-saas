@@ -75,6 +75,16 @@ describe('API V2 de elongaciones', () => {
     expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'DELETE' });
   });
 
+  it('elimina un único escaneo de mediciones sin borrar el trabajo', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'job-1' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await elongationsApi.deleteMeasurementFile('company-1', 'project-1', 'job-1', 'scan-1');
+
+    expect(fetchMock.mock.calls[0][0]).toContain('/elongation-jobs/job-1/files/scan-1');
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'DELETE' });
+  });
+
   it('guarda zonas de revisión y descarga la vista previa autenticada', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'job-1' }), { status: 200 }))
