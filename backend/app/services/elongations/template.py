@@ -609,8 +609,10 @@ def build_export_xlsx(
         final=final,
     )
 
-    for column in ("E", "F", "G", "L", "M", "N"):
-        ws.column_dimensions[column].hidden = True
+    # The operational columns are discovered from the uploaded template. Never hide
+    # fixed spreadsheet letters: on CTA's template E/F/G are Calculada, Max. and
+    # Elong. Medida, so hiding them makes a correct export look unchanged. Preserve
+    # the visibility configured by the uploaded template instead.
     measured_column = get_column_letter(mapping.columns["measured"])
     maximum_column = get_column_letter(mapping.columns["maximum"])
     minimum_column = get_column_letter(mapping.columns["minimum"])
