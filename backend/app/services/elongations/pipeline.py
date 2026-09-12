@@ -37,6 +37,9 @@ from app.services.file_storage import XLSX_MIME_TYPES, storage_path, store_bytes
 PROCESSING_LIMIT = asyncio.Semaphore(2)
 DOCUMENT_APPROVER_ROLES = {"owner", "admin", "engineer"}
 THEORY_RECOVERY_STATUSES = {"queued_theory", "processing_theory"}
+# Bump only when the XLSX rendering contract changes.  Legacy exports are regenerated once while
+# retaining their source-data version and the prior file record for audit history.
+EXPORT_RENDER_REVISION = 2
 
 
 def utcnow() -> datetime:
@@ -60,6 +63,16 @@ def json_safe(value: Any) -> Any:
     if isinstance(value, list | tuple):
         return [json_safe(child) for child in value]
     return value
+
+
+def _export_needs_render_refresh(export: ElongationExport) -> bool:
+    """Return whether a stored export predates the current XLSX rendering contract."""
+
+    try:
+        revision = int((export.snapshot_json or {}).get("render_revision", 1))
+    except (TypeError, ValueError):
+        revision = 1
+    return revision < EXPORT_RENDER_REVISION
 
 
 def _activity(
@@ -758,10 +771,12 @@ async def create_export(
         )
         .order_by(ElongationExport.created_at.desc())
     )
+    previous_file_id: str | None = None
     if existing is not None:
         file = await session.get(ElongationJobFile, existing.file_id)
-        if file is not None:
+        if file is not None and not _export_needs_render_refresh(existing):
             return existing, file
+        previous_file_id = existing.file_id
     template = await _job_file(session, job.id, "template")
     if template is None or not job.template_mapping_json:
         raise ValueError("El trabajo no tiene una plantilla V2 válida")
@@ -835,27 +850,44 @@ async def create_export(
     )
     session.add(file)
     await session.flush()
-    export = ElongationExport(
-        job_id=job.id,
-        file_id=file.id,
-        kind=kind,
-        version_number=job.version_number,
-        snapshot_json={
-            "job_version": job.version_number,
-            "kind": kind,
-            "source_hashes": source_hashes,
-            "output_sha256": stored.sha256,
-            "groups": json_safe(groups),
-        },
-        created_by_user_id=created_by_user_id,
-    )
-    session.add(export)
+    snapshot = {
+        "job_version": job.version_number,
+        "kind": kind,
+        "render_revision": EXPORT_RENDER_REVISION,
+        "source_hashes": source_hashes,
+        "output_sha256": stored.sha256,
+        "groups": json_safe(groups),
+    }
+    if previous_file_id is not None:
+        snapshot["superseded_file_id"] = previous_file_id
+    if existing is None:
+        export = ElongationExport(
+            job_id=job.id,
+            file_id=file.id,
+            kind=kind,
+            version_number=job.version_number,
+            snapshot_json=snapshot,
+            created_by_user_id=created_by_user_id,
+        )
+        session.add(export)
+    else:
+        export = existing
+        export.file_id = file.id
+        export.snapshot_json = snapshot
     if kind == "final":
         job.workflow_status = "exported"
+    export_activity = "elongation.export.created"
+    if previous_file_id is not None:
+        export_activity = "elongation.export.refreshed"
     _activity(
         session,
         job,
-        "elongation.export.created",
-        {"kind": kind, "version": job.version_number, "sha256": stored.sha256},
+        export_activity,
+        {
+            "kind": kind,
+            "version": job.version_number,
+            "render_revision": EXPORT_RENDER_REVISION,
+            "sha256": stored.sha256,
+        },
     )
     return export, file
