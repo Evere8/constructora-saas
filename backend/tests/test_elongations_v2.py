@@ -150,6 +150,69 @@ def header_template() -> bytes:
     return output.getvalue()
 
 
+def ordered_layout_template() -> bytes:
+    """A field workbook with an intentional order and spacing inside BANDAS."""
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Operativa"
+    sections = ((1, 3, 5, "BANDAS"), (18, 20, 22, "DISTRIBUIDOS"))
+    for section_row, header_row, _body_row, title in sections:
+        worksheet.cell(section_row, 1).value = title
+        worksheet.cell(header_row, 1).value = "Item"
+        worksheet.cell(header_row, 2).value = "Label"
+        worksheet.cell(header_row, 3).value = "Longitud (m)"
+        worksheet.cell(header_row, 4).value = "Cantidad de tendones"
+        worksheet.cell(header_row, 5).value = "Elongación (cm)"
+        worksheet.cell(header_row + 1, 5).value = "Calculada"
+        worksheet.cell(header_row + 1, 6).value = "Max."
+        worksheet.cell(header_row + 1, 7).value = "Elong. Medida"
+        worksheet.cell(header_row + 1, 8).value = "Min."
+
+    def add_group(row: int, label: str, count: int, calculated: Decimal) -> None:
+        for ordinal in range(count):
+            current_row = row + ordinal
+            worksheet.cell(current_row, 1).value = ordinal + 1
+            worksheet.cell(current_row, 5).value = calculated
+            worksheet.cell(current_row, 6).value = (
+                f"=E{current_row}+(E{current_row}*0.07)"
+            )
+            worksheet.cell(current_row, 8).value = (
+                f"=E{current_row}-(E{current_row}*0.07)"
+            )
+            for column in (3, 5, 6, 7, 8):
+                worksheet.cell(current_row, column).number_format = "0.000"
+        worksheet.cell(row, 2).value = label
+        worksheet.cell(row, 3).value = Decimal("10.000")
+        worksheet.cell(row, 4).value = count
+        if count > 1:
+            for column in (2, 3, 4):
+                worksheet.merge_cells(
+                    start_row=row,
+                    start_column=column,
+                    end_row=row + count - 1,
+                    end_column=column,
+                )
+
+    # The source sheet puts these labels together, independent of their review class.
+    add_group(5, "T200", 3, Decimal("18.6"))
+    worksheet.row_dimensions[5].height = 24
+    worksheet.row_dimensions[6].height = 27
+    worksheet.row_dimensions[7].height = 31
+    add_group(8, "T201", 2, Decimal("20.6"))
+    worksheet.row_dimensions[8].height = 23
+    worksheet.row_dimensions[9].height = 29
+    worksheet.row_dimensions[10].height = 34  # Intended visual separator.
+    add_group(11, "T202", 2, Decimal("9.0"))
+    worksheet.row_dimensions[11].height = 22
+    worksheet.row_dimensions[12].height = 30
+    add_group(22, "T204", 1, Decimal("3.3"))
+    worksheet.row_dimensions[22].height = 26
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
 def test_parser_requires_all_semantic_fields_and_normalises_decimals() -> None:
     candidates = parse_theory_candidates(
         "Tendon 8; S = 2; L 11.880; Elong = 7,9\n"
@@ -390,6 +453,77 @@ def test_dynamic_export_keeps_shared_header_sections_and_own_formulas() -> None:
         assert worksheet.cell(row, 8).value == f"=E{row}-(E{row}*0.07)"
 
 
+def test_export_keeps_template_label_order_section_and_row_spacing() -> None:
+    """Existing template labels must not be moved by their OCR classification."""
+
+    template = ordered_layout_template()
+    mapping = analyse_template(template)
+    groups = [
+        {
+            "label": "T200",
+            "label_number": 200,
+            "classification": "distributed",
+            "length_m": Decimal("30.104"),
+            "strand_count": 2,
+            "calculated_elongation": Decimal("18.6"),
+            "measurements": [{"ordinal": 1}, {"ordinal": 2}],
+        },
+        {
+            "label": "T201",
+            "label_number": 201,
+            "classification": "distributed",
+            "length_m": Decimal("31.107"),
+            "strand_count": 1,
+            "calculated_elongation": Decimal("20.6"),
+            "measurements": [{"ordinal": 1}],
+        },
+        {
+            "label": "T202",
+            "label_number": 202,
+            "classification": "distributed",
+            "length_m": Decimal("13.113"),
+            "strand_count": 2,
+            "calculated_elongation": Decimal("9.0"),
+            "measurements": [{"ordinal": 1}, {"ordinal": 2}],
+        },
+        {
+            "label": "T204",
+            "label_number": 204,
+            "classification": "band",
+            "length_m": Decimal("5.295"),
+            "strand_count": 1,
+            "calculated_elongation": Decimal("3.3"),
+            "measurements": [{"ordinal": 1}],
+        },
+    ]
+
+    content = build_export_xlsx(
+        template,
+        mapping,
+        groups,
+        final=False,
+        history={"kind": "theoretical"},
+    )
+    worksheet = load_workbook(BytesIO(content), data_only=False)["Operativa"]
+
+    # T200/T201/T202 stay together in the source BANDAS block, not at the end.
+    assert worksheet["B5"].value == "T200"
+    assert worksheet["B7"].value == "T201"
+    assert worksheet["B9"].value == "T202"
+    assert worksheet["A11"].value == "DISTRIBUIDOS"
+    assert worksheet["B15"].value == "T204"
+    # Source group rows and the deliberate blank separator preserve their heights.
+    assert worksheet.row_dimensions[5].height == 24
+    assert worksheet.row_dimensions[6].height == 31
+    assert worksheet.row_dimensions[7].height == 23
+    assert worksheet.row_dimensions[8].height == 34
+    assert worksheet.row_dimensions[9].height == 22
+    assert worksheet.row_dimensions[10].height == 30
+    for row in (5, 6, 7, 9, 10, 15):
+        assert worksheet.cell(row, 6).value == f"=E{row}+(E{row}*0.07)"
+        assert worksheet.cell(row, 8).value == f"=E{row}-(E{row}*0.07)"
+
+
 def test_theoretical_export_replaces_template_values_and_keeps_core_columns_visible() -> None:
     """A reused field template must not leak its old measured values into theory output."""
 
@@ -468,8 +602,8 @@ def test_export_replaces_stale_project_header_without_overlapping_duplicate() ->
 
 
 def test_legacy_export_is_refreshed_once_after_a_rendering_fix() -> None:
-    legacy = SimpleNamespace(snapshot_json={"job_version": 3})
-    current = SimpleNamespace(snapshot_json={"job_version": 3, "render_revision": 2})
+    legacy = SimpleNamespace(snapshot_json={"job_version": 3, "render_revision": 2})
+    current = SimpleNamespace(snapshot_json={"job_version": 3, "render_revision": 3})
 
     assert _export_needs_render_refresh(legacy)
     assert not _export_needs_render_refresh(current)

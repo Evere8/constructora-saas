@@ -59,6 +59,21 @@ class TemplateMapping:
         }
 
 
+@dataclass(frozen=True)
+class TemplateGroupSlot:
+    """One labelled block from the body of the uploaded template.
+
+    The template is the visual source of truth for the order, section and spacing of
+    its known labels.  OCR classification is still retained for the review workflow,
+    but must never move an existing label to another visual block in the generated
+    workbook.
+    """
+
+    label_key: str
+    prototypes: tuple[dict[str, Any], ...]
+    spacer_prototypes: tuple[dict[str, Any], ...] = ()
+
+
 def _normalise(value: object) -> str:
     text = unicodedata.normalize("NFKD", str(value or ""))
     text = "".join(char for char in text if not unicodedata.combining(char))
@@ -362,6 +377,161 @@ def _prototype(ws: Any, row: int, columns: dict[str, int]) -> dict[str, Any]:
     }
 
 
+def _label_key(value: object) -> str:
+    """Return a stable key for both ``T200`` and ``Tendon 200`` template labels."""
+
+    normalised = _normalise(value)
+    tendon = re.search(r"\b(?:TENDON|T)\s*0*(\d+)\b", normalised)
+    if tendon:
+        return f"T{int(tendon.group(1))}"
+    return normalised
+
+
+def _positive_integer(value: object) -> int | None:
+    """Read a positive source S value without guessing from arbitrary text."""
+
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = Decimal(str(value))
+    except Exception:  # noqa: BLE001 - cells may contain labels or formulas
+        return None
+    if number <= 0 or number != number.to_integral_value():
+        return None
+    return int(number)
+
+
+def _merged_end_row(ws: Any, row: int, columns: tuple[int, ...]) -> int:
+    """Find the visual end of a source group from its merged key cells."""
+
+    end_row = row
+    for merged_range in ws.merged_cells.ranges:
+        if merged_range.min_row != row:
+            continue
+        if any(merged_range.min_col <= column <= merged_range.max_col for column in columns):
+            end_row = max(end_row, merged_range.max_row)
+    return end_row
+
+
+def _row_is_empty(ws: Any, row: int) -> bool:
+    return all(ws.cell(row, column).value is None for column in range(1, ws.max_column + 1))
+
+
+def _template_group_slots(
+    ws: Any,
+    mapping: TemplateMapping,
+    section_name: str,
+) -> list[TemplateGroupSlot]:
+    """Read the original label order and group-specific row presentation.
+
+    A production workbook often carries a deliberately arranged sequence (for
+    example T200, T201, T202 in BANDAS).  Previous exports ignored it, rebuilt
+    every row from one generic prototype and regrouped those labels by OCR class.
+    This helper captures each existing block before rows are replaced.
+    """
+
+    section = mapping.sections[section_name]
+    label_column = mapping.columns["label"]
+    strand_column = mapping.columns["strand_count"]
+    starts: list[tuple[int, str]] = []
+    for row in range(section.body_start_row, section.body_end_row + 1):
+        key = _label_key(ws.cell(row, label_column).value)
+        if not key or key == "LABEL":
+            continue
+        starts.append((row, key))
+
+    slots: list[TemplateGroupSlot] = []
+    for index, (row, key) in enumerate(starts):
+        has_next_group = index + 1 < len(starts)
+        next_row = starts[index + 1][0] if has_next_group else section.body_end_row + 1
+        source_count = _positive_integer(ws.cell(row, strand_column).value) or 1
+        merged_end = _merged_end_row(
+            ws,
+            row,
+            (label_column, mapping.columns["length_m"], strand_column),
+        )
+        group_end = min(next_row - 1, max(row + source_count - 1, merged_end))
+        prototypes = tuple(
+            _prototype(ws, source_row, mapping.columns)
+            for source_row in range(row, group_end + 1)
+        )
+        spacer_prototypes = (
+            tuple(
+                _prototype(ws, source_row, mapping.columns)
+                for source_row in range(group_end + 1, next_row)
+                if _row_is_empty(ws, source_row)
+            )
+            if has_next_group
+            else ()
+        )
+        slots.append(
+            TemplateGroupSlot(
+                label_key=key,
+                prototypes=prototypes,
+                spacer_prototypes=spacer_prototypes,
+            )
+        )
+    return slots
+
+
+def _ordered_groups_for_template(
+    groups: list[dict[str, Any]],
+    slots_by_section: dict[str, list[TemplateGroupSlot]],
+) -> dict[str, list[tuple[dict[str, Any], TemplateGroupSlot | None]]]:
+    """Keep known labels in the source template's section and order.
+
+    Labels absent from the template remain supported and are appended to the
+    section selected during review, ordered by their natural numeric label.
+    """
+
+    by_label = {_label_key(group["label"]): group for group in groups}
+    ordered: dict[str, list[tuple[dict[str, Any], TemplateGroupSlot | None]]] = {
+        "band": [],
+        "distributed": [],
+    }
+    consumed: set[str] = set()
+    for section_name in ("band", "distributed"):
+        for slot in slots_by_section[section_name]:
+            group = by_label.get(slot.label_key)
+            if group is None or slot.label_key in consumed:
+                continue
+            ordered[section_name].append((group, slot))
+            consumed.add(slot.label_key)
+    for group in sorted(groups, key=lambda item: int(item.get("label_number", 0))):
+        key = _label_key(group["label"])
+        if key in consumed:
+            continue
+        ordered[group["classification"]].append((group, None))
+    return ordered
+
+
+def _section_row_count(
+    groups: list[tuple[dict[str, Any], TemplateGroupSlot | None]],
+) -> int:
+    return sum(
+        int(group["strand_count"]) + len(slot.spacer_prototypes if slot is not None else ())
+        for group, slot in groups
+    )
+
+
+def _prototype_for_group_row(
+    slot: TemplateGroupSlot | None,
+    ordinal: int,
+    physical_count: int,
+    fallback: dict[str, Any],
+) -> dict[str, Any]:
+    """Reuse first/intermediate/last source-row presentation as a group resizes."""
+
+    if slot is None or not slot.prototypes:
+        return fallback
+    source = slot.prototypes
+    if physical_count == 1 or len(source) == 1:
+        return source[0]
+    if ordinal == physical_count:
+        return source[-1]
+    return source[min(ordinal - 1, len(source) - 2)]
+
+
 def _unmerge_body_ranges(ws: Any, start_row: int) -> None:
     for merged_range in list(ws.merged_cells.ranges):
         if merged_range.max_row >= start_row:
@@ -373,16 +543,6 @@ def _apply_prototype(ws: Any, row: int, prototype: dict[str, Any]) -> None:
         ws.cell(row, column)._style = copy(style)
         ws.cell(row, column).value = None
     ws.row_dimensions[row].height = prototype["height"]
-
-
-def _physical_rows(groups: list[dict[str, Any]]) -> list[tuple[dict[str, Any], int]]:
-    rows: list[tuple[dict[str, Any], int]] = []
-    for group in groups:
-        count = int(group["strand_count"])
-        if count <= 0:
-            raise TemplateValidationError(f"{group['label']} tiene una cantidad S inválida")
-        rows.extend((group, ordinal) for ordinal in range(1, count + 1))
-    return rows
 
 
 def _formula_for_row(seed: str, source_column: int, target_column: int, row: int) -> str:
@@ -399,9 +559,8 @@ def _formula_for_row(seed: str, source_column: int, target_column: int, row: int
 def _write_section(
     ws: Any,
     mapping: TemplateMapping,
-    section_name: str,
     start_row: int,
-    groups: list[dict[str, Any]],
+    groups: list[tuple[dict[str, Any], TemplateGroupSlot | None]],
     prototype: dict[str, Any],
     *,
     final: bool,
@@ -409,43 +568,48 @@ def _write_section(
     columns = mapping.columns
     row_number = start_row
     item_number = 1
-    for group, ordinal in _physical_rows(groups):
-        _apply_prototype(ws, row_number, prototype)
-        measurements = {int(value["ordinal"]): value for value in group.get("measurements", [])}
-        measurement = measurements.get(ordinal)
-        ws.cell(row_number, columns["item"]).value = item_number
-        ws.cell(row_number, columns["calculated"]).value = group["calculated_elongation"]
-        ws.cell(row_number, columns["maximum"]).value = _formula_for_row(
-            mapping.formula_seeds["maximum"],
-            columns["calculated"],
-            columns["maximum"],
-            row_number,
-        )
-        ws.cell(row_number, columns["minimum"]).value = _formula_for_row(
-            mapping.formula_seeds["minimum"],
-            columns["calculated"],
-            columns["minimum"],
-            row_number,
-        )
-        ws.cell(row_number, columns["measured"]).value = (
-            measurement.get("measured_elongation") if final and measurement else None
-        )
-        for key, column in prototype["number_formats"].items():
-            ws.cell(row_number, columns[key]).number_format = column
-        row_number += 1
-        item_number += 1
-    row_number = start_row
-    for group in groups:
+    for group, slot in groups:
         physical_count = int(group["strand_count"])
-        ws.cell(row_number, columns["label"]).value = group["label"]
-        ws.cell(row_number, columns["length_m"]).value = group["length_m"]
-        ws.cell(row_number, columns["strand_count"]).value = physical_count
+        group_start_row = row_number
+        measurements = {int(value["ordinal"]): value for value in group.get("measurements", [])}
+        for ordinal in range(1, physical_count + 1):
+            row_prototype = _prototype_for_group_row(slot, ordinal, physical_count, prototype)
+            _apply_prototype(ws, row_number, row_prototype)
+            measurement = measurements.get(ordinal)
+            ws.cell(row_number, columns["item"]).value = item_number
+            ws.cell(row_number, columns["calculated"]).value = group["calculated_elongation"]
+            ws.cell(row_number, columns["maximum"]).value = _formula_for_row(
+                mapping.formula_seeds["maximum"],
+                columns["calculated"],
+                columns["maximum"],
+                row_number,
+            )
+            ws.cell(row_number, columns["minimum"]).value = _formula_for_row(
+                mapping.formula_seeds["minimum"],
+                columns["calculated"],
+                columns["minimum"],
+                row_number,
+            )
+            ws.cell(row_number, columns["measured"]).value = (
+                measurement.get("measured_elongation") if final and measurement else None
+            )
+            for key, column in row_prototype["number_formats"].items():
+                ws.cell(row_number, columns[key]).number_format = column
+            row_number += 1
+            item_number += 1
+
+        ws.cell(group_start_row, columns["label"]).value = group["label"]
+        ws.cell(group_start_row, columns["length_m"]).value = group["length_m"]
+        ws.cell(group_start_row, columns["strand_count"]).value = physical_count
         if physical_count > 1:
-            end_row = row_number + physical_count - 1
+            end_row = group_start_row + physical_count - 1
             for key in ("label", "length_m", "strand_count"):
                 column = get_column_letter(columns[key])
-                ws.merge_cells(f"{column}{row_number}:{column}{end_row}")
-        row_number += physical_count
+                ws.merge_cells(f"{column}{group_start_row}:{column}{end_row}")
+        if slot is not None:
+            for spacer_prototype in slot.spacer_prototypes:
+                _apply_prototype(ws, row_number, spacer_prototype)
+                row_number += 1
     return row_number
 
 
@@ -456,6 +620,8 @@ def _assert_export_groups(groups: list[dict[str, Any]], final: bool) -> None:
         if label in labels:
             raise TemplateValidationError(f"La etiqueta {label} está duplicada")
         labels.add(label)
+        if _positive_integer(group.get("strand_count")) is None:
+            raise TemplateValidationError(f"{label} tiene una cantidad S inválida")
         if group.get("classification") not in {"band", "distributed"}:
             raise TemplateValidationError(f"La etiqueta {label} sigue sin clasificar")
         measurements = group.get("measurements", [])
@@ -603,27 +769,25 @@ def build_export_xlsx(
     band_section = mapping.sections["band"]
     distributed_section = mapping.sections["distributed"]
     _write_project_header(ws, project_name, before_row=band_section.section_row)
-    band_groups = sorted(
-        [group for group in groups if group["classification"] == "band"],
-        key=lambda item: int(item.get("label_number", 0)),
-    )
-    distributed_groups = sorted(
-        [group for group in groups if group["classification"] == "distributed"],
-        key=lambda item: int(item.get("label_number", 0)),
-    )
+    slots_by_section = {
+        "band": _template_group_slots(ws, mapping, "band"),
+        "distributed": _template_group_slots(ws, mapping, "distributed"),
+    }
+    groups_by_section = _ordered_groups_for_template(groups, slots_by_section)
+    band_groups = groups_by_section["band"]
+    distributed_groups = groups_by_section["distributed"]
     band_prototype = _prototype(ws, band_section.formula_seed_row, mapping.columns)
     distributed_prototype = _prototype(ws, distributed_section.formula_seed_row, mapping.columns)
     _unmerge_body_ranges(ws, band_section.body_start_row)
 
     band_capacity = distributed_section.section_row - band_section.body_start_row
     ws.delete_rows(band_section.body_start_row, band_capacity)
-    band_rows = _physical_rows(band_groups)
-    if band_rows:
-        ws.insert_rows(band_section.body_start_row, len(band_rows))
+    band_row_count = _section_row_count(band_groups)
+    if band_row_count:
+        ws.insert_rows(band_section.body_start_row, band_row_count)
     after_band_row = _write_section(
         ws,
         mapping,
-        "band",
         band_section.body_start_row,
         band_groups,
         band_prototype,
@@ -635,13 +799,12 @@ def build_export_xlsx(
     new_distributed_body_row = new_distributed_section_row + distributed_body_offset
     if new_distributed_body_row <= ws.max_row:
         ws.delete_rows(new_distributed_body_row, ws.max_row - new_distributed_body_row + 1)
-    distributed_rows = _physical_rows(distributed_groups)
-    if distributed_rows:
-        ws.insert_rows(new_distributed_body_row, len(distributed_rows))
+    distributed_row_count = _section_row_count(distributed_groups)
+    if distributed_row_count:
+        ws.insert_rows(new_distributed_body_row, distributed_row_count)
     after_distributed_row = _write_section(
         ws,
         mapping,
-        "distributed",
         new_distributed_body_row,
         distributed_groups,
         distributed_prototype,
