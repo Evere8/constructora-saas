@@ -357,6 +357,54 @@ def test_dynamic_export_keeps_shared_header_sections_and_own_formulas() -> None:
         assert worksheet.cell(row, 8).value == f"=E{row}-(E{row}*0.07)"
 
 
+def test_theoretical_export_replaces_template_values_and_keeps_core_columns_visible() -> None:
+    """A reused field template must not leak its old measured values into theory output."""
+
+    source = load_workbook(BytesIO(synthetic_template()))
+    worksheet = source["Operativa"]
+    worksheet["B5"] = "T999"
+    worksheet["C5"] = Decimal("99.999")
+    worksheet["D5"] = 1
+    worksheet["E5"] = Decimal("77.7")
+    worksheet["G5"] = Decimal("17.4")
+    template_buffer = BytesIO()
+    source.save(template_buffer)
+    template = template_buffer.getvalue()
+    mapping = analyse_template(template)
+    groups = [
+        {
+            "label": "T200",
+            "label_number": 200,
+            "classification": "band",
+            "length_m": Decimal("30.104"),
+            "strand_count": 2,
+            "calculated_elongation": Decimal("18.6"),
+            "measurements": [
+                {"ordinal": 1, "measured_elongation": Decimal("17.4")},
+                {"ordinal": 2, "measured_elongation": Decimal("17.7")},
+            ],
+        }
+    ]
+
+    content = build_export_xlsx(
+        template,
+        mapping,
+        groups,
+        final=False,
+        history={"kind": "theoretical"},
+    )
+    exported = load_workbook(BytesIO(content), data_only=False)["Operativa"]
+
+    assert exported["B5"].value == "T200"
+    assert Decimal(str(exported["C5"].value)) == Decimal("30.104")
+    assert exported["D5"].value == 2
+    assert Decimal(str(exported["E5"].value)) == Decimal("18.6")
+    assert exported["G5"].value is None
+    assert exported["G6"].value is None
+    for column in ("E", "F", "G", "H"):
+        assert not exported.column_dimensions[column].hidden
+
+
 def test_create_job_refreshes_server_timestamp_before_returning_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
