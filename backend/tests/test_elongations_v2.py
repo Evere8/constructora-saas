@@ -117,6 +117,38 @@ def shared_header_template() -> bytes:
     return output.getvalue()
 
 
+def header_template() -> bytes:
+    """Operational layout with a reusable work-title header."""
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Operativa"
+    worksheet["A1"] = "OBRA: OPERA SUITES"
+    worksheet["B1"] = "ZUBA PLAZA"
+    sections = ((5, 7, 9, "BANDAS"), (19, 21, 23, "DISTRIBUIDOS"))
+    for section_row, header_row, body_row, title in sections:
+        worksheet.cell(section_row, 1).value = title
+        worksheet.cell(header_row, 1).value = "Item"
+        worksheet.cell(header_row, 2).value = "Label"
+        worksheet.cell(header_row, 3).value = "Longitud (m)"
+        worksheet.cell(header_row, 4).value = "Cantidad de tendones"
+        worksheet.cell(header_row, 5).value = "Elongación (cm)"
+        worksheet.cell(header_row + 1, 5).value = "Calculada"
+        worksheet.cell(header_row + 1, 6).value = "Max."
+        worksheet.cell(header_row + 1, 7).value = "Elong. Medida"
+        worksheet.cell(header_row + 1, 8).value = "Min."
+        worksheet.cell(body_row, 1).value = 1
+        worksheet.cell(body_row, 2).value = "T1"
+        worksheet.cell(body_row, 3).value = Decimal("10.000")
+        worksheet.cell(body_row, 4).value = 1
+        worksheet.cell(body_row, 5).value = Decimal("7.000")
+        worksheet.cell(body_row, 6).value = f"=E{body_row}+(E{body_row}*0.07)"
+        worksheet.cell(body_row, 8).value = f"=E{body_row}-(E{body_row}*0.07)"
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
 def test_parser_requires_all_semantic_fields_and_normalises_decimals() -> None:
     candidates = parse_theory_candidates(
         "Tendon 8; S = 2; L 11.880; Elong = 7,9\n"
@@ -403,6 +435,35 @@ def test_theoretical_export_replaces_template_values_and_keeps_core_columns_visi
     assert exported["G6"].value is None
     for column in ("E", "F", "G", "H"):
         assert not exported.column_dimensions[column].hidden
+
+
+def test_export_replaces_stale_project_header_without_overlapping_duplicate() -> None:
+    template = header_template()
+    mapping = analyse_template(template)
+    groups = [
+        {
+            "label": "T200",
+            "label_number": 200,
+            "classification": "band",
+            "length_m": Decimal("30.104"),
+            "strand_count": 1,
+            "calculated_elongation": Decimal("18.6"),
+            "measurements": [{"ordinal": 1}],
+        }
+    ]
+
+    content = build_export_xlsx(
+        template,
+        mapping,
+        groups,
+        final=False,
+        history={"kind": "theoretical"},
+        project_name="Zuba Plaza",
+    )
+    exported = load_workbook(BytesIO(content), data_only=False)["Operativa"]
+
+    assert exported["A1"].value == "OBRA: Zuba Plaza"
+    assert exported["B1"].value is None
 
 
 def test_create_job_refreshes_server_timestamp_before_returning_response(
