@@ -22,6 +22,7 @@ from app.db.models import (
     ElongationJob,
     ElongationJobFile,
     ElongationMeasurement,
+    Project,
 )
 from app.db.session import SessionLocal
 from app.services.elongations.classification import propose_classifications
@@ -764,6 +765,7 @@ async def create_export(
     template = await _job_file(session, job.id, "template")
     if template is None or not job.template_mapping_json:
         raise ValueError("El trabajo no tiene una plantilla V2 válida")
+    project = await session.get(Project, job.project_id)
     groups, _, _ = await groups_for_export(session, job)
     mapping = _mapping_from_json(job.template_mapping_json)
     source_hashes = [
@@ -786,6 +788,7 @@ async def create_export(
         mapping,
         groups,
         final=kind == "final",
+        project_name=project.name if project is not None else None,
         history={
             "job_title": job.title,
             "version_number": job.version_number,
