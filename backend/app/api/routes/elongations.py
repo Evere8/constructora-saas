@@ -1495,7 +1495,14 @@ async def _export_response(
     path = storage_path(file.storage_key)
     if not path.is_file():
         raise HTTPException(status_code=500, detail="El Excel exportado no quedó disponible")
-    return FileResponse(path, media_type=file.mime_type, filename=file.original_filename)
+    # The endpoint URL is stable although a corrected job gets a new XLSX version.
+    # Do not let a browser, proxy or service worker return a previous export body.
+    return FileResponse(
+        path,
+        media_type=file.mime_type,
+        filename=file.original_filename,
+        headers={"Cache-Control": "private, no-store, max-age=0"},
+    )
 
 
 @router.get("/projects/{project_id}/elongation-jobs/{job_id}/exports/theoretical")
