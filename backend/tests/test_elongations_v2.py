@@ -31,6 +31,7 @@ from app.services.elongations.measurements import (
 )
 from app.services.elongations.pipeline import (
     DOCUMENT_APPROVER_ROLES,
+    _export_needs_render_refresh,
     json_safe,
     progress_for,
     resume_interrupted_theory_jobs,
@@ -464,6 +465,14 @@ def test_export_replaces_stale_project_header_without_overlapping_duplicate() ->
 
     assert exported["A1"].value == "OBRA: Zuba Plaza"
     assert exported["B1"].value is None
+
+
+def test_legacy_export_is_refreshed_once_after_a_rendering_fix() -> None:
+    legacy = SimpleNamespace(snapshot_json={"job_version": 3})
+    current = SimpleNamespace(snapshot_json={"job_version": 3, "render_revision": 2})
+
+    assert _export_needs_render_refresh(legacy)
+    assert not _export_needs_render_refresh(current)
 
 
 def test_create_job_refreshes_server_timestamp_before_returning_response(
