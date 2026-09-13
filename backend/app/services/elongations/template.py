@@ -708,14 +708,15 @@ def _add_control_sheets(
     )
     for group in sorted(groups, key=lambda item: int(item.get("label_number", 0))):
         for measurement in sorted(group.get("measurements", []), key=lambda item: item["ordinal"]):
-            location = measurement.get("source_location_json") or {}
+            raw_location = measurement.get("source_location_json")
+            location = raw_location if isinstance(raw_location, dict) else {}
             control.append(
                 [
                     group["label"],
                     measurement["ordinal"],
                     measurement.get("measured_elongation"),
                     location.get("file") or location.get("page"),
-                    location.get("bbox"),
+                    _control_location_text(location.get("bbox")),
                     measurement.get("confidence"),
                     measurement.get("match_method"),
                     measurement.get("review_status"),
@@ -745,6 +746,27 @@ def _add_control_sheets(
             cell.fill = PatternFill("solid", fgColor="EDE9FE")
         for column in range(1, sheet.max_column + 1):
             sheet.column_dimensions[get_column_letter(column)].width = 20
+
+
+def _control_location_text(value: object) -> str | None:
+    """Return OCR geometry as a readable Excel cell, never as a JSON object.
+
+    ``openpyxl`` accepts scalar values only.  The OCR source stores a bounding box as a
+    dictionary, so placing it directly in ``Control OCR`` raised a ``ValueError`` and made the
+    entire theoretical export fail.  Preserve the four coordinates as review evidence while
+    serialising any unexpected shape safely as text too.
+    """
+
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        preferred = ("x", "y", "width", "height")
+        ordered_keys = [key for key in preferred if key in value]
+        ordered_keys.extend(key for key in value if key not in preferred)
+        return " · ".join(f"{key}={value[key]}" for key in ordered_keys)
+    if isinstance(value, list | tuple):
+        return " · ".join(str(item) for item in value)
+    return str(value)
 
 
 def build_export_xlsx(
