@@ -1119,6 +1119,47 @@ def test_dynamic_export_has_one_row_per_s_and_own_max_min_formulas() -> None:
     assert "Historial Obrixapy" in workbook.sheetnames
 
 
+def test_export_serializes_ocr_bbox_in_control_sheet() -> None:
+    """OCR geometry is evidence for reviewers, not an Excel cell object."""
+
+    template = synthetic_template()
+    mapping = analyse_template(template)
+    content = build_export_xlsx(
+        template,
+        mapping,
+        [
+            {
+                "label": "T200",
+                "label_number": 200,
+                "classification": "band",
+                "length_m": Decimal("30.104"),
+                "strand_count": 1,
+                "calculated_elongation": Decimal("18.6"),
+                "measurements": [
+                    {
+                        "ordinal": 1,
+                        "source_location_json": {
+                            "file": "mediciones.pdf",
+                            "bbox": {
+                                "x": "0.212",
+                                "y": "0.10505",
+                                "width": "0.075",
+                                "height": "0.00935",
+                            },
+                        },
+                    }
+                ],
+            }
+        ],
+        final=False,
+        history={"kind": "theoretical"},
+    )
+
+    control = load_workbook(BytesIO(content), data_only=False)["Control OCR"]
+    assert control["D2"].value == "mediciones.pdf"
+    assert control["E2"].value == "x=0.212 · y=0.10505 · width=0.075 · height=0.00935"
+
+
 def test_dynamic_export_preserves_all_physical_slots_and_rejects_unapproved_final() -> None:
     mapping = analyse_template(synthetic_template())
     group = {
