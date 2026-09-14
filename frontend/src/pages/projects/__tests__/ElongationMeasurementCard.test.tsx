@@ -43,9 +43,9 @@ function show(
   return onPatch;
 }
 
-it('guarda el valor manual y lo aprueba en una sola acción', () => {
+it('guarda el valor manual y lo aprueba desde la fila en una sola acción', () => {
   const onPatch = show();
-  fireEvent.change(screen.getByLabelText('Medida (cm)'), { target: { value: '4,8' } });
+  fireEvent.change(screen.getByLabelText('Medida T200 #1 (cm)'), { target: { value: '4,8' } });
   fireEvent.click(screen.getByRole('button', { name: 'Aprobar' }));
   expect(onPatch).toHaveBeenCalledWith({
     measured_elongation: '4,8',
@@ -54,27 +54,22 @@ it('guarda el valor manual y lo aprueba en una sola acción', () => {
   });
 });
 
-it('no confunde 3,7 con 3.700 y permite aprobar fuera de rango con observación', () => {
+it('no confunde 3,7 con 3.700 y no muestra un campo de observación', () => {
   const onPatch = show();
-  fireEvent.change(screen.getByLabelText('Medida (cm)'), { target: { value: '3.7' } });
-  expect(
-    screen.getByText(/La precisión no cambia el valor: 3,7 y 3,700 son iguales/),
-  ).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Aprobar con observación' })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('Medida T200 #1 (cm)'), { target: { value: '3.7' } });
+  expect(screen.getByText('Se registra automáticamente como excepción al aprobar.')).toBeInTheDocument();
+  expect(screen.queryByLabelText(/Observación/)).not.toBeInTheDocument();
 
-  fireEvent.change(screen.getByLabelText('Observación obligatoria para aprobar'), {
-    target: { value: 'Medida comprobada en obra.' },
-  });
-  fireEvent.click(screen.getByRole('button', { name: 'Aprobar con observación' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Aprobar' }));
   expect(onPatch).toHaveBeenCalledWith({
     measured_elongation: '3.7',
     match_method: 'manual',
-    override_reason: 'Medida comprobada en obra.',
+    override_reason: 'Valor fuera de tolerancia confirmado en conciliación rápida.',
     review_status: 'approved',
   });
 });
 
 it('muestra valores almacenados con la precisión legible para el usuario', () => {
   show(measurement({ measured_elongation: '3.700' }));
-  expect(screen.getByLabelText('Medida (cm)')).toHaveValue('3.7');
+  expect(screen.getByLabelText('Medida T200 #1 (cm)')).toHaveValue('3.7');
 });
