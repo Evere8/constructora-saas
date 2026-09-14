@@ -188,7 +188,10 @@ def _offsets(total: int, size: int, overlap: int = 300) -> list[int]:
 
 def _regions(width: int, height: int, measurements: bool) -> list[tuple[int, int, int, int]]:
     # Whole-width strips retain the cable from its label to handwriting at the opposite end.
-    # Taller source resolution plus slightly taller strips keeps handwritten digits legible\n    # without multiplying cloud requests for a full plan.\n    tile_width, tile_height = (width, 1300) if measurements else (2000, 2000)\n    return [
+    # Taller source resolution plus slightly taller strips keeps handwritten digits legible
+    # without multiplying cloud requests for a full plan.
+    tile_width, tile_height = (width, 1300) if measurements else (2000, 2000)
+    return [
         (x, y, min(x + tile_width, width), min(y + tile_height, height))
         for y in _offsets(height, tile_height)
         for x in _offsets(width, tile_width)
@@ -296,11 +299,14 @@ def _read_pages(
                         "Lee SOLO números manuscritos de medición, conservando el orden físico "
                         "de cada Tendon. Un decimal con coma o punto es un único valor; un guion "
                         "separa valores (4,8-5,0 son dos). Para asociar, sigue la línea del cable "
-                        "desde el rótulo Tendon hasta la anotación, incluso si está al otro extremo, "
+                        "desde el rótulo Tendon hasta la anotación, incluso si está al otro "
+                        "extremo, "
                         "en vertical o inclinada; usa la vista general y el recorte detallado. "
-                        "No copies Elong impresa, S, L, cotas, alturas ni leyendas como mediciones. "
+                        "No copies Elong impresa, S, L, cotas, alturas ni leyendas como "
+                        "mediciones. "
                         "Conserva valores iguales si aparecen en ubicaciones físicas distintas. "
-                        "No rellenes para alcanzar S ni descartes sobrantes. Si el número se ve pero "
+                        "No rellenes para alcanzar S ni descartes sobrantes. Si el número se ve "
+                        "pero "
                         "su cable no es inequívoco, devuelve label=null y uncertain=true."
                         + measurement_context
                         if measurements
@@ -400,7 +406,10 @@ def extract_visual_measurements(
 ) -> MeasurementExtraction:
     groups, warnings, seen = [], [], set()
     page_count = 0
-    for row, page, bbox, notices in _read_pages(\n        path, mime_type, True, _measurement_context(expected_labels)\n    ):\n        page_count = page
+    for row, page, bbox, notices in _read_pages(
+        path, mime_type, True, _measurement_context(expected_labels)
+    ):
+        page_count = page
         warnings.extend(notices)
         if row is None:
             continue
