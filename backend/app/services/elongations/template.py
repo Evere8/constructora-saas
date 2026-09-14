@@ -1072,7 +1072,8 @@ def _set_group_print_breaks(
     ws.row_breaks = RowBreak()
     next_row = section.body_start_row
     for row in range(section.body_start_row, last_row + 1):
-        if not ws.cell(row, mapping.columns["label"]).value:
+        label = _label_key(ws.cell(row, mapping.columns["label"]).value)
+        if not re.fullmatch(r"T\d+", label):
             continue
         count = _positive_integer(ws.cell(row, mapping.columns["strand_count"]).value) or 1
         used += rows_height(next_row, row - 1)
