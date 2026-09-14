@@ -179,3 +179,47 @@ def test_manual_theory_requires_all_fields_and_accepts_decimal_comma():
     assert result.label == "T8" and result.length_m == Decimal("11.880")
     with pytest.raises(ValueError):
         ElongationItemCreate(label="8", strand_count=2, calculated_elongation="7,9")
+
+
+def test_visual_measurement_context_uses_only_known_labels():
+    context = vision._measurement_context({"T202": 2, "T200": 1})
+    assert "T200 (S=1)" in context
+    assert "T202 (S=2)" in context
+    assert "label=null" in context
+
+
+def test_visual_repeated_values_at_different_locations_remain_distinct(monkeypatch):
+    first = vision.VisualMeasurementRow(
+        region=0,
+        label="T200",
+        values=["4,8"],
+        raw_text="Tendon 200 · 4,8",
+        bbox={"x": 0.1, "y": 0.1, "width": 0.1, "height": 0.1},
+        uncertain=False,
+    )
+    second = vision.VisualMeasurementRow(
+        region=1,
+        label="T200",
+        values=["4,8"],
+        raw_text="Tendon 200 · 4,8",
+        bbox={"x": 0.7, "y": 0.5, "width": 0.1, "height": 0.1},
+        uncertain=False,
+    )
+    monkeypatch.setattr(
+        vision,
+        "_read_pages",
+        lambda *args: [
+            (first, 1, {"x": ".1", "y": ".1", "width": ".1", "height": ".1"}, []),
+            (second, 1, {"x": ".7", "y": ".5", "width": ".1", "height": ".1"}, []),
+        ],
+    )
+    monkeypatch.setattr(vision, "get_settings", lambda: Settings(mysql_password="test"))
+    extraction = vision.extract_visual_measurements(
+        Path("scan.pdf"),
+        "application/pdf",
+        expected_labels={"T200": 2},
+    )
+    assert [group.values for group in extraction.groups] == [
+        (Decimal("4.8"),),
+        (Decimal("4.8"),),
+    ]
