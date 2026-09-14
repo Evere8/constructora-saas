@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import math
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from io import BytesIO
@@ -187,8 +188,7 @@ def _offsets(total: int, size: int, overlap: int = 300) -> list[int]:
 
 def _regions(width: int, height: int, measurements: bool) -> list[tuple[int, int, int, int]]:
     # Whole-width strips retain the cable from its label to handwriting at the opposite end.
-    tile_width, tile_height = (width, 1100) if measurements else (2000, 2000)
-    return [
+    # Taller source resolution plus slightly taller strips keeps handwritten digits legible\n    # without multiplying cloud requests for a full plan.\n    tile_width, tile_height = (width, 1300) if measurements else (2000, 2000)\n    return [
         (x, y, min(x + tile_width, width), min(y + tile_height, height))
         for y in _offsets(height, tile_height)
         for x in _offsets(width, tile_width)
@@ -209,7 +209,41 @@ def _page_bbox(box: SourceBox, region: tuple, size: tuple) -> dict[str, str]:
     }
 
 
-def _read_pages(path: Path, mime_type: str, measurements: bool):
+def _measurement_context(expected_labels: Mapping[str, int] | None) -> str:
+    """Give the visual reader a bounded list of valid cable anchors.
+
+    The list improves association for handwritten figures that are distant from a Tendon label;
+    it is context only and must never be used to fabricate a value or fill a missing ordinal.
+    """
+
+    if not expected_labels:
+        return ""
+    labels: list[tuple[str, int]] = []
+    for raw_label, strands in expected_labels.items():
+        try:
+            label = normalise_label(raw_label)[0]
+        except ValueError:
+            continue
+        if 0 < int(strands) <= 1000:
+            labels.append((label, int(strands)))
+    if not labels:
+        return ""
+    labels.sort()
+    rendered = ", ".join(f"{label} (S={strands})" for label, strands in labels[:300])
+    return (
+        " Los únicos Labels teóricos permitidos para asociar son: "
+        + rendered
+        + ". Usa exactamente uno de ellos solo cuando la línea o el contexto visual lo confirme; "
+        "si no, devuelve label=null y uncertain=true."
+    )
+
+
+def _read_pages(
+    path: Path,
+    mime_type: str,
+    measurements: bool,
+    measurement_context: str = "",
+):
     settings = get_settings()
     page_count = (
         _pdf_layout(path, settings.ocr_max_pdf_pages)[0] if mime_type == "application/pdf" else 1
@@ -230,7 +264,7 @@ def _read_pages(path: Path, mime_type: str, measurements: bool):
                         str(page),
                         "-singlefile",
                         "-scale-to",
-                        "4000" if measurements else "8000",
+                        "6000" if measurements else "8000",
                         "-png",
                         str(path),
                         str(prefix),
@@ -239,9 +273,14 @@ def _read_pages(path: Path, mime_type: str, measurements: bool):
                 )
                 source = prefix.with_suffix(".png")
             with Image.open(source) as original:
-                image = ImageOps.exif_transpose(original).convert("RGB")
+                normalised = ImageOps.exif_transpose(original).convert("RGB")
+                # Small pencil/pen annotations benefit from contrast normalisation.  This
+                # derivative exists only in memory; the uploaded original is untouched.
+                image = ImageOps.autocontrast(normalised, cutoff=1) if measurements else normalised
+                if image is not normalised:
+                    normalised.close()
             try:
-                image.thumbnail((4000, 4000) if measurements else (8000, 8000))
+                image.thumbnail((6000, 6000) if measurements else (8000, 8000))
                 overview = image.copy()
                 overview.thumbnail((1800, 1800))
                 context_image = _image_part(overview)
@@ -254,13 +293,16 @@ def _read_pages(path: Path, mime_type: str, measurements: bool):
                     )
                 for start in range(0, len(regions), 3):
                     instructions = (
-                        "Lee SOLO números manuscritos reales, en orden, bajo cada rótulo Tendon. "
-                        "Un guion separa lecturas (4,8-5,0 son dos). Usa null para ilegibles. "
-                        "No copies Elong impresa, S, L ni cotas como mediciones. "
-                        "Si las anotaciones están al otro extremo, sigue el mismo cable "
-                        "usando la vista general. No asignes por "
-                        "proximidad solamente. Si no es inequívoco, label=null y uncertain=true. "
-                        "No rellenes para alcanzar S, ni descartes valores sobrantes."
+                        "Lee SOLO números manuscritos de medición, conservando el orden físico "
+                        "de cada Tendon. Un decimal con coma o punto es un único valor; un guion "
+                        "separa valores (4,8-5,0 son dos). Para asociar, sigue la línea del cable "
+                        "desde el rótulo Tendon hasta la anotación, incluso si está al otro extremo, "
+                        "en vertical o inclinada; usa la vista general y el recorte detallado. "
+                        "No copies Elong impresa, S, L, cotas, alturas ni leyendas como mediciones. "
+                        "Conserva valores iguales si aparecen en ubicaciones físicas distintas. "
+                        "No rellenes para alcanzar S ni descartes sobrantes. Si el número se ve pero "
+                        "su cable no es inequívoco, devuelve label=null y uncertain=true."
+                        + measurement_context
                         if measurements
                         else "Lee los campos impresos Tendon/Label, S, L (m) y Elong (cm). "
                         "No mezcles rótulos cercanos. No saltes rótulos sin resaltado "
@@ -271,7 +313,8 @@ def _read_pages(path: Path, mime_type: str, measurements: bool):
                             "type": "input_text",
                             "text": instructions
                             + " Primero la vista general para contexto; luego recortes detallados. "
-                            "Devuelve filas SOLO de estos recortes, con su número region.",
+                            "Devuelve filas SOLO de estos recortes, con su número region. "
+                            "Incluye cada número manuscrito legible, aunque no esté resaltado.",
                         },
                         context_image,
                     ]
@@ -349,11 +392,15 @@ def extract_visual_theory(path: Path, mime_type: str) -> TheoryExtraction:
     )
 
 
-def extract_visual_measurements(path: Path, mime_type: str) -> MeasurementExtraction:
+def extract_visual_measurements(
+    path: Path,
+    mime_type: str,
+    *,
+    expected_labels: Mapping[str, int] | None = None,
+) -> MeasurementExtraction:
     groups, warnings, seen = [], [], set()
     page_count = 0
-    for row, page, bbox, notices in _read_pages(path, mime_type, True):
-        page_count = page
+    for row, page, bbox, notices in _read_pages(\n        path, mime_type, True, _measurement_context(expected_labels)\n    ):\n        page_count = page
         warnings.extend(notices)
         if row is None:
             continue
@@ -373,7 +420,14 @@ def extract_visual_measurements(path: Path, mime_type: str) -> MeasurementExtrac
             except ValueError:
                 parsed, uncertain = None, True
             values.append(parsed)
-        signature = (page, label, tuple(values))
+        # Overlapping strips frequently repeat the same handwriting.  Include its page
+        # location in the signature so that two equal values at different physical locations
+        # (for example S=2 with 5,0 and 5,0) remain two separate measurements.
+        location = tuple(
+            round(float(bbox.get(key, "0")) * 100)
+            for key in ("x", "y", "width", "height")
+        )
+        signature = (page, label, tuple(values), location)
         if signature in seen:
             continue
         seen.add(signature)
