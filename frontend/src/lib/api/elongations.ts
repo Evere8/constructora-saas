@@ -108,6 +108,8 @@ export const elongationsApi = {
     measurementId: string,
     input: ElongationMeasurementPatch,
   ) => api.patch<ElongationMeasurement>(`${base(companyId, projectId)}/${jobId}/measurements/${measurementId}`, input),
+  applyDetectedMeasurements: (companyId: string, projectId: string, jobId: string) =>
+    api.post<ElongationJobV2>(`${base(companyId, projectId)}/${jobId}/apply-detected-measurements`),
   approveFinal: (companyId: string, projectId: string, jobId: string) =>
     api.post<ElongationJobV2>(`${base(companyId, projectId)}/${jobId}/approve-final`),
   file: (companyId: string, projectId: string, jobId: string, fileId: string) =>
