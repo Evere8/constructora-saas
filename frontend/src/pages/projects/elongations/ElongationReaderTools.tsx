@@ -28,46 +28,295 @@ export function TheoryActions({ companyId, projectId, job, refresh }: Props) {
   const canEdit = useCan('documents.edit');
   const canApprove = useCan('documents.approve');
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState<ElongationManualItem>({ label: '', classification: 'unknown', length_m: '', strand_count: 1, calculated_elongation: '', source_page: 1 });
+  const [bulkClassifyOpen, setBulkClassifyOpen] = useState(false);
+  const [bulkClassification, setBulkClassification] = useState<'band' | 'distributed'>('band');
+  const [draft, setDraft] = useState<ElongationManualItem>({
+    label: '',
+    classification: 'unknown',
+    length_m: '',
+    strand_count: 1,
+    calculated_elongation: '',
+    source_page: 1,
+  });
   const [error, setError] = useState('');
-  const reread = useMutation({ mutationFn: () => elongationsApi.rereadTheory(companyId, projectId, job.id), onError: fail,
-    onSuccess: () => { toast.success('Relectura iniciada. Se conservan las correcciones y mediciones.'); refresh(); } });
-  const create = useMutation({ mutationFn: () => elongationsApi.createItem(companyId, projectId, job.id, draft),
-    onError: (e) => setError(e instanceof Error ? e.message : 'No se pudo agregar.'),
-    onSuccess: () => { setOpen(false); setDraft({ label: '', classification: 'unknown', length_m: '', strand_count: 1, calculated_elongation: '', source_page: 1 }); refresh(); } });
-  const pending = job.items.filter(item => item.theory_review_status !== 'approved');
-  const blocked = pending.filter(item => item.classification === 'unknown' || ['conflict', 'rejected'].includes(item.theory_review_status));
-  const review = useMutation({ mutationFn: () => elongationsApi.reviewTheories(companyId, projectId, job.id, pending.map(item => item.id), job.version_number),
-    onError: fail, onSuccess: () => { toast.success('Todas las teorías quedaron revisadas.'); refresh(); } });
+
+  const reread = useMutation({
+    mutationFn: () => elongationsApi.rereadTheory(companyId, projectId, job.id),
+    onError: fail,
+    onSuccess: () => {
+      toast.success('Relectura iniciada. Se conservan las correcciones y mediciones.');
+      refresh();
+    },
+  });
+  const create = useMutation({
+    mutationFn: () => elongationsApi.createItem(companyId, projectId, job.id, draft),
+    onError: (error) => setError(error instanceof Error ? error.message : 'No se pudo agregar.'),
+    onSuccess: () => {
+      setOpen(false);
+      setDraft({
+        label: '',
+        classification: 'unknown',
+        length_m: '',
+        strand_count: 1,
+        calculated_elongation: '',
+        source_page: 1,
+      });
+      refresh();
+    },
+  });
+
+  const unresolvedConflicts = job.items.filter((item) =>
+    ['conflict', 'rejected'].includes(item.theory_review_status),
+  );
+  const unknown = job.items.filter((item) => item.classification === 'unknown');
+  const reviewTargets = job.items.filter(
+    (item) =>
+      !['conflict', 'rejected'].includes(item.theory_review_status)
+      && (item.theory_review_status !== 'approved' || item.classification === 'unknown'),
+  );
+  const review = useMutation({
+    mutationFn: async () => {
+      let version = job.version_number;
+      if (unknown.length > 0) {
+        const classified = await elongationsApi.classify(
+          companyId,
+          projectId,
+          job.id,
+          unknown.map((item) => item.id),
+          bulkClassification,
+        );
+        version = classified.version_number;
+      }
+      return elongationsApi.reviewTheories(
+        companyId,
+        projectId,
+        job.id,
+        reviewTargets.map((item) => item.id),
+        version,
+      );
+    },
+    onError: fail,
+    onSuccess: () => {
+      setBulkClassifyOpen(false);
+      toast.success('Todas las teorías quedaron revisadas.');
+      refresh();
+    },
+  });
   const busy = readingBusy(job) || reread.isPending || review.isPending || create.isPending;
-  const confirmChange = () => !(job.theory_approved_at || job.approved_at) || window.confirm('Este cambio requiere volver a aprobar la teoría. Se conservan las mediciones y los Excel anteriores. ¿Continuar?');
+  const canRunBulkReview = canApprove && (unknown.length === 0 || canEdit);
+  const confirmChange = () =>
+    !(job.theory_approved_at || job.approved_at)
+    || window.confirm(
+      'Este cambio requiere volver a aprobar la teoría. Se conservan las mediciones y los Excel anteriores. ¿Continuar?',
+    );
   const warnings = job.processing_summary_json?.warnings;
-  return <div className="space-y-3">
-    <ReaderStatus companyId={companyId} projectId={projectId} />
-    <div className="flex flex-wrap gap-2">
-      {canEdit && <><Button variant="outline" disabled={busy} onClick={() => { setError(''); setOpen(true); }}><Plus /> Agregar teoría faltante</Button>
-        <Button variant="outline" disabled={busy} onClick={() => { if (confirmChange()) reread.mutate(); }}><RefreshCw /> Releer plano completo</Button></>}
-      {canApprove && <Button disabled={busy || !pending.length || blocked.length > 0} onClick={() => {
-        if (window.confirm(`¿Confirmas que revisaste los cuatro campos y la clasificación de las ${pending.length} teorías pendientes?`)) review.mutate();
-      }}><CheckCheck /> Revisar todas las teorías ({pending.length})</Button>}
+
+  const startBulkReview = () => {
+    if (!reviewTargets.length || unresolvedConflicts.length) return;
+    if (unknown.length) {
+      setBulkClassifyOpen(true);
+      return;
+    }
+    if (
+      window.confirm(
+        `¿Confirmas que revisaste los cuatro campos y la clasificación de las ${reviewTargets.length} teorías pendientes?`,
+      )
+    ) {
+      review.mutate();
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <ReaderStatus companyId={companyId} projectId={projectId} />
+      <div className="flex flex-wrap gap-2">
+        {canEdit && (
+          <>
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => {
+                setError('');
+                setOpen(true);
+              }}
+            >
+              <Plus /> Agregar teoría faltante
+            </Button>
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => {
+                if (confirmChange()) reread.mutate();
+              }}
+            >
+              <RefreshCw /> Releer plano completo
+            </Button>
+          </>
+        )}
+        {canApprove && (
+          <Button
+            disabled={busy || !canRunBulkReview || !reviewTargets.length || unresolvedConflicts.length > 0}
+            onClick={startBulkReview}
+          >
+            <CheckCheck /> Revisar todas las teorías ({reviewTargets.length})
+          </Button>
+        )}
+      </div>
+      {unresolvedConflicts.length > 0 && (
+        <p className="text-sm text-amber-800">
+          Antes de revisar todas, resuelve el conflicto de: {unresolvedConflicts.map((item) => item.label).join(', ')}.
+        </p>
+      )}
+      {unknown.length > 0 && unresolvedConflicts.length === 0 && (
+        <p className="text-sm text-amber-800">
+          Al revisar todas, elige una sola clase para: {unknown.map((item) => item.label).join(', ')}.
+        </p>
+      )}
+      {readingBusy(job) && (
+        <p className="flex items-center gap-2 text-sm">
+          <Loader2 className="h-4 w-4 animate-spin" /> Lectura en curso. Puedes volver al listado; el trabajo se sigue procesando.
+        </p>
+      )}
+      {job.error_message && (
+        <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+          {job.error_message}
+        </p>
+      )}
+      {Array.isArray(warnings) && warnings.length > 0 && (
+        <details className="rounded-lg border p-3 text-sm">
+          <summary>Observaciones de la lectura ({warnings.length})</summary>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            {warnings.map((warning, index) => <li key={index}>{String(warning)}</li>)}
+          </ul>
+        </details>
+      )}
+
+      <Dialog open={bulkClassifyOpen} onOpenChange={setBulkClassifyOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Clasificar y revisar todas</DialogTitle>
+            <DialogDescription>
+              Las teorías sin clase necesitan una clasificación antes de su aprobación masiva.
+            </DialogDescription>
+          </DialogHeader>
+          <label className="grid gap-1 text-sm font-medium">
+            Clase para teorías sin clasificar
+            <select
+              className="h-10 rounded-md border bg-background px-2"
+              value={bulkClassification}
+              onChange={(event) => setBulkClassification(event.target.value as 'band' | 'distributed')}
+            >
+              <option value="band">Bandas</option>
+              <option value="distributed">Distribuidos</option>
+            </select>
+          </label>
+          <Button
+            disabled={review.isPending}
+            onClick={() => {
+              if (
+                window.confirm(
+                  `¿Clasificar ${unknown.length} teoría(s) como ${bulkClassification === 'band' ? 'Bandas' : 'Distribuidos'} y marcarlas como revisadas?`,
+                )
+              ) {
+                review.mutate();
+              }
+            }}
+          >
+            {review.isPending ? 'Guardando…' : 'Clasificar y revisar todas'}
+          </Button>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Agregar teoría faltante</DialogTitle>
+            <DialogDescription>
+              Copia los cuatro campos del rótulo del plano. Se crearán exactamente S casillas de medición.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="grid gap-3 sm:grid-cols-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (confirmChange()) create.mutate();
+            }}
+          >
+            <label>
+              <span className="mb-1 block text-sm font-medium">Label del plano</span>
+              <Input
+                required
+                placeholder="T203"
+                value={draft.label}
+                onChange={(event) => setDraft({ ...draft, label: event.target.value })}
+              />
+            </label>
+            <label>
+              <span className="mb-1 block text-sm font-medium">Clasificación</span>
+              <select
+                className="h-10 w-full rounded-md border bg-background px-2"
+                value={draft.classification}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    classification: event.target.value as ElongationManualItem['classification'],
+                  })
+                }
+              >
+                <option value="unknown">Sin clasificar</option>
+                <option value="band">Banda</option>
+                <option value="distributed">Distribuido</option>
+              </select>
+            </label>
+            <label>
+              <span className="mb-1 block text-sm font-medium">Longitud (m)</span>
+              <Input
+                required
+                inputMode="decimal"
+                value={draft.length_m}
+                onChange={(event) => setDraft({ ...draft, length_m: event.target.value })}
+              />
+            </label>
+            <label>
+              <span className="mb-1 block text-sm font-medium">S / cantidad de tendones</span>
+              <Input
+                required
+                type="number"
+                min={1}
+                max={1000}
+                value={draft.strand_count}
+                onChange={(event) => setDraft({ ...draft, strand_count: Number(event.target.value) })}
+              />
+            </label>
+            <label>
+              <span className="mb-1 block text-sm font-medium">Elongación calculada (cm)</span>
+              <Input
+                required
+                inputMode="decimal"
+                value={draft.calculated_elongation}
+                onChange={(event) => setDraft({ ...draft, calculated_elongation: event.target.value })}
+              />
+            </label>
+            <label>
+              <span className="mb-1 block text-sm font-medium">Página del plano</span>
+              <Input
+                required
+                type="number"
+                min={1}
+                max={25}
+                value={draft.source_page}
+                onChange={(event) => setDraft({ ...draft, source_page: Number(event.target.value) })}
+              />
+            </label>
+            {error && <p role="alert" className="text-sm text-destructive sm:col-span-2">{error}</p>}
+            <Button type="submit" disabled={create.isPending} className="sm:col-span-2">
+              {create.isPending ? 'Guardando…' : 'Agregar y crear sus mediciones'}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
-    {blocked.length > 0 && <p className="text-sm text-amber-800">Antes de revisar todas, clasifica o resuelve: {blocked.map(item => item.label).join(', ')}.</p>}
-    {readingBusy(job) && <p className="flex items-center gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin" /> Lectura en curso. Puedes volver al listado; el trabajo se sigue procesando.</p>}
-    {job.error_message && <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{job.error_message}</p>}
-    {Array.isArray(warnings) && warnings.length > 0 && <details className="rounded-lg border p-3 text-sm"><summary>Observaciones de la lectura ({warnings.length})</summary><ul className="mt-2 list-disc space-y-1 pl-5">{warnings.map((warning, i) => <li key={i}>{String(warning)}</li>)}</ul></details>}
-    <Dialog open={open} onOpenChange={setOpen}><DialogContent><DialogHeader><DialogTitle>Agregar teoría faltante</DialogTitle><DialogDescription>Copia los cuatro campos del rótulo del plano. Se crearán exactamente S casillas de medición.</DialogDescription></DialogHeader>
-      <form className="grid gap-3 sm:grid-cols-2" onSubmit={e => { e.preventDefault(); if (confirmChange()) create.mutate(); }}>
-        <label><span className="mb-1 block text-sm font-medium">Label del plano</span><Input required placeholder="T203" value={draft.label} onChange={e => setDraft({ ...draft, label: e.target.value })} /></label>
-        <label><span className="mb-1 block text-sm font-medium">Clasificación</span><select className="h-10 w-full rounded-md border bg-background px-2" value={draft.classification} onChange={e => setDraft({ ...draft, classification: e.target.value as ElongationManualItem['classification'] })}><option value="unknown">Sin clasificar</option><option value="band">Banda</option><option value="distributed">Distribuido</option></select></label>
-        <label><span className="mb-1 block text-sm font-medium">Longitud (m)</span><Input required inputMode="decimal" value={draft.length_m} onChange={e => setDraft({ ...draft, length_m: e.target.value })} /></label>
-        <label><span className="mb-1 block text-sm font-medium">S / cantidad de tendones</span><Input required type="number" min={1} max={1000} value={draft.strand_count} onChange={e => setDraft({ ...draft, strand_count: Number(e.target.value) })} /></label>
-        <label><span className="mb-1 block text-sm font-medium">Elongación calculada (cm)</span><Input required inputMode="decimal" value={draft.calculated_elongation} onChange={e => setDraft({ ...draft, calculated_elongation: e.target.value })} /></label>
-        <label><span className="mb-1 block text-sm font-medium">Página del plano</span><Input required type="number" min={1} max={25} value={draft.source_page} onChange={e => setDraft({ ...draft, source_page: Number(e.target.value) })} /></label>
-        {error && <p role="alert" className="text-sm text-destructive sm:col-span-2">{error}</p>}
-        <Button type="submit" disabled={create.isPending} className="sm:col-span-2">{create.isPending ? 'Guardando…' : 'Agregar y crear sus mediciones'}</Button>
-      </form>
-    </DialogContent></Dialog>
-  </div>;
+  );
 }
 
 export function ScanReadingReview({ companyId, projectId, job, refresh }: Props) {
