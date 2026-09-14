@@ -1492,6 +1492,82 @@ async def update_elongation_measurement(
 
 
 @router.post(
+    "/projects/{project_id}/elongation-jobs/{job_id}/apply-detected-measurements",
+    response_model=ElongationJobV2Response,
+)
+async def apply_detected_measurements(
+    project_id: str,
+    job_id: str,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+) -> ElongationJobV2Response:
+    """Approve every in-range reading already extracted by an automatic reader.
+
+    This is intentionally not a fill-forward action: blank, uncertain, conflicting and
+    out-of-tolerance values remain visible for a human.  The button removes repetitive review
+    clicks without turning an OCR guess into an invented measurement.
+    """
+
+    require_document_approver(access)
+    job = await require_job(db, access.company_id, project_id, job_id)
+    require_idle_job(job)
+    if job.theory_approved_at is None:
+        raise HTTPException(status_code=422, detail="Primero debe aprobarse la teoría")
+    items, measurements, files, _ = await load_job_data(db, job)
+    by_item = {item.id: item for item in items}
+    applied: list[str] = []
+    skipped_outside = 0
+    skipped_conflicts = 0
+    for measurement in measurements:
+        if (
+            measurement.measured_elongation is None
+            or measurement.match_method not in {"spatial", "label_anchor"}
+            or measurement.review_status != "pending"
+        ):
+            continue
+        item = by_item.get(measurement.item_id)
+        if item is None:
+            continue
+        current_tolerance = tolerance_status(
+            item.calculated_elongation,
+            measurement.measured_elongation,
+            job.tolerance_percent,
+        )
+        if current_tolerance == "outside":
+            skipped_outside += 1
+            continue
+        if current_tolerance == "unresolved":
+            skipped_conflicts += 1
+            continue
+        measurement.review_status = "approved"
+        measurement.reviewed_by_user_id = access.user.id
+        measurement.reviewed_at = utcnow()
+        applied.append(measurement.id)
+    if applied:
+        if job.approved_at is not None:
+            invalidate_final_approval(job)
+            add_activity(db, access, "elongation.final.invalidated", "elongation_job", job.id)
+        else:
+            job.workflow_status = "measurement_review"
+            job.status = "review_required"
+    add_activity(
+        db,
+        access,
+        "elongation.measurements.detected_applied",
+        "elongation_job",
+        job.id,
+        {
+            "applied_measurement_ids": applied,
+            "skipped_outside": skipped_outside,
+            "skipped_conflicts": skipped_conflicts,
+            "files_considered": [file.id for file in files if file.kind == "measurement_scan"],
+        },
+    )
+    await commit_or_conflict(db, "No fue posible aplicar las lecturas detectadas")
+    return await response_for_job(db, job)
+
+
+@router.post(
     "/projects/{project_id}/elongation-jobs/{job_id}/approve-final",
     response_model=ElongationJobV2Response,
 )

@@ -423,6 +423,7 @@ async def process_measurement_files(job_id: str, file_ids: list[str]) -> None:
                 ).scalars()
             )
             by_label = {item.label: item for item in items}
+            expected_labels = {item.label: item.strand_count for item in items}
             all_warnings: list[str] = []
             try:
                 for source in files:
@@ -432,6 +433,7 @@ async def process_measurement_files(job_id: str, file_ids: list[str]) -> None:
                         extract_measurements,
                         storage_path(source.storage_key),
                         source.mime_type,
+                        expected_labels,
                     )
                     summary: dict[str, Any] = {
                         "engine": extraction.engine,
@@ -444,6 +446,10 @@ async def process_measurement_files(job_id: str, file_ids: list[str]) -> None:
                     }
                     warning_start = len(all_warnings)
                     all_warnings.extend(extraction.warnings)
+                    # Several crops can contain different physical readings for the same
+                    # Tendon.  Keep their order and fill their distinct S slots together rather
+                    # than restarting at ordinal #1 for every crop.
+                    matched_groups: dict[str, list[Any]] = {}
                     for group in extraction.groups:
                         label, raw_text, values = group.label, group.raw_text, list(group.values)
                         summary["anchors"] += 1
@@ -457,8 +463,7 @@ async def process_measurement_files(job_id: str, file_ids: list[str]) -> None:
                                 }
                             )
                             continue
-                        item = by_label.get(label)
-                        if item is None:
+                        if label not in by_label:
                             summary["unmatched_labels"].append(label)
                             summary["unassigned"].append(
                                 {
@@ -470,6 +475,16 @@ async def process_measurement_files(job_id: str, file_ids: list[str]) -> None:
                                 }
                             )
                             continue
+                        matched_groups.setdefault(label, []).append(group)
+
+                    for label, groups in matched_groups.items():
+                        item = by_label[label]
+                        values_with_sources = [
+                            (value, group)
+                            for group in groups
+                            for value in group.values
+                        ]
+                        values = [value for value, _ in values_with_sources]
                         slots, extras = expand_measurement_slots(item.strand_count, values)
                         if extras:
                             summary["extras"][label] = [
@@ -490,6 +505,7 @@ async def process_measurement_files(job_id: str, file_ids: list[str]) -> None:
                             if slot.measured_elongation_cm is None:
                                 continue
                             measurement = existing[slot.ordinal]
+                            source_group = values_with_sources[slot.ordinal - 1][1]
                             if (
                                 measurement.match_method == "manual"
                                 or measurement.review_status == "approved"
@@ -520,21 +536,25 @@ async def process_measurement_files(job_id: str, file_ids: list[str]) -> None:
                                 )
                                 continue
                             measurement.measured_elongation = slot.measured_elongation_cm
-                            measurement.raw_text = raw_text
+                            measurement.raw_text = source_group.raw_text
                             measurement.confidence = (
-                                Decimal("0.5000") if group.uncertain else Decimal("0.8500")
+                                Decimal("0.5000")
+                                if source_group.uncertain
+                                else Decimal("0.8500")
                             )
                             measurement.match_method = (
                                 "spatial"
                                 if extraction.engine.startswith("openai")
                                 else "label_anchor"
                             )
-                            measurement.review_status = "conflict" if group.uncertain else "pending"
+                            measurement.review_status = (
+                                "conflict" if source_group.uncertain else "pending"
+                            )
                             measurement.source_file_id = source.id
-                            measurement.source_page = group.page
+                            measurement.source_page = source_group.page
                             measurement.source_location_json = {
                                 "file": source.original_filename,
-                                "bbox": group.bbox,
+                                "bbox": source_group.bbox,
                             }
                     if not extraction.groups:
                         all_warnings.append(

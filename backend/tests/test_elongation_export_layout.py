@@ -81,7 +81,6 @@ def field_template() -> bytes:
 
 
 @pytest.mark.parametrize("final", [False, True])
-@pytest.mark.parametrize("final", [False, True])
 def test_export_keeps_bands_and_distributed_separate_with_complete_physical_rows(
     final: bool,
 ) -> None:
