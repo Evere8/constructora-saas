@@ -31,7 +31,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import type {
   ElongationClassification,
   ElongationClassificationZone,
@@ -507,12 +506,103 @@ function toleranceHint(measurement: ElongationMeasurement): string {
 function Reconciliation({ companyId, projectId, job, refresh }: { companyId: string; projectId: string; job: ElongationJobV2; refresh: () => void }) {
   const canEdit = useCan('documents.edit');
   const canApprove = useCan('documents.approve');
-  const update = useMutation({ mutationFn: ({ measurement, patch }: { measurement: ElongationMeasurement; patch: ElongationMeasurementPatch }) => elongationsApi.updateMeasurement(companyId, projectId, job.id, measurement.id, patch), onSuccess: refresh, onError: (error) => toast.error(errorMessage(error, 'No se pudo guardar la medición.')) });
+  const update = useMutation({
+    mutationFn: ({ measurement, patch }: { measurement: ElongationMeasurement; patch: ElongationMeasurementPatch }) =>
+      elongationsApi.updateMeasurement(companyId, projectId, job.id, measurement.id, patch),
+    onSuccess: refresh,
+    onError: (error) => toast.error(errorMessage(error, 'No se pudo guardar la medición.')),
+  });
+  const detectedReady = job.items
+    .flatMap((item) => item.measurements)
+    .filter(
+      (measurement) =>
+        measurement.measured_elongation !== null &&
+        measurement.review_status === 'pending' &&
+        measurement.tolerance_status === 'within' &&
+        measurement.match_method !== 'manual',
+    ).length;
+  const applyDetected = useMutation({
+    mutationFn: () => elongationsApi.applyDetectedMeasurements(companyId, projectId, job.id),
+    onSuccess: () => {
+      toast.success('Se aplicaron las lecturas detectadas dentro de tolerancia.');
+      refresh();
+    },
+    onError: (error) => toast.error(errorMessage(error, 'No se pudieron aplicar las lecturas detectadas.')),
+  });
   const applyPatch = (measurement: ElongationMeasurement, patch: ElongationMeasurementPatch) => {
     if (job.approved_at && !window.confirm('Esta corrección invalida el resultado final aprobado. ¿Continuar?')) return;
     update.mutate({ measurement, patch });
   };
-  return <div className="space-y-3"><Card><CardHeader><CardTitle>6. Conciliación por Label</CardTitle><CardDescription>Cada grupo tiene exactamente S ordinales. Faltantes, sobrantes y conflictos permanecen visibles hasta la corrección humana.</CardDescription></CardHeader><CardContent><ProgressLine job={job} /></CardContent></Card><ScanReadingReview companyId={companyId} projectId={projectId} job={job} refresh={refresh} />{job.items.map((item) => <Card key={item.id}><CardContent className="space-y-3 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-semibold">{item.label} · {item.measurements.filter((measurement) => measurement.measured_elongation !== null).length}/{item.strand_count} detectadas</p><p className="text-xs text-muted-foreground">Calculada {item.calculated_elongation} cm · {elongationLabels[item.classification]}</p></div><Badge variant="muted">S={item.strand_count}</Badge></div><div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">{item.measurements.map((measurement) => <MeasurementCard key={`${measurement.id}-${measurement.measured_elongation}-${measurement.review_status}`} item={item} measurement={measurement} canEdit={canEdit && !readingBusy(job)} canApprove={canApprove && !readingBusy(job)} onPatch={(patch) => applyPatch(measurement, patch)} />)}</div></CardContent></Card>)}</div>;
+
+  return (
+    <div className="space-y-3">
+      <Card>
+        <CardHeader>
+          <CardTitle>6. Conciliación rápida por Label</CardTitle>
+          <CardDescription>
+            Revise las lecturas como una lista. No se completan valores ausentes: solo se aplican
+            números que el lector ya detectó de forma asociada al tendón.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <ProgressLine job={job} />
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/60 p-3">
+            <p className="text-sm text-muted-foreground">
+              La acción masiva revisa {detectedReady} lectura(s) detectada(s) y dentro del rango.
+              Las faltantes, dudosas o fuera de tolerancia permanecen visibles para comprobarlas.
+            </p>
+            {canApprove && (
+              <Button
+                size="sm"
+                disabled={detectedReady === 0 || applyDetected.isPending || readingBusy(job)}
+                onClick={() => applyDetected.mutate()}
+              >
+                {applyDetected.isPending ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}
+                Aplicar lecturas detectadas ({detectedReady})
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+      <ScanReadingReview companyId={companyId} projectId={projectId} job={job} refresh={refresh} />
+      {job.items.map((item) => (
+        <Card key={item.id}>
+          <CardContent className="space-y-3 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="font-semibold">
+                  {item.label} · {item.measurements.filter((measurement) => measurement.measured_elongation !== null).length}/{item.strand_count} detectadas
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Calculada {item.calculated_elongation} cm · {elongationLabels[item.classification]}
+                </p>
+              </div>
+              <Badge variant="muted">S={item.strand_count}</Badge>
+            </div>
+            <div className="overflow-hidden rounded-md border" role="list" aria-label={`Lecturas de ${item.label}`}>
+              <div className="hidden grid-cols-[5rem_minmax(9rem,1fr)_minmax(11rem,1fr)_8rem_auto] gap-3 border-b bg-muted/50 px-3 py-2 text-xs font-medium text-muted-foreground lg:grid">
+                <span>Ordinal</span>
+                <span>Medida (cm)</span>
+                <span>Rango</span>
+                <span>Estado</span>
+                <span>Acciones</span>
+              </div>
+              {item.measurements.map((measurement) => (
+                <MeasurementCard
+                  key={`${measurement.id}-${measurement.measured_elongation}-${measurement.review_status}`}
+                  item={item}
+                  measurement={measurement}
+                  canEdit={canEdit && !readingBusy(job)}
+                  canApprove={canApprove && !readingBusy(job)}
+                  onPatch={(patch) => applyPatch(measurement, patch)}
+                />
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
 }
 
 function editableDecimal(value: string | null): string {
@@ -544,12 +634,10 @@ export function MeasurementCard({
   onPatch: (patch: ElongationMeasurementPatch) => void;
 }) {
   const [value, setValue] = useState(() => editableDecimal(measurement.measured_elongation));
-  const [reason, setReason] = useState(measurement.override_reason ?? '');
 
   useEffect(() => {
     setValue(editableDecimal(measurement.measured_elongation));
-    setReason(measurement.override_reason ?? '');
-  }, [measurement.id, measurement.measured_elongation, measurement.override_reason]);
+  }, [measurement.id, measurement.measured_elongation]);
 
   const minimum = decimalNumber(measurement.minimum_elongation ?? '');
   const maximum = decimalNumber(measurement.maximum_elongation ?? '');
@@ -559,9 +647,7 @@ export function MeasurementCard({
   const outside = hasDraftRange ? draftOutside : measurement.tolerance_status === 'outside';
   const currentValue = editableDecimal(measurement.measured_elongation);
   const changedValue = value.trim() !== currentValue;
-  const changedReason = reason !== (measurement.override_reason ?? '');
   const measurementInputId = `measurement-${measurement.id}`;
-  const observationInputId = `measurement-observation-${measurement.id}`;
 
   const patchFromDraft = (
     reviewStatus?: ElongationMeasurementPatch['review_status'],
@@ -571,75 +657,69 @@ export function MeasurementCard({
     if (changedValue) {
       patch.measured_elongation = draftValue || null;
       patch.match_method = 'manual';
+      if (!outside && measurement.override_reason) patch.override_reason = null;
     }
-    if (changedReason || (outside && reason.trim())) {
-      patch.override_reason = reason.trim() || null;
+    if (reviewStatus) {
+      patch.review_status = reviewStatus;
+      if (reviewStatus === 'approved' && outside && !measurement.override_reason) {
+        patch.override_reason = 'Valor fuera de tolerancia confirmado en conciliación rápida.';
+      }
     }
-    if (reviewStatus) patch.review_status = reviewStatus;
     return patch;
   };
 
-  const canApproveDraft = numericValue !== null && (!outside || reason.trim().length > 0);
+  const canApproveDraft = numericValue !== null;
   const hint = outside ? 'Fuera de tolerancia' : toleranceHint(measurement);
   return (
-    <div className="rounded-md border p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="font-medium">{item.label} · #{measurement.ordinal}</span>
-        <Badge
-          variant={
-            measurement.review_status === 'approved'
-              ? 'success'
-              : measurement.review_status === 'conflict'
-                ? 'destructive'
-                : 'warning'
-          }
-        >
-          {reviewLabels[measurement.review_status]}
-        </Badge>
+    <div
+      role="listitem"
+      className="grid gap-2 border-b p-3 last:border-b-0 lg:grid-cols-[5rem_minmax(9rem,1fr)_minmax(11rem,1fr)_8rem_auto] lg:items-center lg:gap-3"
+    >
+      <span className="font-medium">{item.label} · #{measurement.ordinal}</span>
+      <div>
+        <Label className="sr-only" htmlFor={measurementInputId}>
+          Medida {item.label} #{measurement.ordinal} (cm)
+        </Label>
+        <Input
+          id={measurementInputId}
+          value={value}
+          inputMode="decimal"
+          placeholder="Ej. 4,8"
+          disabled={!canEdit}
+          onChange={(event) => setValue(event.target.value)}
+        />
       </div>
-
-      <Label htmlFor={measurementInputId}>Medida (cm)</Label>
-      <Input
-        id={measurementInputId}
-        value={value}
-        inputMode="decimal"
-        placeholder="Ej. 4,8"
-        disabled={!canEdit}
-        onChange={(event) => setValue(event.target.value)}
-      />
-      <p className={outside ? 'mt-1 text-xs text-red-700' : 'mt-1 text-xs text-muted-foreground'}>
-        {hint}
-      </p>
-      <p className="mt-1 text-xs text-muted-foreground">
-        Rango API: {measurement.minimum_elongation ?? '—'} a {measurement.maximum_elongation ?? '—'} cm
-      </p>
-      {outside && (
-        <p className="mt-1 text-xs text-muted-foreground">
-          La precisión no cambia el valor: 3,7 y 3,700 son iguales. Agrega una observación si la
-          medición real está fuera del rango.
+      <div className="text-xs">
+        <p className={outside ? 'text-red-700' : 'text-muted-foreground'}>{hint}</p>
+        <p className="text-muted-foreground">
+          {measurement.minimum_elongation ?? '—'} a {measurement.maximum_elongation ?? '—'} cm
         </p>
-      )}
-
-      <Label className="mt-2 block" htmlFor={observationInputId}>
-        Observación{outside ? ' obligatoria para aprobar' : ' (si aplica)'}
-      </Label>
-      <Textarea
-        id={observationInputId}
-        className="min-h-14"
-        value={reason}
-        disabled={!canEdit}
-        onChange={(event) => setReason(event.target.value)}
-      />
-
-      <div className="mt-2 flex flex-wrap gap-2">
+        {outside && (
+          <p className="mt-1 text-muted-foreground">
+            Se registra automáticamente como excepción al aprobar.
+          </p>
+        )}
+      </div>
+      <Badge
+        variant={
+          measurement.review_status === 'approved'
+            ? 'success'
+            : measurement.review_status === 'conflict'
+              ? 'destructive'
+              : 'warning'
+        }
+      >
+        {reviewLabels[measurement.review_status]}
+      </Badge>
+      <div className="flex flex-wrap gap-2">
         {canEdit && (
           <Button
             size="sm"
             variant="outline"
-            disabled={!changedValue && !changedReason}
+            disabled={!changedValue}
             onClick={() => onPatch(patchFromDraft())}
           >
-            Guardar lectura
+            Guardar
           </Button>
         )}
         {canApprove && (
@@ -648,7 +728,7 @@ export function MeasurementCard({
             disabled={!canApproveDraft}
             onClick={() => onPatch(patchFromDraft('approved'))}
           >
-            <CheckCircle2 /> {outside ? 'Aprobar con observación' : 'Aprobar'}
+            <CheckCircle2 /> Aprobar
           </Button>
         )}
         {canApprove && (
