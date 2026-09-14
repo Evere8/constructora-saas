@@ -412,7 +412,7 @@ def test_template_mapping_accepts_shared_headers_above_section_titles() -> None:
     assert "encabezados compartidos" in " ".join(mapping.warnings)
 
 
-def test_dynamic_export_keeps_shared_header_sections_and_own_formulas() -> None:
+def test_dynamic_export_keeps_shared_headers_and_own_formulas() -> None:
     template = shared_header_template()
     mapping = analyse_template(template)
     groups = [
@@ -445,16 +445,17 @@ def test_dynamic_export_keeps_shared_header_sections_and_own_formulas() -> None:
     )
     worksheet = load_workbook(BytesIO(content), data_only=False)["N1 (Ajustado)"]
     assert worksheet.cell(5, 2).value == "T8"
-    assert worksheet.cell(6, 1).value == "DISTRIBUIDOS"
-    assert worksheet.cell(8, 2).value == "T203"
-    assert worksheet.cell(9, 2).value is None
-    for row in (5, 8, 9):
+    assert worksheet.cell(6, 2).value == "T203"
+    assert worksheet.cell(7, 2).value is None
+    assert worksheet["I5"].value == "Banda"
+    assert worksheet["I6"].value == "Distribuido"
+    for row in (5, 6, 7):
         assert worksheet.cell(row, 6).value == f"=E{row}+(E{row}*0.07)"
         assert worksheet.cell(row, 8).value == f"=E{row}-(E{row}*0.07)"
 
 
-def test_export_keeps_template_label_order_section_and_row_spacing() -> None:
-    """Existing template labels must not be moved by their OCR classification."""
+def test_export_keeps_template_row_spacing_without_overriding_reviewed_class() -> None:
+    """Numeric Labels stay together; source slots supply spacing, not class."""
 
     template = ordered_layout_template()
     mapping = analyse_template(template)
@@ -506,12 +507,13 @@ def test_export_keeps_template_label_order_section_and_row_spacing() -> None:
     )
     worksheet = load_workbook(BytesIO(content), data_only=False)["Operativa"]
 
-    # T200/T201/T202 stay together in the source BANDAS block, not at the end.
+    # All Labels are in one ascending report, even when classes are interleaved.
     assert worksheet["B5"].value == "T200"
     assert worksheet["B7"].value == "T201"
     assert worksheet["B9"].value == "T202"
-    assert worksheet["A11"].value == "DISTRIBUIDOS"
-    assert worksheet["B15"].value == "T204"
+    assert worksheet["B11"].value == "T204"
+    assert worksheet["I5"].value == "Distribuido"
+    assert worksheet["I11"].value == "Banda"
     # Source group rows and the deliberate blank separator preserve their heights.
     assert worksheet.row_dimensions[5].height == 24
     assert worksheet.row_dimensions[6].height == 31
@@ -519,7 +521,7 @@ def test_export_keeps_template_label_order_section_and_row_spacing() -> None:
     assert worksheet.row_dimensions[8].height == 34
     assert worksheet.row_dimensions[9].height == 22
     assert worksheet.row_dimensions[10].height == 30
-    for row in (5, 6, 7, 9, 10, 15):
+    for row in (5, 6, 7, 9, 10, 11):
         assert worksheet.cell(row, 6).value == f"=E{row}+(E{row}*0.07)"
         assert worksheet.cell(row, 8).value == f"=E{row}-(E{row}*0.07)"
 
@@ -602,11 +604,13 @@ def test_export_replaces_stale_project_header_without_overlapping_duplicate() ->
 
 
 def test_legacy_export_is_refreshed_once_after_a_rendering_fix() -> None:
-    legacy = SimpleNamespace(snapshot_json={"job_version": 3, "render_revision": 2})
-    current = SimpleNamespace(snapshot_json={"job_version": 3, "render_revision": 4})
+    legacy = SimpleNamespace(snapshot_json={"job_version": 3, "render_revision": 4})
+    current = SimpleNamespace(snapshot_json={"job_version": 3, "render_revision": 5})
+    final = SimpleNamespace(kind="final", snapshot_json={"render_revision": 4})
 
     assert _export_needs_render_refresh(legacy)
     assert not _export_needs_render_refresh(current)
+    assert not _export_needs_render_refresh(final)
 
 
 def test_delete_measurement_scan_clears_only_its_automatic_readings(

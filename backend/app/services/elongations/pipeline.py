@@ -39,7 +39,7 @@ DOCUMENT_APPROVER_ROLES = {"owner", "admin", "engineer"}
 THEORY_RECOVERY_STATUSES = {"queued_theory", "processing_theory"}
 # Bump only when the XLSX rendering contract changes.  Legacy exports are regenerated once while
 # retaining their source-data version and the prior file record for audit history.
-EXPORT_RENDER_REVISION = 4
+EXPORT_RENDER_REVISION = 5
 
 
 def utcnow() -> datetime:
@@ -68,6 +68,10 @@ def json_safe(value: Any) -> Any:
 def _export_needs_render_refresh(export: ElongationExport) -> bool:
     """Return whether a stored export predates the current XLSX rendering contract."""
 
+    if getattr(export, "kind", None) == "final":
+        # Signed final results remain immutable; layout fixes apply to new final
+        # exports and to downloadable working/theoretical versions only.
+        return False
     try:
         revision = int((export.snapshot_json or {}).get("render_revision", 1))
     except (TypeError, ValueError):

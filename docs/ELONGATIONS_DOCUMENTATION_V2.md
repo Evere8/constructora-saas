@@ -491,10 +491,12 @@ copiarse como fuente individual.
 1. Trabajar sobre una copia del XLSX original.
 2. Preservar logo, encabezado, metadatos generales, estilos y dimensiones pertinentes.
 3. Eliminar del cuerpo todos los valores del proyecto anterior.
-4. Reconstruir `BANDAS` y `DISTRIBUIDOS` con el número real de filas.
+4. Reconstruir una tabla continua en orden numérico de `Label` (T2, T10, T200, T202, ...),
+   independientemente del orden de carga, la clase o los labels de ejemplo de otra obra.
+   Mostrar la clasificación aprobada en la columna `Clase`, sin reclasificar los datos.
 5. Crear una fila lógica por cada tendón físico; si la plantilla representa una fila lógica con dos
-   filas físicas combinadas, clonar ese bloque de forma consistente.
-6. Reiniciar `Item` en 1 dentro de cada sección y numerar sin duplicados.
+   filas físicas combinadas, sumar sus alturas y conservar los bordes del bloque completo.
+6. Numerar `Item` de 1 a la suma de `S`, sin reinicios ni duplicados.
 7. Combinar `Label`, longitud y cantidad sobre exactamente las `S` filas del grupo.
 8. Repetir `Calculada` por cada fila de medición del grupo.
 9. Insertar una fórmula propia de la fila en Max y Min.
@@ -502,7 +504,12 @@ copiarse como fuente individual.
 11. Aplicar formato condicional: faltante en amarillo y fuera de tolerancia en rojo; no colorear una
     celda vacía como si fuera una medida inválida.
 12. Ocultar auxiliares o reemplazar su uso; la hoja operativa debe mostrar solo las columnas previstas.
-13. Fijar área de impresión en la tabla útil y solicitar recálculo completo al abrir.
+13. Fijar área de impresión en la tabla útil, repetir encabezados y ajustar a una página de ancho,
+    sin comprimir toda la tabla en una sola página de alto. Solicitar recálculo completo al abrir.
+
+La revisión de renderizado 5 renueva una vez los Excel teóricos guardados con el formato anterior,
+sin modificar las revisiones técnicas ni su versión de datos. Los resultados finales ya emitidos
+permanecen inmutables; el formato nuevo se aplica a los resultados finales que se generen después.
 
 Se conservan los formatos numéricos de la plantilla; como mínimo longitud muestra tres decimales,
 calculada/medida permiten la precisión capturada y los límites pueden mostrar tres decimales.
