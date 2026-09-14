@@ -515,10 +515,154 @@ function Reconciliation({ companyId, projectId, job, refresh }: { companyId: str
   return <div className="space-y-3"><Card><CardHeader><CardTitle>6. Conciliación por Label</CardTitle><CardDescription>Cada grupo tiene exactamente S ordinales. Faltantes, sobrantes y conflictos permanecen visibles hasta la corrección humana.</CardDescription></CardHeader><CardContent><ProgressLine job={job} /></CardContent></Card><ScanReadingReview companyId={companyId} projectId={projectId} job={job} refresh={refresh} />{job.items.map((item) => <Card key={item.id}><CardContent className="space-y-3 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-semibold">{item.label} · {item.measurements.filter((measurement) => measurement.measured_elongation !== null).length}/{item.strand_count} detectadas</p><p className="text-xs text-muted-foreground">Calculada {item.calculated_elongation} cm · {elongationLabels[item.classification]}</p></div><Badge variant="muted">S={item.strand_count}</Badge></div><div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">{item.measurements.map((measurement) => <MeasurementCard key={`${measurement.id}-${measurement.measured_elongation}-${measurement.review_status}`} item={item} measurement={measurement} canEdit={canEdit && !readingBusy(job)} canApprove={canApprove && !readingBusy(job)} onPatch={(patch) => applyPatch(measurement, patch)} />)}</div></CardContent></Card>)}</div>;
 }
 
-function MeasurementCard({ item, measurement, canEdit, canApprove, onPatch }: { item: ElongationItemV2; measurement: ElongationMeasurement; canEdit: boolean; canApprove: boolean; onPatch: (patch: ElongationMeasurementPatch) => void }) {
-  const hint = toleranceHint(measurement);
-  const outside = hint === 'Fuera de tolerancia';
-  return <div className="rounded-md border p-3"><div className="mb-2 flex items-center justify-between"><span className="font-medium">{item.label} · #{measurement.ordinal}</span><Badge variant={measurement.review_status === 'approved' ? 'success' : measurement.review_status === 'conflict' ? 'destructive' : 'warning'}>{reviewLabels[measurement.review_status]}</Badge></div><Label>Medida (cm)</Label><Input defaultValue={measurement.measured_elongation ?? ''} inputMode="decimal" placeholder="Ej. 4,8" disabled={!canEdit} onBlur={(event) => { const value = event.target.value.trim(); if (value !== (measurement.measured_elongation ?? '')) onPatch({ measured_elongation: value || null, match_method: 'manual' }); }} /><p className={outside ? 'mt-1 text-xs text-red-700' : 'mt-1 text-xs text-muted-foreground'}>{hint}</p><p className="mt-1 text-xs text-muted-foreground">Rango API: {measurement.minimum_elongation ?? '—'} a {measurement.maximum_elongation ?? '—'} cm</p><Label className="mt-2 block">Observación{outside ? ' obligatoria para aprobar' : ' (si aplica)'}</Label><Textarea className="min-h-14" defaultValue={measurement.override_reason ?? ''} disabled={!canEdit} onBlur={(event) => event.target.value !== (measurement.override_reason ?? '') && onPatch({ override_reason: event.target.value || null })} />{canApprove ? <div className="mt-2 flex gap-2"><Button size="sm" disabled={!measurement.measured_elongation} onClick={() => onPatch({ review_status: 'approved' })}><CheckCircle2 /> Aprobar</Button><Button size="sm" variant="outline" onClick={() => onPatch({ review_status: 'pending' })}>Pendiente</Button></div> : null}</div>;
+function editableDecimal(value: string | null): string {
+  const normalized = (value ?? '').trim().replace(',', '.');
+  const match = /^(\d+)(?:\.(\d+))?$/.exec(normalized);
+  if (!match) return normalized;
+  const fractional = (match[2] ?? '').replace(/0+$/, '');
+  return fractional ? `${match[1]}.${fractional}` : match[1];
+}
+
+function decimalNumber(value: string): number | null {
+  const normalized = value.trim().replace(',', '.');
+  if (!/^\d+(?:\.\d+)?$/.test(normalized)) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function MeasurementCard({
+  item,
+  measurement,
+  canEdit,
+  canApprove,
+  onPatch,
+}: {
+  item: ElongationItemV2;
+  measurement: ElongationMeasurement;
+  canEdit: boolean;
+  canApprove: boolean;
+  onPatch: (patch: ElongationMeasurementPatch) => void;
+}) {
+  const [value, setValue] = useState(() => editableDecimal(measurement.measured_elongation));
+  const [reason, setReason] = useState(measurement.override_reason ?? '');
+
+  useEffect(() => {
+    setValue(editableDecimal(measurement.measured_elongation));
+    setReason(measurement.override_reason ?? '');
+  }, [measurement.id, measurement.measured_elongation, measurement.override_reason]);
+
+  const minimum = decimalNumber(measurement.minimum_elongation ?? '');
+  const maximum = decimalNumber(measurement.maximum_elongation ?? '');
+  const numericValue = decimalNumber(value);
+  const hasDraftRange = numericValue !== null && minimum !== null && maximum !== null;
+  const draftOutside = hasDraftRange && (numericValue < minimum || numericValue > maximum);
+  const outside = hasDraftRange ? draftOutside : measurement.tolerance_status === 'outside';
+  const currentValue = editableDecimal(measurement.measured_elongation);
+  const changedValue = value.trim() !== currentValue;
+  const changedReason = reason !== (measurement.override_reason ?? '');
+  const measurementInputId = `measurement-${measurement.id}`;
+  const observationInputId = `measurement-observation-${measurement.id}`;
+
+  const patchFromDraft = (
+    reviewStatus?: ElongationMeasurementPatch['review_status'],
+  ): ElongationMeasurementPatch => {
+    const patch: ElongationMeasurementPatch = {};
+    const draftValue = value.trim();
+    if (changedValue) {
+      patch.measured_elongation = draftValue || null;
+      patch.match_method = 'manual';
+    }
+    if (changedReason || (outside && reason.trim())) {
+      patch.override_reason = reason.trim() || null;
+    }
+    if (reviewStatus) patch.review_status = reviewStatus;
+    return patch;
+  };
+
+  const canApproveDraft = numericValue !== null && (!outside || reason.trim().length > 0);
+  const hint = outside ? 'Fuera de tolerancia' : toleranceHint(measurement);
+  return (
+    <div className="rounded-md border p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="font-medium">{item.label} · #{measurement.ordinal}</span>
+        <Badge
+          variant={
+            measurement.review_status === 'approved'
+              ? 'success'
+              : measurement.review_status === 'conflict'
+                ? 'destructive'
+                : 'warning'
+          }
+        >
+          {reviewLabels[measurement.review_status]}
+        </Badge>
+      </div>
+
+      <Label htmlFor={measurementInputId}>Medida (cm)</Label>
+      <Input
+        id={measurementInputId}
+        value={value}
+        inputMode="decimal"
+        placeholder="Ej. 4,8"
+        disabled={!canEdit}
+        onChange={(event) => setValue(event.target.value)}
+      />
+      <p className={outside ? 'mt-1 text-xs text-red-700' : 'mt-1 text-xs text-muted-foreground'}>
+        {hint}
+      </p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Rango API: {measurement.minimum_elongation ?? '—'} a {measurement.maximum_elongation ?? '—'} cm
+      </p>
+      {outside && (
+        <p className="mt-1 text-xs text-muted-foreground">
+          La precisión no cambia el valor: 3,7 y 3,700 son iguales. Agrega una observación si la
+          medición real está fuera del rango.
+        </p>
+      )}
+
+      <Label className="mt-2 block" htmlFor={observationInputId}>
+        Observación{outside ? ' obligatoria para aprobar' : ' (si aplica)'}
+      </Label>
+      <Textarea
+        id={observationInputId}
+        className="min-h-14"
+        value={reason}
+        disabled={!canEdit}
+        onChange={(event) => setReason(event.target.value)}
+      />
+
+      <div className="mt-2 flex flex-wrap gap-2">
+        {canEdit && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!changedValue && !changedReason}
+            onClick={() => onPatch(patchFromDraft())}
+          >
+            Guardar lectura
+          </Button>
+        )}
+        {canApprove && (
+          <Button
+            size="sm"
+            disabled={!canApproveDraft}
+            onClick={() => onPatch(patchFromDraft('approved'))}
+          >
+            <CheckCircle2 /> {outside ? 'Aprobar con observación' : 'Aprobar'}
+          </Button>
+        )}
+        {canApprove && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onPatch(patchFromDraft('pending'))}
+          >
+            Pendiente
+          </Button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function Blockers({ blockers }: { blockers: string[] }) {

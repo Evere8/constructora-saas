@@ -71,6 +71,17 @@ class TemplateGroupSlot:
     spacer_prototypes: tuple[dict[str, Any], ...] = ()
 
 
+
+@dataclass(frozen=True)
+class TemplateHeaderSnapshot:
+    """A title/spacer/header block restored after the preceding section grows."""
+
+    row_count: int
+    cells: tuple[tuple[int, int, Any, Any], ...]
+    row_dimensions: tuple[tuple[int, float | None, bool, int, bool], ...]
+    merged_ranges: tuple[tuple[int, int, int, int], ...]
+
+
 def _normalise(value: object) -> str:
     text = unicodedata.normalize("NFKD", str(value or ""))
     text = "".join(char for char in text if not unicodedata.combining(char))
@@ -375,11 +386,7 @@ def _prototype(ws: Any, row: int, columns: dict[str, int]) -> dict[str, Any]:
 
 
 def _physical_row_prototype(ws: Any, row: int, columns: dict[str, int]) -> dict[str, Any]:
-    """Collapse a physical slot, not half of its merged Excel rows.
-
-    The field template uses two 11.4/12 pt rows per measurement. Copying just
-    the formula anchor halved its height and discarded its lower border.
-    """
+    """Collapse a physical slot without losing its formula helpers or lower border."""
 
     prototype = _prototype(ws, row, columns)
     end = _merged_end_row(ws, row, (columns["item"],))
@@ -397,13 +404,18 @@ def _physical_row_prototype(ws: Any, row: int, columns: dict[str, int]) -> dict[
             bottom = ws.cell(end, col).border.bottom
             if bottom.style is not None:
                 border.bottom = copy(bottom)
-            # Assign on a detached cell so the uploaded worksheet is untouched.
             detached = Cell(ws, row=row, column=col)
             detached._style = style
             detached.border = border
             style = copy(detached._style)
         prototype["cells"][col] = style
     prototype["source_end_row"] = end
+    prototype["formula_origin_row"] = row
+    prototype["formulas"] = {
+        col: cell.value
+        for col in range(1, ws.max_column + 1)
+        if isinstance((cell := ws.cell(row, col)).value, str) and cell.value.startswith("=")
+    }
     return prototype
 
 
@@ -507,22 +519,26 @@ def _template_group_slots(
     return slots
 
 
-def _ordered_groups_for_template(
+def _groups_for_template_sections(
     groups: list[dict[str, Any]],
     slots_by_section: dict[str, list[TemplateGroupSlot]],
-) -> list[tuple[dict[str, Any], TemplateGroupSlot | None]]:
-    """Sort the entire report by numeric Label, never by class or example data.
+) -> dict[str, list[tuple[dict[str, Any], TemplateGroupSlot | None]]]:
+    """Keep the two operational blocks separate and order Labels inside each one."""
 
-    The uploaded example can describe another work (T300+ versus T200+).
-    Its cells supply presentation only; classification remains the reviewed
-    value and is displayed explicitly, not inferred from an example section.
-    """
-
-    slots = {slot.label_key: slot for section in slots_by_section.values() for slot in section}
-    return [
-        (group, slots.get(_label_key(group["label"])))
-        for group in sorted(groups, key=_group_sort_key)
-    ]
+    result: dict[str, list[tuple[dict[str, Any], TemplateGroupSlot | None]]] = {
+        "band": [],
+        "distributed": [],
+    }
+    for section_name in ("band", "distributed"):
+        slots = {slot.label_key: slot for slot in slots_by_section[section_name]}
+        section_groups = [
+            group for group in groups if group["classification"] == section_name
+        ]
+        result[section_name] = [
+            (group, slots.get(_label_key(group["label"])))
+            for group in sorted(section_groups, key=_group_sort_key)
+        ]
+    return result
 
 
 def _group_sort_key(group: dict[str, Any]) -> tuple[int, str]:
@@ -581,7 +597,6 @@ def _write_section(
     prototypes: dict[str, dict[str, Any]],
     *,
     final: bool,
-    class_column: int,
 ) -> int:
     columns = mapping.columns
     row_number = start_row
@@ -594,6 +609,14 @@ def _write_section(
         for ordinal in range(1, physical_count + 1):
             row_prototype = _prototype_for_group_row(slot, ordinal, physical_count, prototype)
             _apply_prototype(ws, row_number, row_prototype)
+            for column, formula in row_prototype.get("formulas", {}).items():
+                if column in columns.values():
+                    continue
+                ws.cell(row_number, column).value = _translate_template_formula(
+                    formula,
+                    int(row_prototype.get("formula_origin_row", row_number)),
+                    row_number,
+                )
             measurement = measurements.get(ordinal)
             ws.cell(row_number, columns["item"]).value = item_number
             ws.cell(row_number, columns["calculated"]).value = group["calculated_elongation"]
@@ -614,37 +637,139 @@ def _write_section(
             )
             for key, column in row_prototype["number_formats"].items():
                 ws.cell(row_number, columns[key]).number_format = column
-            ws.cell(row_number, class_column)._style = copy(
-                ws.cell(row_number, columns["label"])._style
-            )
-            for col in (*columns.values(), class_column):
-                cell = ws.cell(row_number, col)
-                cell.alignment = Alignment(horizontal="center", vertical="center")
+            for column in columns.values():
+                ws.cell(row_number, column).alignment = Alignment(
+                    horizontal="center", vertical="center"
+                )
             row_number += 1
             item_number += 1
 
         ws.cell(group_start_row, columns["label"]).value = group["label"]
         ws.cell(group_start_row, columns["length_m"]).value = group["length_m"]
         ws.cell(group_start_row, columns["strand_count"]).value = physical_count
-        ws.cell(group_start_row, class_column).value = (
-            "Banda" if group["classification"] == "band" else "Distribuido"
-        )
         if physical_count > 1:
             end_row = group_start_row + physical_count - 1
-            grouped_columns = (
-                columns["label"],
-                columns["length_m"],
-                columns["strand_count"],
-                class_column,
-            )
-            for col in grouped_columns:
-                column = get_column_letter(col)
+            for key in ("label", "length_m", "strand_count"):
+                column = get_column_letter(columns[key])
                 ws.merge_cells(f"{column}{group_start_row}:{column}{end_row}")
         if slot is not None:
             for spacer_prototype in slot.spacer_prototypes:
                 _apply_prototype(ws, row_number, spacer_prototype)
                 row_number += 1
     return row_number
+
+
+
+def _translate_template_formula(formula: str, origin_row: int, target_row: int) -> str:
+    """Translate a helper formula (for example the template's hidden controls)."""
+
+    return Translator(formula, origin=f"A{origin_row}").translate_formula(f"A{target_row}")
+
+
+def _snapshot_section_header(ws: Any, section: TemplateSection) -> TemplateHeaderSnapshot:
+    """Capture the original DISTRIBUIDOS block before the body is rebuilt."""
+
+    start_row = section.section_row
+    end_row = section.body_start_row - 1
+    cells = tuple(
+        (
+            row - start_row,
+            column,
+            copy(ws.cell(row, column).value),
+            copy(ws.cell(row, column)._style),
+        )
+        for row in range(start_row, end_row + 1)
+        for column in range(1, ws.max_column + 1)
+    )
+    row_dimensions = tuple(
+        (
+            row - start_row,
+            ws.row_dimensions[row].height,
+            ws.row_dimensions[row].hidden,
+            ws.row_dimensions[row].outlineLevel,
+            ws.row_dimensions[row].collapsed,
+        )
+        for row in range(start_row, end_row + 1)
+    )
+    merged_ranges = tuple(
+        (
+            merged.min_row - start_row,
+            merged.max_row - start_row,
+            merged.min_col,
+            merged.max_col,
+        )
+        for merged in ws.merged_cells.ranges
+        if start_row <= merged.min_row and merged.max_row <= end_row
+    )
+    return TemplateHeaderSnapshot(
+        row_count=end_row - start_row + 1,
+        cells=cells,
+        row_dimensions=row_dimensions,
+        merged_ranges=merged_ranges,
+    )
+
+
+def _restore_section_header(
+    ws: Any,
+    snapshot: TemplateHeaderSnapshot,
+    start_row: int,
+) -> int:
+    """Restore a previously captured section at its new dynamic row."""
+
+    for row_offset, column, value, style in snapshot.cells:
+        cell = ws.cell(start_row + row_offset, column)
+        cell._style = copy(style)
+        cell.value = copy(value)
+    for row_offset, height, hidden, outline_level, collapsed in snapshot.row_dimensions:
+        dimension = ws.row_dimensions[start_row + row_offset]
+        dimension.height = height
+        dimension.hidden = hidden
+        dimension.outlineLevel = outline_level
+        dimension.collapsed = collapsed
+    for min_row, max_row, min_col, max_col in snapshot.merged_ranges:
+        ws.merge_cells(
+            start_row=start_row + min_row,
+            end_row=start_row + max_row,
+            start_column=min_col,
+            end_column=max_col,
+        )
+    return start_row + snapshot.row_count
+
+
+def _add_measurement_conditional_formatting(
+    ws: Any,
+    mapping: TemplateMapping,
+    first_data_row: int,
+    last_data_row: int,
+) -> None:
+    if last_data_row < first_data_row:
+        return
+    measured_column = get_column_letter(mapping.columns["measured"])
+    maximum_column = get_column_letter(mapping.columns["maximum"])
+    minimum_column = get_column_letter(mapping.columns["minimum"])
+    calculated_column = get_column_letter(mapping.columns["calculated"])
+    measured_range = f"{measured_column}{first_data_row}:{measured_column}{last_data_row}"
+    ws.conditional_formatting.add(
+        measured_range,
+        FormulaRule(
+            formula=[
+                f'AND({measured_column}{first_data_row}="",'
+                f'{calculated_column}{first_data_row}<>"")'
+            ],
+            fill=PatternFill("solid", fgColor="FEF3C7"),
+        ),
+    )
+    ws.conditional_formatting.add(
+        measured_range,
+        FormulaRule(
+            formula=[
+                f'AND({measured_column}{first_data_row}<>"",'
+                f"OR({measured_column}{first_data_row}<{minimum_column}{first_data_row},"
+                f"{measured_column}{first_data_row}>{maximum_column}{first_data_row}))"
+            ],
+            fill=PatternFill("solid", fgColor="FECACA"),
+        ),
+    )
 
 
 def _assert_export_groups(groups: list[dict[str, Any]], final: bool) -> None:
@@ -820,95 +945,78 @@ def build_export_xlsx(
     history: dict[str, Any],
     project_name: str | None = None,
 ) -> bytes:
-    """Rebuild the operational body while keeping a template's header and presentation.
-
-    Every physical tendon receives its own row.  Max./Min. stay as translated Excel formulas in
-    every row and are validated again before returning the immutable export bytes.
-    """
+    """Rebuild both operational sections while retaining the supplied template layout."""
 
     _assert_export_groups(groups, final)
     validate_template_bytes(template_content)
     workbook = load_workbook(BytesIO(template_content), data_only=False, keep_vba=False)
     ws = workbook[mapping.sheet_name]
     band_section = mapping.sections["band"]
+    distributed_section = mapping.sections["distributed"]
     _write_project_header(ws, project_name, before_row=band_section.section_row)
+    distributed_header = _snapshot_section_header(ws, distributed_section)
     slots_by_section = {
         "band": _template_group_slots(ws, mapping, "band"),
         "distributed": _template_group_slots(ws, mapping, "distributed"),
     }
-    ordered_groups = _ordered_groups_for_template(groups, slots_by_section)
+    groups_by_section = _groups_for_template_sections(groups, slots_by_section)
     prototypes = {
         name: _physical_row_prototype(ws, section.formula_seed_row, mapping.columns)
         for name, section in mapping.sections.items()
     }
-    # There is one continuous report. The class is a field, never a sort bucket
-    # that sends lower Labels to the end or relabels reviewed data as BANDAS.
-    class_column = max(mapping.columns.values()) + 1
-    _prepare_ordered_header(ws, mapping, class_column)
+
+    # Everything below BANDAS is rebuilt so no old item, formula or merge remains.
     _unmerge_body_ranges(ws, band_section.body_start_row)
     ws.delete_rows(band_section.body_start_row, ws.max_row - band_section.body_start_row + 1)
     for row in list(ws.row_dimensions):
         if row >= band_section.body_start_row:
             del ws.row_dimensions[row]
-    after_data_row = _write_section(
+
+    band_first_data_row = band_section.body_start_row
+    after_bands = _write_section(
         ws,
         mapping,
-        band_section.body_start_row,
-        ordered_groups,
+        band_first_data_row,
+        groups_by_section["band"],
         prototypes,
         final=final,
-        class_column=class_column,
+    )
+    distributed_body_start = _restore_section_header(ws, distributed_header, after_bands)
+    after_distributed = _write_section(
+        ws,
+        mapping,
+        distributed_body_start,
+        groups_by_section["distributed"],
+        prototypes,
+        final=final,
     )
 
-    # The operational columns are discovered from the uploaded template. Never hide
-    # fixed spreadsheet letters: on CTA's template E/F/G are Calculada, Max. and
-    # Elong. Medida, so hiding them makes a correct export look unchanged. Preserve
-    # the visibility configured by the uploaded template instead.
-    measured_column = get_column_letter(mapping.columns["measured"])
-    maximum_column = get_column_letter(mapping.columns["maximum"])
-    minimum_column = get_column_letter(mapping.columns["minimum"])
-    first_data_row = band_section.body_start_row
-    last_data_row = max(first_data_row, after_data_row - 1)
-    measured_range = f"{measured_column}{first_data_row}:{measured_column}{last_data_row}"
-    # Old template rules reference example values/rows and cannot survive a new
-    # body length. Retain header rules and rebuild only the operational rules.
+    # Old body rules reference example rows. Keep only rules above the rebuilt body.
     header_rules = ConditionalFormattingList()
     for conditional, rules in ws.conditional_formatting._cf_rules.items():
-        if all(area.max_row < first_data_row for area in conditional.sqref.ranges):
+        if all(area.max_row < band_first_data_row for area in conditional.sqref.ranges):
             for rule in rules:
                 header_rules.add(copy(conditional), copy(rule))
     ws.conditional_formatting = header_rules
-    ws.conditional_formatting.add(
-        measured_range,
-        FormulaRule(
-            formula=[
-                f'AND({measured_column}{first_data_row}="",'
-                f'{get_column_letter(mapping.columns["calculated"])}{first_data_row}<>"")'
-            ],
-            fill=PatternFill("solid", fgColor="FEF3C7"),
-        ),
+    _add_measurement_conditional_formatting(
+        ws, mapping, band_first_data_row, after_bands - 1
     )
-    ws.conditional_formatting.add(
-        measured_range,
-        FormulaRule(
-            formula=[
-                f'AND({measured_column}{first_data_row}<>"",'
-                f"OR({measured_column}{first_data_row}<{minimum_column}{first_data_row},"
-                f"{measured_column}{first_data_row}>{maximum_column}{first_data_row}))"
-            ],
-            fill=PatternFill("solid", fgColor="FECACA"),
-        ),
+    _add_measurement_conditional_formatting(
+        ws, mapping, distributed_body_start, after_distributed - 1
     )
-    ws.print_area = f"A1:{get_column_letter(class_column)}{last_data_row}"
+
+    last_column = max(mapping.columns.values())
+    last_data_row = max(band_first_data_row, after_distributed - 1)
+    ws.print_area = f"A1:{get_column_letter(last_column)}{last_data_row}"
     ws.print_title_rows = f"{band_section.header_row}:{band_section.header_row + 1}"
-    ws.freeze_panes = f"A{first_data_row}"
+    ws.freeze_panes = f"A{band_first_data_row}"
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
     ws.page_setup.scale = None
     ws.page_setup.orientation = ws.page_setup.orientation or "landscape"
     ws.page_setup.paperSize = ws.page_setup.paperSize or ws.PAPERSIZE_A4
-    _set_group_print_breaks(ws, mapping, class_column, last_data_row)
+    _set_group_print_breaks(ws, mapping, last_column, last_data_row)
     workbook.calculation.fullCalcOnLoad = True
     workbook.calculation.forceFullCalc = True
     workbook.calculation.calcMode = "auto"
@@ -917,7 +1025,7 @@ def build_export_xlsx(
     output = BytesIO()
     workbook.save(output)
     result = output.getvalue()
-    _validate_generated_export(result, mapping, first_data_row, last_data_row)
+    _validate_generated_export(result, mapping, band_first_data_row, last_data_row)
     return result
 
 
@@ -964,7 +1072,8 @@ def _set_group_print_breaks(
     ws.row_breaks = RowBreak()
     next_row = section.body_start_row
     for row in range(section.body_start_row, last_row + 1):
-        if not ws.cell(row, mapping.columns["label"]).value:
+        label = _label_key(ws.cell(row, mapping.columns["label"]).value)
+        if not re.fullmatch(r"T\d+", label):
             continue
         count = _positive_integer(ws.cell(row, mapping.columns["strand_count"]).value) or 1
         used += rows_height(next_row, row - 1)
@@ -975,39 +1084,6 @@ def _set_group_print_breaks(
         used += group_height
         next_row = row + count
 
-
-def _prepare_ordered_header(ws: Any, mapping: TemplateMapping, class_column: int) -> None:
-    """Retain the template headings and add the reviewed class alongside them."""
-
-    section = mapping.sections["band"]
-    title = next(cell for cell in ws[section.section_row] if _normalise(cell.value) == "BANDAS")
-    title.value = "TENDONES POR LABEL"
-    for merged in list(ws.merged_cells.ranges):
-        if merged.min_row == title.row and merged.min_col == title.column:
-            end_row = merged.max_row
-            ws.unmerge_cells(str(merged))
-            ws.merge_cells(
-                start_row=title.row,
-                end_row=end_row,
-                start_column=title.column,
-                end_column=class_column,
-            )
-            break
-    header_row = section.header_row
-    for row in (header_row, header_row + 1):
-        cell = ws.cell(row, class_column)
-        cell._style = copy(ws.cell(row, mapping.columns["label"])._style)
-        cell.value = None
-    ws.cell(header_row, class_column).value = "Clase"
-    ws.cell(header_row, class_column).alignment = Alignment(horizontal="center", vertical="center")
-    ws.merge_cells(
-        start_row=header_row,
-        end_row=header_row + 1,
-        start_column=class_column,
-        end_column=class_column,
-    )
-    ws.column_dimensions[get_column_letter(class_column)].width = 16
-    ws.column_dimensions[get_column_letter(class_column)].hidden = False
 
 
 def _validate_generated_export(

@@ -8,22 +8,46 @@ import type { ElongationJobV2 } from '@/types/api';
 vi.mock('@/auth/useCan', () => ({ useCan: () => true }));
 vi.mock('@/lib/api/elongations', () => ({
   readingBusy: (job: ElongationJobV2) => job.workflow_status === 'processing_theory',
-  elongationsApi: { ocrStatus: vi.fn(), createItem: vi.fn(), reviewTheories: vi.fn(), rereadTheory: vi.fn() },
+  elongationsApi: {
+    ocrStatus: vi.fn(),
+    classify: vi.fn(),
+    createItem: vi.fn(),
+    reviewTheories: vi.fn(),
+    rereadTheory: vi.fn(),
+  },
 }));
 
 const refresh = vi.fn();
-function show(conflict = false) {
-  const job = { id: 'job', workflow_status: 'theory_review', version_number: 3,
-    items: [{ id: 'item', label: 'T8', classification: 'distributed', theory_review_status: conflict ? 'conflict' : 'pending' }],
+function show(conflict = false, unknown = false) {
+  const job = {
+    id: 'job',
+    workflow_status: 'theory_review',
+    version_number: 3,
+    items: [
+      {
+        id: 'item',
+        label: 'T8',
+        classification: unknown ? 'unknown' : 'distributed',
+        theory_review_status: conflict ? 'conflict' : 'pending',
+      },
+    ],
   } as ElongationJobV2;
-  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-    <TheoryActions companyId="company" projectId="project" job={job} refresh={refresh} />
-  </QueryClientProvider>);
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <TheoryActions companyId="company" projectId="project" job={job} refresh={refresh} />
+    </QueryClientProvider>,
+  );
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(elongationsApi.ocrStatus).mockResolvedValue({ visual_enabled: false, handwriting_enabled: false, provider: 'local', model: null });
+  vi.mocked(elongationsApi.ocrStatus).mockResolvedValue({
+    visual_enabled: false,
+    handwriting_enabled: false,
+    provider: 'local',
+    model: null,
+  });
+  vi.mocked(elongationsApi.classify).mockResolvedValue({ version_number: 4 } as ElongationJobV2);
   vi.mocked(elongationsApi.createItem).mockResolvedValue({} as ElongationJobV2);
   vi.mocked(elongationsApi.reviewTheories).mockResolvedValue({} as ElongationJobV2);
   vi.spyOn(window, 'confirm').mockReturnValue(true);
@@ -37,19 +61,65 @@ it('permite cargar la teoría faltante con todos los campos y coma decimal', asy
   fireEvent.change(screen.getByLabelText('Elongación calculada (cm)'), { target: { value: '5,0' } });
   fireEvent.change(screen.getByLabelText('S / cantidad de tendones'), { target: { value: '2' } });
   fireEvent.click(screen.getByRole('button', { name: 'Agregar y crear sus mediciones' }));
-  await waitFor(() => expect(elongationsApi.createItem).toHaveBeenCalledWith('company', 'project', 'job',
-    expect.objectContaining({ label: 'T9', length_m: '8,250', strand_count: 2, calculated_elongation: '5,0' })));
+  await waitFor(() =>
+    expect(elongationsApi.createItem).toHaveBeenCalledWith(
+      'company',
+      'project',
+      'job',
+      expect.objectContaining({
+        label: 'T9',
+        length_m: '8,250',
+        strand_count: 2,
+        calculated_elongation: '5,0',
+      }),
+    ),
+  );
   await waitFor(() => expect(refresh).toHaveBeenCalled());
 });
 
-it('revisa todos en una operación y exige resolver conflictos individualmente', async () => {
+it('revisa todos en una operación cuando no hay conflictos', async () => {
   show();
   fireEvent.click(screen.getByRole('button', { name: 'Revisar todas las teorías (1)' }));
-  await waitFor(() => expect(elongationsApi.reviewTheories).toHaveBeenCalledWith('company', 'project', 'job', ['item'], 3));
+  await waitFor(() =>
+    expect(elongationsApi.reviewTheories).toHaveBeenCalledWith(
+      'company',
+      'project',
+      'job',
+      ['item'],
+      3,
+    ),
+  );
+});
+
+it('clasifica y revisa en bloque las teorías sin clase', async () => {
+  show(false, true);
+  fireEvent.click(screen.getByRole('button', { name: 'Revisar todas las teorías (1)' }));
+  fireEvent.change(screen.getByLabelText('Clase para teorías sin clasificar'), {
+    target: { value: 'distributed' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Clasificar y revisar todas' }));
+  await waitFor(() =>
+    expect(elongationsApi.classify).toHaveBeenCalledWith(
+      'company',
+      'project',
+      'job',
+      ['item'],
+      'distributed',
+    ),
+  );
+  await waitFor(() =>
+    expect(elongationsApi.reviewTheories).toHaveBeenCalledWith(
+      'company',
+      'project',
+      'job',
+      ['item'],
+      4,
+    ),
+  );
 });
 
 it('no permite aprobar en bloque una lectura contradictoria', () => {
   show(true);
-  expect(screen.getByRole('button', { name: 'Revisar todas las teorías (1)' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Revisar todas las teorías (0)' })).toBeDisabled();
   expect(screen.getByText(/Antes de revisar todas.*T8/)).toBeInTheDocument();
 });

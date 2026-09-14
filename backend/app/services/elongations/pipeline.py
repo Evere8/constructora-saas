@@ -39,7 +39,7 @@ DOCUMENT_APPROVER_ROLES = {"owner", "admin", "engineer"}
 THEORY_RECOVERY_STATUSES = {"queued_theory", "processing_theory"}
 # Bump only when the XLSX rendering contract changes.  Legacy exports are regenerated once while
 # retaining their source-data version and the prior file record for audit history.
-EXPORT_RENDER_REVISION = 5
+EXPORT_RENDER_REVISION = 6
 
 
 def utcnow() -> datetime:
