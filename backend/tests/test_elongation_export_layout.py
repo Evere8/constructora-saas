@@ -81,11 +81,12 @@ def field_template() -> bytes:
 
 
 @pytest.mark.parametrize("final", [False, True])
-def test_export_orders_all_labels_and_preserves_complete_physical_row_height(final: bool) -> None:
+@pytest.mark.parametrize("final", [False, True])
+def test_export_keeps_bands_and_distributed_separate_with_complete_physical_rows(
+    final: bool,
+) -> None:
     template = field_template()
     mapping = analyse_template(template)
-    # No label matches the example. Classes, arrival order and stale numeric
-    # metadata must not partition/reorder the report or change approved data.
     groups = []
     for label, count, classification in (
         (203, 1, "band"),
@@ -107,7 +108,8 @@ def test_export_orders_all_labels_and_preserves_complete_physical_row_height(fin
                 "measurements": [
                     {
                         "ordinal": ordinal,
-                        "measured_elongation": Decimal("5.000") + Decimal(label + ordinal) / 1000,
+                        "measured_elongation": Decimal("5.000")
+                        + Decimal(label + ordinal) / 1000,
                         "review_status": "approved",
                         "tolerance_status": "within",
                     }
@@ -126,36 +128,35 @@ def test_export_orders_all_labels_and_preserves_complete_physical_row_height(fin
     workbook = load_workbook(BytesIO(result))
     sheet = workbook["Operativa"]
     label_rows = [
-        (row, sheet.cell(row, 2).value)
+        (row, str(sheet.cell(row, 2).value))
         for row in range(7, sheet.max_row + 1)
-        if sheet.cell(row, 2).value is not None
+        if str(sheet.cell(row, 2).value or "").startswith("T")
     ]
     assert [label for _, label in label_rows] == [
-        "T2",
         "T10",
-        "T200",
-        "T202",
         "T203",
         "T210",
         "T229",
+        "T2",
+        "T200",
+        "T202",
     ]
     assert groups == before
-    assert (
-        sum(isinstance(sheet.cell(row, 1).value, int) for row in range(7, sheet.max_row + 1)) == 11
-    )
-    assert [sheet.cell(row, 1).value for row in range(7, 18)] == list(range(1, 12))
+
+    band_data_rows = list(range(7, 14))
+    distributed_data_rows = list(range(18, 22))
+    assert [sheet.cell(row, 1).value for row in band_data_rows] == list(range(1, 8))
+    assert [sheet.cell(row, 1).value for row in distributed_data_rows] == list(range(1, 5))
+
     for row, label in label_rows:
         group = next(group for group in groups if group["label"] == label)
         count = group["strand_count"]
-        assert sheet.cell(row, 12).value == (
-            "Banda" if group["classification"] == "band" else "Distribuido"
-        )
         assert Decimal(str(sheet.cell(row, 3).value)) == group["length_m"]
         assert sheet.cell(row, 4).value == count
         if count > 1:
-            for col in ("B", "C", "D", "L"):
-                assert f"{col}{row}:{col}{row + count - 1}" in sheet.merged_cells
-                assert sheet[f"{col}{row + count - 1}"].border.bottom.style == "thin"
+            for column in ("B", "C", "D"):
+                assert f"{column}{row}:{column}{row + count - 1}" in sheet.merged_cells
+                assert sheet[f"{column}{row + count - 1}"].border.bottom.style == "thin"
         for ordinal in range(1, count + 1):
             physical_row = row + ordinal - 1
             assert Decimal(str(sheet.cell(physical_row, 8).value)) == group["calculated_elongation"]
@@ -167,23 +168,26 @@ def test_export_orders_all_labels_and_preserves_complete_physical_row_height(fin
                 )
             else:
                 assert measurement is None
-    for row in range(7, 18):
+
+    for row in [*band_data_rows, *distributed_data_rows]:
         assert sheet.row_dimensions[row].height == pytest.approx(23.4)
         assert sheet.cell(row, 9).value == f"=H{row}+(H{row}*0.07)"
         assert sheet.cell(row, 11).value == f"=H{row}-(H{row}*0.07)"
         assert sheet.cell(row, 9).border.bottom.style == "thin"
-    assert "A3:L4" in sheet.merged_cells
+
+    assert "A3:K4" in sheet.merged_cells
+    assert "A14:K15" in sheet.merged_cells
     assert "H5:K5" in sheet.merged_cells
-    assert "L5:L6" in sheet.merged_cells
-    assert sheet["A3"].value == "TENDONES POR LABEL"
-    assert sheet["L5"].value == "Clase"
+    assert "H16:K16" in sheet.merged_cells
+    assert sheet["A3"].value == "BANDAS"
+    assert sheet["A14"].value == "DISTRIBUIDOS"
     assert sheet.column_dimensions["B"].width == 15
     assert sheet.column_dimensions["E"].hidden
-    assert sheet.print_area == "'Operativa'!$A$1:$L$17"
+    assert sheet.print_area == "'Operativa'!$A$1:$K$21"
     assert sheet.print_title_rows == "$5:$6"
     assert sheet.page_setup.fitToWidth == 1
     assert sheet.page_setup.fitToHeight == 0
-    assert len(sheet.conditional_formatting) == 1
+    assert len(sheet.conditional_formatting) == 2
     assert workbook["Notas"]["A1"].value == "Conservar esta hoja"
 
 
