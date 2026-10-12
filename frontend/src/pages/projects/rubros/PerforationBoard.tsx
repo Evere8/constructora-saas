@@ -1,8 +1,10 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -198,6 +200,7 @@ function PointInspector({
   colors,
   canEdit,
   editMode,
+  anchorStyle,
   onClose,
   onDelete,
   onToggleEdit,
@@ -209,6 +212,7 @@ function PointInspector({
   colors: PerforationColor[];
   canEdit: boolean;
   editMode: boolean;
+  anchorStyle: CSSProperties;
   onClose: () => void;
   onDelete: () => void;
   onToggleEdit: () => void;
@@ -273,7 +277,7 @@ function PointInspector({
   };
 
   return (
-    <section className="absolute right-3 top-3 z-30 max-h-[calc(100%-1.5rem)] w-[min(22rem,calc(100%-1.5rem))] overflow-y-auto rounded-2xl border border-border bg-card p-3 shadow-2xl" onPointerDown={(event) => event.stopPropagation()}>
+    <section style={anchorStyle} className="absolute z-30 max-h-[calc(100%-1rem)] w-[min(22rem,calc(100%-1rem))] overflow-y-auto rounded-2xl border border-border bg-card p-3 shadow-2xl" onPointerDown={(event) => event.stopPropagation()}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0"><p className="flex items-center gap-2 text-sm font-bold"><span className="h-3 w-3 rounded-full" style={{ backgroundColor: pointColor(point) }} /> Punto {complete ? 'completado' : 'en proceso'}</p><p className="text-xs text-muted-foreground">{complete ? 'Checklist completo: ahora se muestra azul.' : 'Completa los pasos para marcarlo como terminado.'}</p></div>
         <button type="button" aria-label="Cerrar detalle del punto" className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground" onClick={onClose}><X className="h-5 w-5" /></button>
@@ -348,6 +352,35 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
   const selectedDocument = documents.find((document) => document.id === selectedDocumentId) ?? documents[0] ?? null;
   const selectedPoint = (data?.points ?? []).find((point) => point.id === selectedPointId) ?? null;
   const filteredPoints = useMemo(() => (data?.points ?? []).filter((point) => point.document_id === selectedDocument?.id && point.page_number === page), [data?.points, page, selectedDocument?.id]);
+  const pointInspectorStyle = useMemo<CSSProperties | undefined>(() => {
+    if (!selectedPoint) return undefined;
+    const x = Math.max(0, Math.min(1, asNumber(selectedPoint.x)));
+    // Keep the panel visible when a point is close to the top or bottom edge.
+    const y = Math.max(0.16, Math.min(0.84, asNumber(selectedPoint.y)));
+    const openToLeft = x > 0.58;
+    return {
+      left: `${x * 100}%`,
+      top: `${y * 100}%`,
+      transform: openToLeft
+        ? 'translate(calc(-100% - 0.75rem), -50%)'
+        : 'translate(0.75rem, -50%)',
+    };
+  }, [selectedPoint]);
+
+  const constrainOffset = useCallback((next: { x: number; y: number }) => {
+    const viewport = viewportRef.current;
+    const canvas = canvasRef.current;
+    if (!viewport || !canvas) return next;
+    const canvasWidth = canvas.offsetWidth || canvas.clientWidth;
+    const canvasHeight = canvas.offsetHeight || canvas.clientHeight;
+    if (!canvasWidth || !canvasHeight) return next;
+    const minX = Math.min(0, viewport.clientWidth - canvasWidth * scale);
+    const minY = Math.min(0, viewport.clientHeight - canvasHeight * scale);
+    return {
+      x: Math.min(0, Math.max(minX, next.x)),
+      y: Math.min(0, Math.max(minY, next.y)),
+    };
+  }, [scale]);
 
   useEffect(() => {
     if (!selectedDocument) {
@@ -388,6 +421,13 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
     setPreviewUrl(url);
     return () => URL.revokeObjectURL(url);
   }, [preview.data]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      setOffset((current) => constrainOffset(current));
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [constrainOffset, previewUrl]);
 
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ['perforation-workspace', companyId, projectId, rubro.id] });
   const createDocument = useMutation({
@@ -467,7 +507,10 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
     const active = interaction.current;
     if (!active) return;
     if (active.kind === 'pan') {
-      setOffset({ x: active.offsetX + event.clientX - active.clientX, y: active.offsetY + event.clientY - active.clientY });
+      setOffset(constrainOffset({
+        x: active.offsetX + event.clientX - active.clientX,
+        y: active.offsetY + event.clientY - active.clientY,
+      }));
       return;
     }
     const point = pointFromClient(event.clientX, event.clientY);
@@ -580,7 +623,7 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
             <div className={`relative overflow-hidden rounded-2xl bg-slate-100 shadow-inner ${isFullscreen ? 'h-[calc(100vh-12rem)] min-h-[32rem]' : 'h-[650px]'}`}>
               {preview.isLoading ? <div className="grid h-full min-h-[26rem] place-items-center text-sm text-muted-foreground">Preparando vista del PDF…</div> : preview.isError || !previewUrl ? <div className="grid h-full min-h-[26rem] place-items-center text-sm text-destructive">No se pudo mostrar este plano.</div> : <div ref={viewportRef} className="relative h-full w-full touch-none overflow-hidden" onPointerDown={pointerDown} onPointerMove={(event) => { dragMove(event); pointerMove(event); }} onPointerUp={(event) => { endDrag(event); pointerUp(event); }} onPointerCancel={(event) => { endDrag(event); pointerUp(event); }} onDoubleClick={() => setScale((value) => Math.min(3, value * 1.7))}>
                 <div ref={canvasRef} className="absolute left-0 top-0 w-full select-none" style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`, transformOrigin: '0 0' }}>
-                  <img src={previewUrl} alt={`Plano de perforaciones ${selectedDocument.title}`} className="block w-full" draggable={false} />
+                  <img src={previewUrl} alt={`Plano de perforaciones ${selectedDocument.title}`} className="block w-full" draggable={false} onLoad={() => setOffset((current) => constrainOffset(current))} />
                   <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 1000 1000" preserveAspectRatio="none">
                     {annotations.map((annotation) => {
                       if (annotation.type === 'line' && annotation.points && annotation.points.length > 1) return <polyline key={annotation.id} fill="none" stroke={annotation.color} strokeWidth={annotation.width} strokeOpacity={annotation.opacity} strokeLinecap="round" strokeLinejoin="round" points={annotation.points.map((point) => `${point.x * 1000},${point.y * 1000}`).join(' ')} />;
@@ -591,7 +634,7 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
                     {straightLine ? <line x1={straightLine.start.x * 1000} y1={straightLine.start.y * 1000} x2={straightLine.end.x * 1000} y2={straightLine.end.y * 1000} stroke={pencilColor} strokeWidth={strokeWidth} strokeLinecap="round" /> : null}
                   </svg>
                   {filteredPoints.map((point) => { const diameter = asNumber(point.diameter) * 100; const selected = point.id === selectedPointId; const editing = point.id === editingPointId; return <button id={`perforation-point-${point.id}`} key={point.id} type="button" aria-label={`Punto ${point.label || point.id}`} className={`absolute z-20 grid -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border-2 border-white shadow-lg transition ${selected ? 'ring-4 ring-foreground/25' : ''} ${editing ? 'cursor-grab ring-4 ring-primary/35 active:cursor-grabbing' : 'cursor-pointer'}`} style={{ left: `${asNumber(point.x) * 100}%`, top: `${asNumber(point.y) * 100}%`, width: `${Math.max(16, diameter * 1.9)}px`, height: `${Math.max(16, diameter * 1.9)}px`, backgroundColor: pointColor(point) }} onPointerDown={(event) => beginDrag(event, point)} onClick={(event) => { event.stopPropagation(); if (!drag) setSelectedPointId(point.id); }} onDoubleClick={(event) => { event.stopPropagation(); setSelectedPointId(point.id); setEditingPointId((id) => id === point.id ? null : point.id); }}><span className="h-1.5 w-1.5 rounded-full bg-white/90" /></button>; })}
-                  {selectedPoint ? <PointInspector point={selectedPoint} companyId={companyId} projectId={projectId} rubro={rubro} colors={colors} canEdit={canEdit} editMode={editingPointId === selectedPoint.id} onClose={() => { setSelectedPointId(null); setEditingPointId(null); }} onDelete={() => { if (window.confirm('¿Eliminar este punto?')) deletePoint.mutate(selectedPoint.id); }} onToggleEdit={() => setEditingPointId((id) => id === selectedPoint.id ? null : selectedPoint.id)} /> : null}
+                  {selectedPoint ? <PointInspector point={selectedPoint} companyId={companyId} projectId={projectId} rubro={rubro} colors={colors} canEdit={canEdit} editMode={editingPointId === selectedPoint.id} anchorStyle={pointInspectorStyle ?? {}} onClose={() => { setSelectedPointId(null); setEditingPointId(null); }} onDelete={() => { if (window.confirm('¿Eliminar este punto?')) deletePoint.mutate(selectedPoint.id); }} onToggleEdit={() => setEditingPointId((id) => id === selectedPoint.id ? null : selectedPoint.id)} /> : null}
                   {note ? <div className="absolute z-40 w-60 rounded-xl border bg-card p-2 shadow-xl" style={{ left: `${note.point.x * 100}%`, top: `${note.point.y * 100}%` }} onPointerDown={(event) => event.stopPropagation()}><Input autoFocus placeholder="Escribe una nota" value={note.text} onChange={(event) => setNote({ ...note, text: event.target.value })} onKeyDown={(event) => { if (event.key === 'Enter') saveNote(); if (event.key === 'Escape') setNote(null); }} /><div className="mt-2 flex justify-end gap-2"><Button size="sm" variant="ghost" onClick={() => setNote(null)}>Cancelar</Button><Button size="sm" onClick={saveNote}>Guardar</Button></div></div> : null}
                 </div>
               </div>}
