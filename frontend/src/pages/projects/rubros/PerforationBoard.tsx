@@ -196,8 +196,10 @@ function PointInspector({
   projectId,
   rubro,
   colors,
+  canEdit,
   editMode,
   onClose,
+  onDelete,
   onToggleEdit,
 }: {
   point: PerforationPoint;
@@ -205,8 +207,10 @@ function PointInspector({
   projectId: string;
   rubro: ProjectRubro;
   colors: PerforationColor[];
+  canEdit: boolean;
   editMode: boolean;
   onClose: () => void;
+  onDelete: () => void;
   onToggleEdit: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -219,7 +223,7 @@ function PointInspector({
     setNote(point.note_text ?? '');
     setLabel(point.label ?? '');
     setChecklistDraft(point.checklist_json.map((entry) => entry.title).join('\n'));
-  }, [point.id, point.note_text, point.label]);
+  }, [point.id, point.note_text, point.label, point.checklist_json]);
   const refresh = () => void queryClient.invalidateQueries({
     queryKey: ['perforation-workspace', companyId, projectId, rubro.id],
   });
@@ -269,7 +273,7 @@ function PointInspector({
   };
 
   return (
-    <section className="absolute right-3 top-3 z-30 w-[min(22rem,calc(100%-1.5rem))] rounded-2xl border border-border bg-card p-3 shadow-2xl" onPointerDown={(event) => event.stopPropagation()}>
+    <section className="absolute right-3 top-3 z-30 max-h-[calc(100%-1.5rem)] w-[min(22rem,calc(100%-1.5rem))] overflow-y-auto rounded-2xl border border-border bg-card p-3 shadow-2xl" onPointerDown={(event) => event.stopPropagation()}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0"><p className="flex items-center gap-2 text-sm font-bold"><span className="h-3 w-3 rounded-full" style={{ backgroundColor: pointColor(point) }} /> Punto {complete ? 'completado' : 'en proceso'}</p><p className="text-xs text-muted-foreground">{complete ? 'Checklist completo: ahora se muestra azul.' : 'Completa los pasos para marcarlo como terminado.'}</p></div>
         <button type="button" aria-label="Cerrar detalle del punto" className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground" onClick={onClose}><X className="h-5 w-5" /></button>
@@ -286,6 +290,7 @@ function PointInspector({
       </div>
       <div className="mt-3 space-y-1"><Label>Nota</Label><Textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Escribe una observación del punto" className="min-h-20" /></div>
       <div className="mt-2 flex flex-wrap gap-2"><Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>Guardar nota</Button><Button size="sm" variant="outline" onClick={() => { setChecklistDraft(point.checklist_json.map((entry) => entry.title).join('\n')); setChecklistOpen(true); }}><Settings2 className="h-4 w-4" /> Configurar checklist</Button><Button size="sm" variant={editMode ? 'default' : 'outline'} onClick={onToggleEdit}><Pencil className="h-4 w-4" /> {editMode ? 'Terminar edición' : 'Mover / tamaño'}</Button><Button size="sm" variant="outline" onClick={() => fileInput.current?.click()}><Paperclip className="h-4 w-4" /> Cargar nota</Button><input ref={fileInput} className="sr-only" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachment.mutate(file); event.target.value = ''; }} /></div>
+      {canEdit ? <Button type="button" size="sm" variant="destructive" className="mt-2" onClick={onDelete}><Trash2 className="h-4 w-4" /> Eliminar punto</Button> : null}
       {point.note_original_filename ? <button type="button" className="mt-2 flex max-w-full items-center gap-1 text-xs text-primary underline" onClick={() => void downloadAttachment()}><FileText className="h-3.5 w-3.5" /><span className="truncate">{point.note_original_filename}</span></button> : null}
       {editMode ? <div className="mt-3 rounded-lg border border-primary/30 bg-primary/5 p-2 text-xs"><div className="flex items-center justify-between gap-2"><span>Arrastra el punto o ajusta su tamaño.</span><span>{Math.round(asNumber(point.diameter) * 100)}%</span></div><input className="mt-2 w-full accent-primary" type="range" min="0.8" max="12" step="0.2" value={asNumber(point.diameter) * 100} onChange={(event) => pointUpdate.mutate({ diameter: Number(event.target.value) / 100 })} /></div> : null}
       <Dialog open={checklistOpen} onOpenChange={setChecklistOpen}>
@@ -322,7 +327,7 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [colorSettingsOpen, setColorSettingsOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [tool, setTool] = useState<PerforationTool>('point');
+  const [tool, setTool] = useState<PerforationTool>('pan');
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [drawing, setDrawing] = useState<CanvasPoint[]>([]);
@@ -338,7 +343,7 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
   });
   const data = workspace.data;
   const documents = data?.documents ?? [];
-  const colors = data?.colors ?? [];
+  const colors = useMemo(() => data?.colors ?? [], [data?.colors]);
   const activeColorId = selectedColorId ?? colors.find((color) => color.is_active)?.id ?? null;
   const selectedDocument = documents.find((document) => document.id === selectedDocumentId) ?? documents[0] ?? null;
   const selectedPoint = (data?.points ?? []).find((point) => point.id === selectedPointId) ?? null;
@@ -365,7 +370,7 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
     setAnnotations([]);
     setScale(1);
     setOffset({ x: 0, y: 0 });
-    setTool('point');
+    setTool('pan');
   }, [page, selectedDocument?.id]);
 
   const preview = useQuery({
@@ -572,9 +577,9 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
             </div>
             {canEdit && (tool === 'draw' || tool === 'highlight' || tool === 'straight') ? <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card/85 px-3 py-2 text-xs"><span className="font-semibold">Color</span>{PENCIL_COLORS.map((color) => <button key={color} type="button" aria-label={`Usar color ${color}`} className={`h-6 w-6 rounded-full border-2 ${pencilColor === color ? 'scale-110 border-slate-900' : 'border-white'}`} style={{ backgroundColor: color }} onClick={() => setPencilColor(color)} />)}<input aria-label="Color personalizado" className="h-7 w-8 cursor-pointer rounded border p-0.5" type="color" value={pencilColor} onChange={(event) => setPencilColor(event.target.value)} /><span className="ml-1 font-semibold">Grosor</span><select aria-label="Grosor del trazo" className="h-8 rounded-md border bg-background px-2 text-xs" value={strokeWidth} onChange={(event) => setStrokeWidth(Number(event.target.value))}>{STROKE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div> : null}
             {selectedDocument && (selectedDocument.page_count ?? 1) > 1 ? <div className="flex items-center justify-between rounded-lg border bg-card p-2 text-sm"><Button size="sm" variant="ghost" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft className="h-4 w-4" /> Anterior</Button><span>Página {page} de {selectedDocument.page_count}</span><Button size="sm" variant="ghost" disabled={page >= (selectedDocument.page_count ?? 1)} onClick={() => setPage((value) => value + 1)}>Siguiente <ChevronRight className="h-4 w-4" /></Button></div> : null}
-            <div className={`relative overflow-hidden rounded-2xl border bg-muted/50 shadow-inner ${isFullscreen ? 'min-h-[calc(100vh-16rem)]' : 'min-h-[26rem]'}`}>
-              {preview.isLoading ? <div className="grid min-h-[26rem] place-items-center text-sm text-muted-foreground">Preparando vista del PDF…</div> : preview.isError || !previewUrl ? <div className="grid min-h-[26rem] place-items-center text-sm text-destructive">No se pudo mostrar este plano.</div> : <div ref={viewportRef} className="relative min-h-[26rem] h-full w-full touch-none overflow-hidden" onPointerDown={pointerDown} onPointerMove={(event) => { dragMove(event); pointerMove(event); }} onPointerUp={(event) => { endDrag(event); pointerUp(event); }} onPointerCancel={(event) => { endDrag(event); pointerUp(event); }} onDoubleClick={() => setScale((value) => Math.min(3, value * 1.7))}>
-                <div ref={canvasRef} className="relative mx-auto inline-block min-h-[18rem] min-w-full select-none" style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`, transformOrigin: '0 0' }}>
+            <div className={`relative overflow-hidden rounded-2xl bg-slate-100 shadow-inner ${isFullscreen ? 'h-[calc(100vh-12rem)] min-h-[32rem]' : 'h-[650px]'}`}>
+              {preview.isLoading ? <div className="grid h-full min-h-[26rem] place-items-center text-sm text-muted-foreground">Preparando vista del PDF…</div> : preview.isError || !previewUrl ? <div className="grid h-full min-h-[26rem] place-items-center text-sm text-destructive">No se pudo mostrar este plano.</div> : <div ref={viewportRef} className="relative h-full w-full touch-none overflow-hidden" onPointerDown={pointerDown} onPointerMove={(event) => { dragMove(event); pointerMove(event); }} onPointerUp={(event) => { endDrag(event); pointerUp(event); }} onPointerCancel={(event) => { endDrag(event); pointerUp(event); }} onDoubleClick={() => setScale((value) => Math.min(3, value * 1.7))}>
+                <div ref={canvasRef} className="absolute left-0 top-0 w-full select-none" style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`, transformOrigin: '0 0' }}>
                   <img src={previewUrl} alt={`Plano de perforaciones ${selectedDocument.title}`} className="block w-full" draggable={false} />
                   <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 1000 1000" preserveAspectRatio="none">
                     {annotations.map((annotation) => {
@@ -586,10 +591,9 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
                     {straightLine ? <line x1={straightLine.start.x * 1000} y1={straightLine.start.y * 1000} x2={straightLine.end.x * 1000} y2={straightLine.end.y * 1000} stroke={pencilColor} strokeWidth={strokeWidth} strokeLinecap="round" /> : null}
                   </svg>
                   {filteredPoints.map((point) => { const diameter = asNumber(point.diameter) * 100; const selected = point.id === selectedPointId; const editing = point.id === editingPointId; return <button id={`perforation-point-${point.id}`} key={point.id} type="button" aria-label={`Punto ${point.label || point.id}`} className={`absolute z-20 grid -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border-2 border-white shadow-lg transition ${selected ? 'ring-4 ring-foreground/25' : ''} ${editing ? 'cursor-grab ring-4 ring-primary/35 active:cursor-grabbing' : 'cursor-pointer'}`} style={{ left: `${asNumber(point.x) * 100}%`, top: `${asNumber(point.y) * 100}%`, width: `${Math.max(16, diameter * 1.9)}px`, height: `${Math.max(16, diameter * 1.9)}px`, backgroundColor: pointColor(point) }} onPointerDown={(event) => beginDrag(event, point)} onClick={(event) => { event.stopPropagation(); if (!drag) setSelectedPointId(point.id); }} onDoubleClick={(event) => { event.stopPropagation(); setSelectedPointId(point.id); setEditingPointId((id) => id === point.id ? null : point.id); }}><span className="h-1.5 w-1.5 rounded-full bg-white/90" /></button>; })}
-                  {selectedPoint ? <PointInspector point={selectedPoint} companyId={companyId} projectId={projectId} rubro={rubro} colors={colors} editMode={editingPointId === selectedPoint.id} onClose={() => { setSelectedPointId(null); setEditingPointId(null); }} onToggleEdit={() => setEditingPointId((id) => id === selectedPoint.id ? null : selectedPoint.id)} /> : null}
+                  {selectedPoint ? <PointInspector point={selectedPoint} companyId={companyId} projectId={projectId} rubro={rubro} colors={colors} canEdit={canEdit} editMode={editingPointId === selectedPoint.id} onClose={() => { setSelectedPointId(null); setEditingPointId(null); }} onDelete={() => { if (window.confirm('¿Eliminar este punto?')) deletePoint.mutate(selectedPoint.id); }} onToggleEdit={() => setEditingPointId((id) => id === selectedPoint.id ? null : selectedPoint.id)} /> : null}
                   {note ? <div className="absolute z-40 w-60 rounded-xl border bg-card p-2 shadow-xl" style={{ left: `${note.point.x * 100}%`, top: `${note.point.y * 100}%` }} onPointerDown={(event) => event.stopPropagation()}><Input autoFocus placeholder="Escribe una nota" value={note.text} onChange={(event) => setNote({ ...note, text: event.target.value })} onKeyDown={(event) => { if (event.key === 'Enter') saveNote(); if (event.key === 'Escape') setNote(null); }} /><div className="mt-2 flex justify-end gap-2"><Button size="sm" variant="ghost" onClick={() => setNote(null)}>Cancelar</Button><Button size="sm" onClick={saveNote}>Guardar</Button></div></div> : null}
                 </div>
-                {selectedPoint && canEdit ? <Button className="absolute bottom-3 left-3 z-40" size="sm" variant="destructive" onPointerDown={(event) => event.stopPropagation()} onClick={() => { if (window.confirm('¿Eliminar este punto?')) deletePoint.mutate(selectedPoint.id); }}><Trash2 className="h-4 w-4" /> Eliminar punto</Button> : null}
               </div>}
             </div>
             <p className="text-xs text-muted-foreground">Los puntos terminados se muestran en azul. El PDF sigue siendo interactivo en pantalla completa; usa “Salir” o la X para volver.</p>

@@ -50,6 +50,7 @@ from app.api.schemas.rubros import (
 )
 from app.core.config import get_settings
 from app.db.models import (
+    ActivityLog,
     PerforationColor,
     PerforationDocument,
     PerforationPoint,
@@ -183,10 +184,29 @@ async def ensure_default_rubros(
             await db.scalars(select(ProjectRubro.slug).where(ProjectRubro.project_id == project_id))
         ).all()
     )
-    created: list[ProjectRubro] = []
-    for order, (slug, name, description, _features) in enumerate(DEFAULT_RUBROS, start=1):
-        if slug in existing:
+    deleted_system_slugs: set[str] = set()
+    deleted_logs = await db.scalars(
+        select(ActivityLog.metadata_json).where(
+            ActivityLog.company_id == company_id,
+            ActivityLog.action == "project_rubro.deleted",
+            ActivityLog.entity_type == "project_rubro",
+        )
+    )
+    for metadata in deleted_logs:
+        if not isinstance(metadata, dict):
             continue
+        if metadata.get("project_id") == project_id and metadata.get("is_system"):
+            slug = metadata.get("slug")
+            if isinstance(slug, str):
+                deleted_system_slugs.add(slug)
+
+    missing_defaults = [
+        item
+        for item in DEFAULT_RUBROS
+        if item[0] not in existing and item[0] not in deleted_system_slugs
+    ]
+    created: list[ProjectRubro] = []
+    for order, (slug, name, description, _features) in enumerate(missing_defaults, start=1):
         rubro = ProjectRubro(
             company_id=company_id,
             project_id=project_id,
@@ -202,7 +222,7 @@ async def ensure_default_rubros(
         return
     await db.flush()
     for rubro, (_, _, _, features) in zip(
-        created, (item for item in DEFAULT_RUBROS if item[0] not in existing), strict=False
+        created, missing_defaults, strict=False
     ):
         db.add_all(
             ProjectRubroFeature(
@@ -594,11 +614,6 @@ async def delete_rubro(
     require_role(access, WORK_EDITOR_ROLES)
     await require_project(db, access.company_id, project_id)
     rubro = await require_rubro(db, access.company_id, project_id, rubro_id)
-    if rubro.is_system:
-        raise HTTPException(
-            status_code=409,
-            detail="Los rubros predeterminados no se eliminan; puedes ajustar sus funciones",
-        )
     documents = list(
         (
             await db.execute(
@@ -614,6 +629,14 @@ async def delete_rubro(
                 )
             )
         ).scalars()
+    )
+    add_activity(
+        db,
+        access,
+        "project_rubro.deleted",
+        "project_rubro",
+        rubro.id,
+        {"project_id": project_id, "slug": rubro.slug, "is_system": rubro.is_system},
     )
     await db.delete(rubro)
     await commit_or_conflict(db, "No fue posible eliminar el rubro")

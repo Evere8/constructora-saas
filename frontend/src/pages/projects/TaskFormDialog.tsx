@@ -151,7 +151,7 @@ export function TaskFormDialog({
   const templateId = watch('template_id');
   const inventoryItemIds = watch('inventory_item_ids');
   const selectedTemplate = (templatesQuery.data ?? []).find((item) => item.id === templateId);
-  const inventory = inventoryQuery.data ?? [];
+  const inventory = useMemo(() => inventoryQuery.data ?? [], [inventoryQuery.data]);
   const templateInventoryIds = useMemo(
     () => (selectedTemplate?.resources ?? [])
       .map((resource) => resource.inventory_item_id)
@@ -173,7 +173,7 @@ export function TaskFormDialog({
   );
   const sectors: ProjectSector[] = sectorsQuery.data ?? [];
   const visibleLevels = sectorId === NONE
-    ? levels
+    ? []
     : levels.filter((level) => level.sector_id === sectorId);
 
   const applyTemplate = (value: string) => {
@@ -306,7 +306,7 @@ export function TaskFormDialog({
             </div>
           ) : null}
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <div className="space-y-2 sm:col-span-2">
               <Label htmlFor="task-title">Título</Label>
               <Input id="task-title" {...register('title')} />
@@ -322,10 +322,25 @@ export function TaskFormDialog({
               <Select value={sectorId} onValueChange={(value) => { setSectorId(value); if (value !== NONE && levelId !== NONE && !levels.some((level) => level.id === levelId && level.sector_id === value)) setValue('level_id', NONE); }}>
                 <SelectTrigger><SelectValue placeholder="Sin sector" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={NONE}>Todos los sectores</SelectItem>
+                  <SelectItem value={NONE}>Seleccionar sector</SelectItem>
                   {sectors.map((sector) => <SelectItem key={sector.id} value={sector.id}>{sector.name}</SelectItem>)}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Nivel</Label>
+              <Select value={levelId} disabled={sectorId === NONE} onValueChange={(value) => { setValue('level_id', value); const level = visibleLevels.find((item) => item.id === value); if (level?.sector_id) setSectorId(level.sector_id); }}>
+                <SelectTrigger><SelectValue placeholder={sectorId === NONE ? 'Selecciona primero un sector' : 'Seleccionar nivel'} /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NONE}>Sin nivel</SelectItem>
+                  {visibleLevels.map((level) => (
+                    <SelectItem key={level.id} value={level.id}>
+                      {(level.building_name || 'Obra general')} · {level.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {sectorId === NONE ? <p className="text-xs text-muted-foreground">Los niveles aparecen al elegir un sector.</p> : null}
             </div>
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -414,20 +429,6 @@ export function TaskFormDialog({
                 <SelectContent>
                   {TASK_STATUS_OPTIONS.map((option) => (
                     <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Nivel</Label>
-              <Select value={levelId} onValueChange={(value) => { setValue('level_id', value); const level = levels.find((item) => item.id === value); if (level?.sector_id) setSectorId(level.sector_id); }}>
-                <SelectTrigger><SelectValue placeholder="Sin nivel" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NONE}>Sin nivel</SelectItem>
-                  {visibleLevels.map((level) => (
-                    <SelectItem key={level.id} value={level.id}>
-                      {(level.building_name || 'Obra general')} · {level.name}
-                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
