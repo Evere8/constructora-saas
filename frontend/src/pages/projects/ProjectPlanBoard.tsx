@@ -8,18 +8,19 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Check,
+  ChevronDown,
   GripVertical,
   Hand,
   Highlighter,
   MapPin,
   Maximize2,
   MessageSquarePlus,
-  Minimize2,
   PencilLine,
   RefreshCw,
   Ruler,
   Trash2,
   Wand2,
+  X,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -309,6 +310,75 @@ function BuildingSummary({ levels, sectors }: { levels: Level[]; sectors: Projec
   );
 }
 
+function SectorLevelPicker({
+  levels,
+  sectors,
+  selectedLevelId,
+  onSelectLevel,
+}: {
+  levels: Level[];
+  sectors: ProjectSector[];
+  selectedLevelId: string | null;
+  onSelectLevel: (levelId: string) => void;
+}) {
+  const groups = useMemo(() => {
+    const items = new Map<string, { id: string; name: string; levels: Level[] }>();
+    for (const sector of sectors) items.set(sector.id, { id: sector.id, name: sector.name, levels: [] });
+    for (const level of levels) {
+      const id = level.sector_id || `legacy:${sectorName(level)}`;
+      const group = items.get(id) ?? { id, name: sectorName(level), levels: [] };
+      group.levels.push(level);
+      items.set(id, group);
+    }
+    return Array.from(items.values())
+      .filter((group) => group.levels.length > 0)
+      .map((group) => ({
+        ...group,
+        levels: [...group.levels].sort((left, right) => left.sort_order - right.sort_order || left.name.localeCompare(right.name)),
+      }));
+  }, [levels, sectors]);
+  const initiallySelected = groups.find((group) => group.levels.some((level) => level.id === selectedLevelId))?.id ?? groups[0]?.id ?? null;
+  const [expandedId, setExpandedId] = useState<string | null>(initiallySelected);
+
+  useEffect(() => {
+    if (expandedId && groups.some((group) => group.id === expandedId)) return;
+    setExpandedId(initiallySelected);
+  }, [expandedId, groups, initiallySelected]);
+
+  if (!groups.length) return null;
+  return (
+    <section className="rounded-2xl border bg-card/92 p-3 shadow-sm">
+      <div className="flex flex-wrap gap-2">
+        {groups.map((group) => {
+          const expanded = expandedId === group.id;
+          const completed = group.levels.filter((level) => level.work_status === 'concreted').length;
+          return (
+            <button
+              key={group.id}
+              type="button"
+              onClick={() => setExpandedId(expanded ? null : group.id)}
+              className={'inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition ' + (expanded ? 'border-primary bg-primary text-primary-foreground shadow-sm' : 'bg-card hover:border-primary/45')}
+            >
+              <span className="max-w-48 truncate">{group.name}</span>
+              <span className={'rounded-full px-1.5 py-0.5 text-[11px] ' + (expanded ? 'bg-white/20' : 'bg-muted text-muted-foreground')}>{completed}/{group.levels.length}</span>
+              <ChevronDown className={'h-4 w-4 transition-transform ' + (expanded ? 'rotate-180' : '')} />
+            </button>
+          );
+        })}
+      </div>
+      {expandedId ? (() => {
+        const group = groups.find((item) => item.id === expandedId);
+        if (!group) return null;
+        return <div className="mt-3 grid gap-2 border-t pt-3 sm:grid-cols-2 xl:grid-cols-3">{group.levels.map((level) => {
+          const active = selectedLevelId === level.id;
+          const status = LEVEL_STATUS[level.work_status];
+          return <button key={level.id} type="button" onClick={() => onSelectLevel(level.id)} className={'flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm transition ' + (active ? 'border-primary bg-primary/10 ring-1 ring-primary' : 'bg-card hover:border-primary/45')}><span className="truncate font-medium">{level.name}</span><span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: status.color }} />{status.label}</span></button>;
+        })}</div>;
+      })() : <p className="mt-3 border-t pt-3 text-sm text-muted-foreground">Toca un sector para ver sus niveles.</p>}
+    </section>
+  );
+}
+
 function FloatingLevelChecklist({
   companyId,
   projectId,
@@ -316,6 +386,7 @@ function FloatingLevelChecklist({
   position,
   getCanvasRect,
   onPersistPosition,
+  onClose,
 }: {
   companyId: string;
   projectId: string;
@@ -323,6 +394,7 @@ function FloatingLevelChecklist({
   position: Point;
   getCanvasRect: () => DOMRect | undefined;
   onPersistPosition: (position: Point) => void;
+  onClose: () => void;
 }) {
   const queryClient = useQueryClient();
   const canEditChecklist = useCan('checklist.edit');
@@ -422,10 +494,21 @@ function FloatingLevelChecklist({
         >
           <GripVertical className="h-3.5 w-3.5" /> Arrastrar para mover
         </button>
-        <span className={'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ' + displayStatus.panel}>
-          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: displayStatus.color }} />
-          {displayStatus.label}
-        </span>
+        <div className="flex shrink-0 items-center gap-1">
+          <span className={'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ' + displayStatus.panel}>
+            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: displayStatus.color }} />
+            {displayStatus.label}
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid h-7 w-7 place-items-center rounded-full text-slate-500 transition hover:bg-slate-200 hover:text-slate-900"
+            aria-label="Cerrar checklist"
+            title="Cerrar checklist"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
       </div>
       <div className="mt-3 flex items-center justify-between gap-3">
         <div className="min-w-0"><p className="truncate text-base font-bold">Checklist · {level.name}</p><p className="truncate text-xs text-muted-foreground">{sectorName(level)}</p></div>
@@ -488,7 +571,7 @@ function PlanCanvas({
   levels: Level[];
   annotations: PlanAnnotation[];
   selectedLevelId: string | null;
-  onSelectLevel: (levelId: string) => void;
+  onSelectLevel: (levelId: string | null) => void;
   onCreateAnnotation: (input: {
     annotation_type: PlanAnnotation['annotation_type'];
     geometry_json: Record<string, unknown>;
@@ -761,7 +844,7 @@ function PlanCanvas({
 
         <div className={'relative overflow-hidden rounded-2xl border bg-slate-100 shadow-inner ' + (isFullscreen ? 'h-[calc(100vh-158px)] min-h-[560px]' : 'h-[650px]')}>
           <Button className="absolute left-1/2 top-3 z-40 -translate-x-1/2 rounded-full bg-white/95 shadow-md hover:bg-white" size="sm" variant="secondary" onClick={() => setIsFullscreen((value) => !value)}>
-            {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}{isFullscreen ? 'Volver' : 'Pantalla completa'}
+            {isFullscreen ? <X className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}{isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
           </Button>
           <div
             ref={contentRef}
@@ -851,6 +934,7 @@ function PlanCanvas({
                 position={getChecklistPosition(selectedGeometry)}
                 getCanvasRect={() => contentRef.current?.getBoundingClientRect()}
                 onPersistPosition={(position) => onSaveLevelGeometry(selectedLevel.id, { ...selectedGeometry, checklist_x: position.x, checklist_y: position.y }, false)}
+                onClose={() => onSelectLevel(null)}
               />
             ) : null}
             {note ? (
@@ -1006,16 +1090,13 @@ export function ProjectPlanBoard({ companyId, project }: { companyId: string; pr
         {canEditPlan ? <Button size="sm" variant="outline" disabled={levels.length === 0 || detectLevelsMutation.isPending} onClick={() => detectLevelsMutation.mutate(version.id)}>{detectLevelsMutation.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />} Detectar niveles del PDF</Button> : null}
       </div>
       <BuildingSummary levels={levels} sectors={sectors} />
-      <div className="rounded-xl border bg-white p-2 shadow-sm">
-        <div className="flex flex-wrap gap-1.5">
-          {levels.map((level) => {
-            const active = selectedLevelId === level.id;
-            const status = LEVEL_STATUS[level.work_status];
-            return <Button key={level.id} size="sm" variant="outline" className={'h-auto min-h-9 whitespace-normal py-2 text-left ' + (active ? 'border-orange-500 bg-orange-500 text-white hover:bg-orange-600 hover:text-white' : 'border-slate-200 bg-white hover:border-orange-300')} onClick={() => setSelectedLevelId(level.id)}><span>{sectorName(level)} · {level.name}</span><span className="ml-1.5 h-2.5 w-2.5 shrink-0 rounded-full border border-white/50" style={{ backgroundColor: active ? '#ffffff' : status.color }} /></Button>;
-          })}
-        </div>
-      </div>
-      <p className="text-xs text-muted-foreground">Selecciona un nivel y usa <strong>Ubicar nivel</strong> para dibujar su borde en el PDF. El trazo se transforma en una franja visible con pin; el checklist se mueve desde su encabezado.</p>
+      <SectorLevelPicker
+        levels={levels}
+        sectors={sectors}
+        selectedLevelId={selectedLevelId}
+        onSelectLevel={setSelectedLevelId}
+      />
+      <p className="text-xs text-muted-foreground">Abre un sector, selecciona un nivel y usa <strong>Ubicar nivel</strong> para dibujar su borde en el PDF. El trazo se transforma en una franja visible con pin; el checklist se mueve desde su encabezado.</p>
       {previewQuery.isLoading ? (
         <Card><CardContent className="p-6 text-sm text-muted-foreground">Preparando la vista privada del plano…</CardContent></Card>
       ) : previewQuery.isError || !planUrl ? (

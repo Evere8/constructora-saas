@@ -9,7 +9,7 @@ import { projectsApi, type TaskInput } from '@/lib/api/projects';
 import { inventoryApi, membersApi } from '@/lib/api/modules';
 import { taskLibraryApi } from '@/lib/api/taskLibrary';
 import { roleLabel } from '@/auth/permissions';
-import type { Level, Task, TaskPriority, TaskStatus, TaskType } from '@/types/api';
+import type { Level, ProjectRubro, Task, TaskPriority, TaskStatus, TaskType } from '@/types/api';
 import { ApiError } from '@/lib/http';
 import {
   TASK_PRIORITY_OPTIONS,
@@ -44,6 +44,7 @@ const schema = z.object({
   status: z.enum(['pending', 'in_progress', 'review', 'completed', 'cancelled']),
   priority: z.enum(['low', 'normal', 'high', 'urgent']),
   level_id: z.string().optional(),
+  rubro_id: z.string().optional(),
   planned_start_at: z.string().optional(),
   due_at: z.string().optional(),
   location_text: z.string().max(300).optional(),
@@ -61,6 +62,8 @@ export function TaskFormDialog({
   companyId,
   projectId,
   levels,
+  rubros,
+  defaultRubroId,
   task,
   open,
   onOpenChange,
@@ -69,6 +72,8 @@ export function TaskFormDialog({
   companyId: string;
   projectId: string;
   levels: Level[];
+  rubros?: ProjectRubro[];
+  defaultRubroId?: string | null;
   task?: Task;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -94,6 +99,7 @@ export function TaskFormDialog({
       status: (task?.status ?? 'pending') as TaskStatus,
       priority: (task?.priority ?? 'normal') as TaskPriority,
       level_id: task?.level_id ?? NONE,
+      rubro_id: task?.rubro_id ?? defaultRubroId ?? NONE,
       planned_start_at: task?.planned_start_at?.slice(0, 16) ?? '',
       due_at: task?.due_at?.slice(0, 16) ?? '',
       location_text: task?.location_text ?? '',
@@ -123,6 +129,7 @@ export function TaskFormDialog({
   const status = watch('status');
   const priority = watch('priority');
   const levelId = watch('level_id');
+  const rubroId = watch('rubro_id');
   const assigneeId = watch('assigned_user_id');
   const templateId = watch('template_id');
   const inventoryItemIds = watch('inventory_item_ids');
@@ -182,6 +189,7 @@ export function TaskFormDialog({
         status: values.status,
         priority: values.priority,
         level_id: values.level_id && values.level_id !== NONE ? values.level_id : null,
+        rubro_id: values.rubro_id && values.rubro_id !== NONE ? values.rubro_id : null,
         planned_start_at: values.planned_start_at || null,
         due_at: values.due_at || null,
         location_text: values.location_text || null,
@@ -387,6 +395,21 @@ export function TaskFormDialog({
               </Select>
             </div>
           </div>
+          {(rubros ?? []).length > 0 ? (
+            <div className="space-y-2">
+              <Label>Rubro</Label>
+              <Select value={rubroId} onValueChange={(value) => setValue('rubro_id', value)}>
+                <SelectTrigger><SelectValue placeholder="Sin rubro" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NONE}>Sin rubro</SelectItem>
+                  {(rubros ?? []).map((rubro) => (
+                    <SelectItem key={rubro.id} value={rubro.id}>{rubro.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">Vincula la tarea al rubro para verla también en su tablero.</p>
+            </div>
+          ) : null}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="task-start">Inicio planificado</Label>

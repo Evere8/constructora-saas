@@ -17,9 +17,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
-const ENABLED_TABS = ['resumen', 'niveles', 'cronograma', 'tareas', 'checklist', 'planos', 'documentacion'];
+const ENABLED_TABS = ['resumen', 'rubros', 'niveles', 'cronograma', 'tareas', 'checklist', 'planos'];
 const PlanosTab = lazy(() => import('@/pages/projects/tabs/PlanosTab').then((module) => ({ default: module.PlanosTab })));
-const DocumentosTab = lazy(() => import('@/pages/projects/tabs/DocumentosTab').then((module) => ({ default: module.DocumentosTab })));
+const RubrosTab = lazy(() => import('@/pages/projects/tabs/RubrosTab').then((module) => ({ default: module.RubrosTab })));
 const CronogramaTab = lazy(() => import('@/pages/projects/tabs/CronogramaTab').then((module) => ({ default: module.CronogramaTab })));
 
 export function ProjectDetailPage() {
@@ -31,7 +31,9 @@ export function ProjectDetailPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const initialTab = searchParams.get('tab');
-  const activeTab = initialTab && ENABLED_TABS.includes(initialTab) ? initialTab : 'resumen';
+  const activeTab = initialTab === 'documentacion'
+    ? 'rubros'
+    : initialTab && ENABLED_TABS.includes(initialTab) ? initialTab : 'resumen';
 
   const query = useQuery({
     queryKey: ['project', activeCompanyId, projectId],
@@ -61,7 +63,7 @@ export function ProjectDetailPage() {
 
   return (
     <div className="space-y-6">
-      <div>
+      <div className="surface-solid rounded-2xl border p-4 sm:p-5">
         <Button asChild variant="ghost" size="sm" className="mb-2 -ml-2">
           <Link to="/obras">
             <ArrowLeft className="h-4 w-4" /> Obras
@@ -85,19 +87,24 @@ export function ProjectDetailPage() {
 
       <Tabs value={activeTab} onValueChange={setTab}>
         <div className="overflow-x-auto">
-          <TabsList className="w-max">
-            <TabsTrigger value="resumen">Resumen</TabsTrigger>
-            <TabsTrigger value="niveles">Niveles</TabsTrigger>
-            <TabsTrigger value="cronograma">Cronograma</TabsTrigger>
-            <TabsTrigger value="tareas">Tareas</TabsTrigger>
-            <TabsTrigger value="checklist">Avance</TabsTrigger>
-            <TabsTrigger value="planos">Planos</TabsTrigger>
-            <TabsTrigger value="documentacion">Documentación</TabsTrigger>
+          <TabsList className="bubble-nav h-auto w-max gap-1.5 bg-card/80">
+            <TabsTrigger className="rounded-xl px-3.5 py-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground" value="resumen">Resumen</TabsTrigger>
+            <TabsTrigger className="rounded-xl px-3.5 py-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground" value="rubros">Rubros</TabsTrigger>
+            <TabsTrigger className="rounded-xl px-3.5 py-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground" value="niveles">Niveles</TabsTrigger>
+            <TabsTrigger className="rounded-xl px-3.5 py-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground" value="cronograma">Cronograma</TabsTrigger>
+            <TabsTrigger className="rounded-xl px-3.5 py-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground" value="tareas">Tareas</TabsTrigger>
+            <TabsTrigger className="rounded-xl px-3.5 py-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground" value="checklist">Avance</TabsTrigger>
+            <TabsTrigger className="rounded-xl px-3.5 py-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground" value="planos">Planos</TabsTrigger>
           </TabsList>
         </div>
 
         <TabsContent value="resumen">
           <ResumenTab companyId={companyId} project={project} />
+        </TabsContent>
+        <TabsContent value="rubros">
+          <Suspense fallback={<FullScreenLoader label="Cargando rubros..." />}>
+            <RubrosTab companyId={companyId} projectId={project.id} />
+          </Suspense>
         </TabsContent>
         <TabsContent value="niveles">
           <NivelesTab companyId={companyId} projectId={project.id} />
@@ -120,11 +127,6 @@ export function ProjectDetailPage() {
               projectId={project.id}
               overviewPlanVersionId={project.overview_plan_version_id ?? null}
             />
-          </Suspense>
-        </TabsContent>
-        <TabsContent value="documentacion">
-          <Suspense fallback={<FullScreenLoader label="Cargando documentos..." />}>
-            <DocumentosTab companyId={companyId} projectId={project.id} />
           </Suspense>
         </TabsContent>
       </Tabs>

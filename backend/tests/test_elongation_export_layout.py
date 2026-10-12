@@ -12,7 +12,12 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from app.services.elongations.template import analyse_template, build_export_xlsx
 
 
-def field_template() -> bytes:
+def field_template(
+    sections: tuple[tuple[str, str], tuple[str, str]] = (
+        ("T321", "BANDAS"),
+        ("T300", "DISTRIBUIDOS"),
+    ),
+) -> bytes:
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Operativa"
@@ -31,7 +36,7 @@ def field_template() -> bytes:
     for letter in "EFG":
         sheet.column_dimensions[letter].hidden = True
     side = Side(style="thin", color="000000")
-    for start, label, title in ((3, "T321", "BANDAS"), (11, "T300", "DISTRIBUIDOS")):
+    for start, (label, title) in zip((3, 11), sections, strict=True):
         sheet.merge_cells(start_row=start, end_row=start + 1, start_column=1, end_column=11)
         sheet.cell(start, 1, title)
         header, first = start + 2, start + 4
@@ -107,8 +112,7 @@ def test_export_keeps_bands_and_distributed_separate_with_complete_physical_rows
                 "measurements": [
                     {
                         "ordinal": ordinal,
-                        "measured_elongation": Decimal("5.000")
-                        + Decimal(label + ordinal) / 1000,
+                        "measured_elongation": Decimal("5.000") + Decimal(label + ordinal) / 1000,
                         "review_status": "approved",
                         "tolerance_status": "within",
                     }
@@ -188,6 +192,56 @@ def test_export_keeps_bands_and_distributed_separate_with_complete_physical_rows
     assert sheet.page_setup.fitToHeight == 0
     assert len(sheet.conditional_formatting) == 2
     assert workbook["Notas"]["A1"].value == "Conservar esta hoja"
+
+
+def test_export_accepts_distributed_before_bands_and_preserves_that_layout() -> None:
+    """Section order is visual: field templates may place Distribuidos first."""
+
+    template = field_template((("T300", "DISTRIBUIDOS"), ("T321", "BANDAS")))
+    mapping = analyse_template(template)
+    assert mapping.sections["distributed"].section_row < mapping.sections["band"].section_row
+    groups = [
+        {
+            "label": "T200",
+            "classification": "distributed",
+            "strand_count": 2,
+            "length_m": Decimal("7.592"),
+            "calculated_elongation": Decimal("5.000"),
+            "measurements": [],
+        },
+        {
+            "label": "T203",
+            "classification": "band",
+            "strand_count": 1,
+            "length_m": Decimal("9.500"),
+            "calculated_elongation": Decimal("6.200"),
+            "measurements": [],
+        },
+    ]
+
+    result = build_export_xlsx(template, mapping, groups, final=False, history={})
+    worksheet = load_workbook(BytesIO(result), data_only=False)["Operativa"]
+    section_rows = {
+        str(worksheet.cell(row, 1).value): row
+        for row in range(1, worksheet.max_row + 1)
+        if worksheet.cell(row, 1).value in {"BANDAS", "DISTRIBUIDOS"}
+    }
+    label_rows = {
+        str(worksheet.cell(row, 2).value): row
+        for row in range(1, worksheet.max_row + 1)
+        if str(worksheet.cell(row, 2).value or "").startswith("T")
+    }
+    assert section_rows["DISTRIBUIDOS"] < label_rows["T200"] < section_rows["BANDAS"]
+    assert section_rows["BANDAS"] < label_rows["T203"]
+    assert (
+        worksheet.cell(label_rows["T200"], 9).value
+        == f"=H{label_rows['T200']}+(H{label_rows['T200']}*0.07)"
+    )
+    assert (
+        worksheet.cell(label_rows["T203"], 11).value
+        == f"=H{label_rows['T203']}-(H{label_rows['T203']}*0.07)"
+    )
+    assert worksheet.freeze_panes is None
 
 
 def test_manual_print_breaks_do_not_cut_a_group_of_physical_tendons() -> None:

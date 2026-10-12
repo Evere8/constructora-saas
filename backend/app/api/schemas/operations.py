@@ -172,6 +172,7 @@ class TaskCreate(BaseModel):
     template_id: str | None = Field(default=None, min_length=36, max_length=36)
     inventory_item_ids: list[str] = Field(default_factory=list, max_length=60)
     level_id: str | None = Field(default=None, min_length=36, max_length=36)
+    rubro_id: str | None = Field(default=None, min_length=36, max_length=36)
     task_type: TaskType = "work"
     title: str = Field(min_length=2, max_length=220)
     description: str | None = Field(default=None, max_length=5000)
@@ -191,6 +192,7 @@ class TaskCreate(BaseModel):
 
 class TaskPatch(BaseModel):
     level_id: str | None = Field(default=None, min_length=36, max_length=36)
+    rubro_id: str | None = Field(default=None, min_length=36, max_length=36)
     task_type: TaskType | None = None
     title: str | None = Field(default=None, min_length=2, max_length=220)
     description: str | None = Field(default=None, max_length=5000)
@@ -218,6 +220,7 @@ class TaskResponse(BaseModel):
     project_id: str
     template_id: str | None
     level_id: str | None
+    rubro_id: str | None
     task_type: str
     title: str
     description: str | None

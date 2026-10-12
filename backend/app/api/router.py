@@ -13,6 +13,7 @@ from app.api.routes import (
     plans,
     platform,
     reports,
+    rubros,
     task_library,
 )
 
@@ -24,6 +25,11 @@ api_router.include_router(
     operations.router,
     prefix="/v1/companies/{company_id}",
     tags=["operations"],
+)
+api_router.include_router(
+    rubros.router,
+    prefix="/v1/companies/{company_id}",
+    tags=["rubros"],
 )
 api_router.include_router(
     checklists.router,

@@ -39,6 +39,7 @@ export interface TaskFilters {
   task_type?: TaskType;
   assigned_user_id?: string;
   level_id?: string;
+  rubro_id?: string;
   limit?: number;
   offset?: number;
 }
@@ -108,6 +109,7 @@ export interface TaskInput {
   status?: TaskStatus;
   priority?: TaskPriority;
   level_id?: string | null;
+  rubro_id?: string | null;
   assigned_user_id?: string | null;
   planned_start_at?: string | null;
   due_at?: string | null;

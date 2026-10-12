@@ -84,6 +84,116 @@ export interface ProjectSector {
   sort_order: number;
 }
 
+export type RubroFeatureKey =
+  | 'postensado_documentation'
+  | 'interactive_pdf'
+  | 'tasks'
+  | 'checklists'
+  | 'observations';
+
+export interface ProjectRubroFeature {
+  id: string;
+  rubro_id: string;
+  feature_key: RubroFeatureKey;
+  settings_json?: Record<string, unknown> | null;
+  sort_order: number;
+}
+
+export interface ProjectRubroSummary {
+  tasks_total: number;
+  tasks_completed: number;
+  documents_total: number;
+  points_total: number;
+  points_completed: number;
+}
+
+export interface ProjectRubro {
+  id: string;
+  company_id: string;
+  project_id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+  is_system: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+  features: ProjectRubroFeature[];
+  summary: ProjectRubroSummary;
+}
+
+export interface ProjectRubroObservation {
+  id: string;
+  company_id: string;
+  project_id: string;
+  rubro_id: string;
+  body: string;
+  created_by_user_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PerforationChecklistEntry {
+  id: string;
+  title: string;
+  checked: boolean;
+}
+
+export interface PerforationColor {
+  id: string;
+  rubro_id: string;
+  name: string;
+  color_hex: string;
+  checklist_json: PerforationChecklistEntry[];
+  sort_order: number;
+  is_active: boolean;
+}
+
+export interface PerforationDocument {
+  id: string;
+  company_id: string;
+  project_id: string;
+  rubro_id: string;
+  title: string;
+  original_filename: string;
+  mime_type: string;
+  size_bytes: number;
+  sha256: string;
+  page_count?: number | null;
+  created_by_user_id: string;
+  created_at: string;
+  points_total: number;
+  points_completed: number;
+}
+
+export interface PerforationPoint {
+  id: string;
+  company_id: string;
+  project_id: string;
+  rubro_id: string;
+  document_id: string;
+  color_id?: string | null;
+  page_number: number;
+  x: string;
+  y: string;
+  diameter: string;
+  label?: string | null;
+  color_hex: string;
+  checklist_json: PerforationChecklistEntry[];
+  note_text?: string | null;
+  note_original_filename?: string | null;
+  note_mime_type?: string | null;
+  status: 'pending' | 'completed';
+  created_by_user_id: string;
+}
+
+export interface PerforationWorkspace {
+  rubro: ProjectRubro;
+  colors: PerforationColor[];
+  documents: PerforationDocument[];
+  points: PerforationPoint[];
+}
+
 export interface LevelPlanGeometry {
   x: number;
   y: number;
@@ -100,6 +210,7 @@ export interface Task {
   project_id: string;
   template_id?: string | null;
   level_id?: string | null;
+  rubro_id?: string | null;
   title: string;
   description?: string | null;
   task_type: TaskType;

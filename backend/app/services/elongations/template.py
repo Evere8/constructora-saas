@@ -71,7 +71,6 @@ class TemplateGroupSlot:
     spacer_prototypes: tuple[dict[str, Any], ...] = ()
 
 
-
 @dataclass(frozen=True)
 class TemplateHeaderSnapshot:
     """A title/spacer/header block restored after the preceding section grows."""
@@ -309,7 +308,12 @@ def _find_formula_seed(
 
 
 def analyse_template(content: bytes, filename: str | None = None) -> TemplateMapping:
-    """Discover visual structure and a verified dominant formula, never fixed cell addresses."""
+    """Discover both operational blocks in whichever order the field file uses.
+
+    The field team uses two equally valid layouts: ``BANDAS`` above
+    ``DISTRIBUIDOS`` and the inverse.  Their order is presentation, not data, so
+    it must not change which section is parsed or exported.
+    """
 
     validate_template_bytes(content, filename)
     try:
@@ -317,36 +321,67 @@ def analyse_template(content: bytes, filename: str | None = None) -> TemplateMap
     except Exception as exc:  # openpyxl groups multiple malformed OOXML exceptions
         raise TemplateValidationError("No fue posible abrir la plantilla XLSX") from exc
     worksheet = workbook.active
-    band_row = _find_section(worksheet, "BANDAS")
-    distributed_row = _find_section(worksheet, "DISTRIBUIDOS")
-    if distributed_row <= band_row:
-        raise TemplateValidationError(
-            "Las secciones BANDAS y DISTRIBUIDOS están en un orden inválido"
-        )
-    band_header = _find_header_row(worksheet, band_row)
     warnings: list[str] = []
-    try:
-        distributed_header = _find_header_row(worksheet, distributed_row)
-    except TemplateValidationError:
-        # Some production templates have a single heading above BANDAS and no
-        # duplicate heading near DISTRIBUIDOS.  Reusing a fully validated
-        # heading is safer than guessing columns by position.
-        distributed_header = band_header
-        warnings.append("Distribuidos reutiliza los encabezados compartidos de Bandas")
-    columns = _find_columns(worksheet, band_header)
-    distributed_columns = _find_columns(worksheet, distributed_header)
+    section_rows = {
+        "band": _find_section(worksheet, "BANDAS"),
+        "distributed": _find_section(worksheet, "DISTRIBUIDOS"),
+    }
+    section_order = sorted(section_rows, key=section_rows.__getitem__)
+    headers: dict[str, int] = {}
+    header_errors: dict[str, TemplateValidationError] = {}
+    for name in section_order:
+        try:
+            headers[name] = _find_header_row(worksheet, section_rows[name])
+        except TemplateValidationError as exc:
+            header_errors[name] = exc
+
+    if not headers:
+        # Keep the existing, helpful validation text when neither block has a
+        # usable heading nearby.
+        raise next(iter(header_errors.values()))
+
+    shared_header = headers.get(section_order[0]) or next(iter(headers.values()))
+    for name in section_order:
+        if name in headers:
+            continue
+        # Some production templates use one validated heading for both blocks.
+        # Reusing that heading is safer than guessing columns by position.
+        headers[name] = shared_header
+        other = "Bandas" if name == "distributed" else "Distribuidos"
+        current = "Distribuidos" if name == "distributed" else "Bandas"
+        warnings.append(f"{current} reutiliza los encabezados compartidos de {other}")
+
+    columns = _find_columns(worksheet, headers["band"])
+    distributed_columns = _find_columns(worksheet, headers["distributed"])
     if columns != distributed_columns:
         raise TemplateValidationError(
             "Las secciones de la plantilla no comparten las mismas columnas"
         )
-    band_start = _section_body_start_row(worksheet, band_row, band_header)
-    distributed_start = _section_body_start_row(worksheet, distributed_row, distributed_header)
-    band_seed, formulas, tolerance = _find_formula_seed(
-        worksheet, band_start, distributed_row - 1, columns, warnings
-    )
-    distributed_seed, distributed_formulas, distributed_tolerance = _find_formula_seed(
-        worksheet, distributed_start, worksheet.max_row, columns, warnings
-    )
+    body_starts = {
+        name: _section_body_start_row(worksheet, section_rows[name], headers[name])
+        for name in section_order
+    }
+    body_ends = {
+        name: section_rows[section_order[index + 1]] - 1
+        if index + 1 < len(section_order)
+        else worksheet.max_row
+        for index, name in enumerate(section_order)
+    }
+    seeds: dict[str, int] = {}
+    formulas_by_section: dict[str, dict[str, str]] = {}
+    tolerances: dict[str, Decimal] = {}
+    for name in section_order:
+        seed, section_formulas, section_tolerance = _find_formula_seed(
+            worksheet, body_starts[name], body_ends[name], columns, warnings
+        )
+        seeds[name] = seed
+        formulas_by_section[name] = section_formulas
+        tolerances[name] = section_tolerance
+
+    formulas = formulas_by_section["band"]
+    tolerance = tolerances["band"]
+    distributed_formulas = formulas_by_section["distributed"]
+    distributed_tolerance = tolerances["distributed"]
     if tolerance != distributed_tolerance or formulas != distributed_formulas:
         warnings.append(
             "La sección Distribuidos usa una fórmula diferente; se aplicará la regla dominante"
@@ -355,15 +390,20 @@ def analyse_template(content: bytes, filename: str | None = None) -> TemplateMap
         sheet_name=worksheet.title,
         sections={
             "band": TemplateSection(
-                "band", band_row, band_header, band_start, distributed_row - 1, band_seed
+                "band",
+                section_rows["band"],
+                headers["band"],
+                body_starts["band"],
+                body_ends["band"],
+                seeds["band"],
             ),
             "distributed": TemplateSection(
                 "distributed",
-                distributed_row,
-                distributed_header,
-                distributed_start,
-                worksheet.max_row,
-                distributed_seed,
+                section_rows["distributed"],
+                headers["distributed"],
+                body_starts["distributed"],
+                body_ends["distributed"],
+                seeds["distributed"],
             ),
         },
         columns=columns,
@@ -531,9 +571,7 @@ def _groups_for_template_sections(
     }
     for section_name in ("band", "distributed"):
         slots = {slot.label_key: slot for slot in slots_by_section[section_name]}
-        section_groups = [
-            group for group in groups if group["classification"] == section_name
-        ]
+        section_groups = [group for group in groups if group["classification"] == section_name]
         result[section_name] = [
             (group, slots.get(_label_key(group["label"])))
             for group in sorted(section_groups, key=_group_sort_key)
@@ -659,7 +697,6 @@ def _write_section(
     return row_number
 
 
-
 def _translate_template_formula(formula: str, origin_row: int, target_row: int) -> str:
     """Translate a helper formula (for example the template's hidden controls)."""
 
@@ -753,8 +790,7 @@ def _add_measurement_conditional_formatting(
         measured_range,
         FormulaRule(
             formula=[
-                f'AND({measured_column}{first_data_row}="",'
-                f'{calculated_column}{first_data_row}<>"")'
+                f'AND({measured_column}{first_data_row}="",{calculated_column}{first_data_row}<>"")'
             ],
             fill=PatternFill("solid", fgColor="FEF3C7"),
         ),
@@ -951,10 +987,12 @@ def build_export_xlsx(
     validate_template_bytes(template_content)
     workbook = load_workbook(BytesIO(template_content), data_only=False, keep_vba=False)
     ws = workbook[mapping.sheet_name]
-    band_section = mapping.sections["band"]
-    distributed_section = mapping.sections["distributed"]
-    _write_project_header(ws, project_name, before_row=band_section.section_row)
-    distributed_header = _snapshot_section_header(ws, distributed_section)
+    section_order = sorted(mapping.sections, key=lambda name: mapping.sections[name].section_row)
+    first_section_name, second_section_name = section_order
+    first_section = mapping.sections[first_section_name]
+    second_section = mapping.sections[second_section_name]
+    _write_project_header(ws, project_name, before_row=first_section.section_row)
+    second_header = _snapshot_section_header(ws, second_section)
     slots_by_section = {
         "band": _template_group_slots(ws, mapping, "band"),
         "distributed": _template_group_slots(ws, mapping, "distributed"),
@@ -965,58 +1003,72 @@ def build_export_xlsx(
         for name, section in mapping.sections.items()
     }
 
-    # Everything below BANDAS is rebuilt so no old item, formula or merge remains.
-    _unmerge_body_ranges(ws, band_section.body_start_row)
-    ws.delete_rows(band_section.body_start_row, ws.max_row - band_section.body_start_row + 1)
+    # Rebuild from the first operational block onward.  The source may put
+    # DISTRIBUIDOS first; preserve that order and the original visual section
+    # header instead of forcing BANDAS to the top.
+    _unmerge_body_ranges(ws, first_section.body_start_row)
+    ws.delete_rows(first_section.body_start_row, ws.max_row - first_section.body_start_row + 1)
     for row in list(ws.row_dimensions):
-        if row >= band_section.body_start_row:
+        if row >= first_section.body_start_row:
             del ws.row_dimensions[row]
 
-    band_first_data_row = band_section.body_start_row
-    after_bands = _write_section(
+    section_starts: dict[str, int] = {first_section_name: first_section.body_start_row}
+    after_first = _write_section(
         ws,
         mapping,
-        band_first_data_row,
-        groups_by_section["band"],
+        section_starts[first_section_name],
+        groups_by_section[first_section_name],
         prototypes,
         final=final,
     )
-    distributed_body_start = _restore_section_header(ws, distributed_header, after_bands)
-    after_distributed = _write_section(
+    section_ends: dict[str, int] = {first_section_name: after_first - 1}
+    section_starts[second_section_name] = _restore_section_header(ws, second_header, after_first)
+    after_second = _write_section(
         ws,
         mapping,
-        distributed_body_start,
-        groups_by_section["distributed"],
+        section_starts[second_section_name],
+        groups_by_section[second_section_name],
         prototypes,
         final=final,
     )
+    section_ends[second_section_name] = after_second - 1
 
     # Old body rules reference example rows. Keep only rules above the rebuilt body.
     header_rules = ConditionalFormattingList()
     for conditional, rules in ws.conditional_formatting._cf_rules.items():
-        if all(area.max_row < band_first_data_row for area in conditional.sqref.ranges):
+        if all(
+            area.max_row < section_starts[first_section_name] for area in conditional.sqref.ranges
+        ):
             for rule in rules:
                 header_rules.add(copy(conditional), copy(rule))
     ws.conditional_formatting = header_rules
-    _add_measurement_conditional_formatting(
-        ws, mapping, band_first_data_row, after_bands - 1
-    )
-    _add_measurement_conditional_formatting(
-        ws, mapping, distributed_body_start, after_distributed - 1
-    )
+    for name in section_order:
+        _add_measurement_conditional_formatting(
+            ws, mapping, section_starts[name], section_ends[name]
+        )
 
     last_column = max(mapping.columns.values())
-    last_data_row = max(band_first_data_row, after_distributed - 1)
+    first_data_row = section_starts[first_section_name]
+    last_data_row = max(first_data_row, after_second - 1)
     ws.print_area = f"A1:{get_column_letter(last_column)}{last_data_row}"
-    ws.print_title_rows = f"{band_section.header_row}:{band_section.header_row + 1}"
-    ws.freeze_panes = f"A{band_first_data_row}"
+    ws.print_title_rows = f"{first_section.header_row}:{first_section.header_row + 1}"
+    # Field users scroll wide documents on tablets.  A frozen heading obscures
+    # the plan context, so keep the operational sheet fluid.
+    ws.freeze_panes = None
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
     ws.page_setup.scale = None
     ws.page_setup.orientation = ws.page_setup.orientation or "landscape"
     ws.page_setup.paperSize = ws.page_setup.paperSize or ws.PAPERSIZE_A4
-    _set_group_print_breaks(ws, mapping, last_column, last_data_row)
+    _set_group_print_breaks(
+        ws,
+        mapping,
+        last_column,
+        last_data_row,
+        first_data_row=first_data_row,
+        first_section_name=first_section_name,
+    )
     workbook.calculation.fullCalcOnLoad = True
     workbook.calculation.forceFullCalc = True
     workbook.calculation.calcMode = "auto"
@@ -1025,12 +1077,18 @@ def build_export_xlsx(
     output = BytesIO()
     workbook.save(output)
     result = output.getvalue()
-    _validate_generated_export(result, mapping, band_first_data_row, last_data_row)
+    _validate_generated_export(result, mapping, first_data_row, last_data_row)
     return result
 
 
 def _set_group_print_breaks(
-    ws: Any, mapping: TemplateMapping, last_column: int, last_row: int
+    ws: Any,
+    mapping: TemplateMapping,
+    last_column: int,
+    last_row: int,
+    *,
+    first_data_row: int,
+    first_section_name: str,
 ) -> None:
     """Keep ordinary S blocks on one printed page instead of cutting a Label.
 
@@ -1066,24 +1124,23 @@ def _set_group_print_breaks(
     def rows_height(first: int, last: int) -> float:
         return sum(ws.row_dimensions[r].height or default_height for r in range(first, last + 1))
 
-    section = mapping.sections["band"]
-    used = rows_height(1, section.body_start_row - 1)
+    section = mapping.sections[first_section_name]
+    used = rows_height(1, first_data_row - 1)
     repeated = rows_height(section.header_row, section.header_row + 1)
     ws.row_breaks = RowBreak()
-    next_row = section.body_start_row
-    for row in range(section.body_start_row, last_row + 1):
+    next_row = first_data_row
+    for row in range(first_data_row, last_row + 1):
         label = _label_key(ws.cell(row, mapping.columns["label"]).value)
         if not re.fullmatch(r"T\d+", label):
             continue
         count = _positive_integer(ws.cell(row, mapping.columns["strand_count"]).value) or 1
         used += rows_height(next_row, row - 1)
         group_height = rows_height(row, row + count - 1)
-        if used + group_height > capacity and row > section.body_start_row:
+        if used + group_height > capacity and row > first_data_row:
             ws.row_breaks.append(Break(id=row - 1))
             used = repeated
         used += group_height
         next_row = row + count
-
 
 
 def _validate_generated_export(

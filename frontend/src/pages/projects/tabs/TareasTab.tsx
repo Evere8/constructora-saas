@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Eye, ListChecks, Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { projectsApi, type TaskFilters } from '@/lib/api/projects';
+import { rubrosApi } from '@/lib/api/rubros';
 import { inventoryApi } from '@/lib/api/modules';
 import type { Task, TaskStatus, TaskType } from '@/types/api';
 import { useCan, useCanAssigned } from '@/auth/useCan';
@@ -40,7 +41,15 @@ import {
 const PAGE_SIZE = 10;
 const ALL = 'all';
 
-export function TareasTab({ companyId, projectId }: { companyId: string; projectId: string }) {
+export function TareasTab({
+  companyId,
+  projectId,
+  rubroId: fixedRubroId,
+}: {
+  companyId: string;
+  projectId: string;
+  rubroId?: string | null;
+}) {
   const canEdit = useCan('tasks.edit');
   const canChangeStatus = useCanAssigned('tasks.status');
   const queryClient = useQueryClient();
@@ -48,6 +57,7 @@ export function TareasTab({ companyId, projectId }: { companyId: string; project
   const [statusFilter, setStatusFilter] = useState<TaskStatus | typeof ALL>(ALL);
   const [typeFilter, setTypeFilter] = useState<TaskType | typeof ALL>(ALL);
   const [levelFilter, setLevelFilter] = useState<string>(ALL);
+  const [rubroFilter, setRubroFilter] = useState<string>(fixedRubroId ?? ALL);
   const [page, setPage] = useState(0);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Task | undefined>(undefined);
@@ -58,16 +68,27 @@ export function TareasTab({ companyId, projectId }: { companyId: string; project
     queryFn: ({ signal }) => projectsApi.listLevels(companyId, projectId, signal),
   });
   const levels = asItems(levelsQuery.data);
+  const rubrosQuery = useQuery({
+    queryKey: ['project-rubros', companyId, projectId],
+    queryFn: ({ signal }) => rubrosApi.list(companyId, projectId, signal),
+  });
+  const rubros = rubrosQuery.data ?? [];
+
+  useEffect(() => {
+    setRubroFilter(fixedRubroId ?? ALL);
+    setPage(0);
+  }, [fixedRubroId]);
 
   const filters = useMemo<TaskFilters>(
     () => ({
       status: statusFilter === ALL ? undefined : statusFilter,
       task_type: typeFilter === ALL ? undefined : typeFilter,
       level_id: levelFilter === ALL ? undefined : levelFilter,
+      rubro_id: rubroFilter === ALL ? undefined : rubroFilter,
       limit: PAGE_SIZE,
       offset: page * PAGE_SIZE,
     }),
-    [statusFilter, typeFilter, levelFilter, page],
+    [statusFilter, typeFilter, levelFilter, rubroFilter, page],
   );
 
   const query = useQuery({
@@ -113,6 +134,7 @@ export function TareasTab({ companyId, projectId }: { companyId: string; project
   const total = asTotal(query.data);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const levelName = (id?: string | null) => levels.find((l) => l.id === id)?.name ?? '\u2014';
+  const rubroName = (id?: string | null) => rubros.find((rubro) => rubro.id === id)?.name ?? '\u2014';
   const relocationsByTask = useMemo(
     () => new Map((relocationsQuery.data ?? []).map((relocation) => [relocation.task_id, relocation])),
     [relocationsQuery.data],
@@ -152,6 +174,15 @@ export function TareasTab({ companyId, projectId }: { companyId: string; project
               {levels.map((l) => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}
             </SelectContent>
           </Select>
+          {!fixedRubroId ? (
+            <Select value={rubroFilter} onValueChange={(v) => { setRubroFilter(v); setPage(0); }}>
+              <SelectTrigger className="w-[170px]"><SelectValue placeholder="Rubro" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>Todos los rubros</SelectItem>
+                {rubros.map((rubro) => <SelectItem key={rubro.id} value={rubro.id}>{rubro.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          ) : null}
         </div>
         {canEdit ? (
           <Button size="sm" onClick={openCreate}>
@@ -182,6 +213,7 @@ export function TareasTab({ companyId, projectId }: { companyId: string; project
                   <TableHead>Tarea</TableHead>
                   <TableHead className="hidden sm:table-cell">Tipo</TableHead>
                   <TableHead className="hidden md:table-cell">Nivel</TableHead>
+                  <TableHead className="hidden lg:table-cell">Rubro</TableHead>
                   <TableHead className="hidden md:table-cell">Prioridad</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead className="text-right">Acciones</TableHead>
@@ -203,6 +235,7 @@ export function TareasTab({ companyId, projectId }: { companyId: string; project
                       </TableCell>
                       <TableCell className="hidden sm:table-cell text-sm">{TASK_TYPE[task.task_type]}</TableCell>
                       <TableCell className="hidden md:table-cell text-sm text-muted-foreground">{levelName(task.level_id)}</TableCell>
+                      <TableCell className="hidden lg:table-cell text-sm text-muted-foreground">{rubroName(task.rubro_id)}</TableCell>
                       <TableCell className="hidden md:table-cell">
                         <Badge variant={priority?.variant ?? 'muted'}>{priority?.label ?? task.priority}</Badge>
                       </TableCell>
@@ -272,6 +305,8 @@ export function TareasTab({ companyId, projectId }: { companyId: string; project
           companyId={companyId}
           projectId={projectId}
           levels={levels}
+          rubros={rubros}
+          defaultRubroId={fixedRubroId ?? null}
           task={editing}
           open={dialogOpen}
           onOpenChange={setDialogOpen}

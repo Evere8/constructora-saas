@@ -134,6 +134,77 @@ class ProjectSector(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
+class ProjectRubro(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """A configurable project work stream (Postensado, Perforaciones, etc.).
+
+    The name and its functions belong to the project, rather than the company,
+    because the same company can use a different set of work streams per work.
+    ``slug`` is stable enough for the built-in streams while custom streams can
+    safely use a generated slug.
+    """
+
+    __tablename__ = "project_rubros"
+    __table_args__ = (
+        UniqueConstraint("project_id", "slug", name="uq_project_rubro_slug"),
+        Index("ix_project_rubros_project_order", "project_id", "sort_order"),
+    )
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    slug: Mapped[str] = mapped_column(String(80), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_by_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class ProjectRubroFeature(UUIDPrimaryKeyMixin, Base):
+    """An independently enabled function inside a project work stream."""
+
+    __tablename__ = "project_rubro_features"
+    __table_args__ = (
+        UniqueConstraint("rubro_id", "feature_key", name="uq_project_rubro_feature"),
+        Index("ix_project_rubro_features_rubro_order", "rubro_id", "sort_order"),
+    )
+
+    rubro_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("project_rubros.id", ondelete="CASCADE"), nullable=False
+    )
+    feature_key: Mapped[str] = mapped_column(String(60), nullable=False)
+    settings_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class ProjectRubroObservation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Short field observations scoped to a rubro without creating a task."""
+
+    __tablename__ = "project_rubro_observations"
+    __table_args__ = (
+        Index("ix_project_rubro_observations_rubro_created", "rubro_id", "created_at"),
+    )
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    rubro_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("project_rubros.id", ondelete="CASCADE"), nullable=False
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="SET NULL"), nullable=True
+    )
+
+
 class ProjectLevel(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "project_levels"
     __table_args__ = (
@@ -184,6 +255,9 @@ class Task(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     level_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("project_levels.id", ondelete="SET NULL"), nullable=True
+    )
+    rubro_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("project_rubros.id", ondelete="SET NULL"), nullable=True
     )
     task_type: Mapped[str] = mapped_column(String(20), nullable=False)
     title: Mapped[str] = mapped_column(String(220), nullable=False)
@@ -595,6 +669,95 @@ class Annotation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     geometry_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     style_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    created_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id"), nullable=False
+    )
+
+
+class PerforationDocument(UUIDPrimaryKeyMixin, Base):
+    """An uploaded, private PDF/image canvas used by the Perforaciones rubro."""
+
+    __tablename__ = "perforation_documents"
+    __table_args__ = (Index("ix_perforation_documents_rubro_created", "rubro_id", "created_at"),)
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    rubro_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("project_rubros.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+
+class PerforationColor(UUIDPrimaryKeyMixin, Base):
+    """A reusable color/status and the checklist it starts for each new point."""
+
+    __tablename__ = "perforation_colors"
+    __table_args__ = (Index("ix_perforation_colors_rubro_order", "rubro_id", "sort_order"),)
+
+    rubro_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("project_rubros.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    color_hex: Mapped[str] = mapped_column(String(12), nullable=False)
+    checklist_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class PerforationPoint(UUIDPrimaryKeyMixin, Base):
+    """A normalized point on a perforation document, including its live checklist."""
+
+    __tablename__ = "perforation_points"
+    __table_args__ = (
+        Index("ix_perforation_points_document_page", "document_id", "page_number"),
+        Index("ix_perforation_points_rubro_status", "rubro_id", "status"),
+    )
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    rubro_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("project_rubros.id", ondelete="CASCADE"), nullable=False
+    )
+    document_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("perforation_documents.id", ondelete="CASCADE"), nullable=False
+    )
+    color_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("perforation_colors.id", ondelete="SET NULL"), nullable=True
+    )
+    page_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    x: Mapped[Decimal] = mapped_column(Numeric(8, 6), nullable=False)
+    y: Mapped[Decimal] = mapped_column(Numeric(8, 6), nullable=False)
+    diameter: Mapped[Decimal] = mapped_column(
+        Numeric(8, 6), nullable=False, default=Decimal("0.026")
+    )
+    label: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    color_hex: Mapped[str] = mapped_column(String(12), nullable=False)
+    checklist_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    note_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    note_storage_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    note_original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    note_mime_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     created_by_user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("app_users.id"), nullable=False

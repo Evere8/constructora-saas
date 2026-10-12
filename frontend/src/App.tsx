@@ -4,6 +4,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '@/lib/queryClient';
 import { AuthProvider } from '@/auth/AuthProvider';
 import { CompanyProvider } from '@/context/CompanyProvider';
+import { ThemeProvider } from '@/context/ThemeProvider';
 import { Toaster } from '@/components/ui/sonner';
 import {
   AccountGate,
@@ -57,11 +58,12 @@ const SettingsPage = lazy(() =>
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <CompanyProvider>
-          <BrowserRouter>
-            <Suspense fallback={<FullScreenLoader label="Cargando módulo..." />}>
-              <Routes>
+      <ThemeProvider>
+        <AuthProvider>
+          <CompanyProvider>
+            <BrowserRouter>
+              <Suspense fallback={<FullScreenLoader label="Cargando módulo..." />}>
+                <Routes>
                 <Route path="/login" element={<PublicOnly><LoginPage /></PublicOnly>} />
                 <Route path="/recuperar" element={<PublicOnly><ForgotPasswordPage /></PublicOnly>} />
                 <Route path="/restablecer" element={<ResetPasswordPage />} />
@@ -95,12 +97,13 @@ export default function App() {
                 </Route>
 
                 <Route path="*" element={<NotFoundPage />} />
-              </Routes>
-            </Suspense>
-            <Toaster />
-          </BrowserRouter>
-        </CompanyProvider>
-      </AuthProvider>
+                </Routes>
+              </Suspense>
+              <Toaster />
+            </BrowserRouter>
+          </CompanyProvider>
+        </AuthProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   );
 }

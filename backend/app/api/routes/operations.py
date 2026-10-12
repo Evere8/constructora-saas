@@ -37,6 +37,7 @@ from app.db.models import (
     PlanVersion,
     Project,
     ProjectLevel,
+    ProjectRubro,
     ProjectSector,
     Task,
     TaskMaterialRequirement,
@@ -170,6 +171,22 @@ async def require_level(db: DbSession, project_id: str, level_id: str | None) ->
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="El nivel no pertenece a esta obra",
+        )
+
+
+async def require_rubro(db: DbSession, project_id: str, rubro_id: str | None) -> None:
+    if rubro_id is None:
+        return
+    rubro = await db.scalar(
+        select(ProjectRubro.id).where(
+            ProjectRubro.id == rubro_id,
+            ProjectRubro.project_id == project_id,
+        )
+    )
+    if rubro is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="El rubro no pertenece a esta obra",
         )
 
 
@@ -411,9 +428,7 @@ async def update_sector(
     if "name" in changes:
         levels = list(
             (
-                await db.execute(
-                    select(ProjectLevel).where(ProjectLevel.sector_id == sector.id)
-                )
+                await db.execute(select(ProjectLevel).where(ProjectLevel.sector_id == sector.id))
             ).scalars()
         )
         for level in levels:
@@ -679,6 +694,7 @@ async def list_tasks(
     task_type: str | None = Query(default=None),
     assigned_user_id: str | None = Query(default=None),
     level_id: str | None = Query(default=None),
+    rubro_id: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> TaskListResponse:
@@ -692,6 +708,8 @@ async def list_tasks(
         filters.append(Task.assigned_user_id == assigned_user_id)
     if level_id:
         filters.append(Task.level_id == level_id)
+    if rubro_id:
+        filters.append(Task.rubro_id == rubro_id)
 
     total = await db.scalar(select(func.count()).select_from(Task).where(*filters))
     result = await db.execute(
@@ -729,6 +747,7 @@ async def create_task(
     require_role(access, WORK_EDITOR_ROLES)
     await require_project(db, access.company_id, project_id)
     await require_level(db, project_id, payload.level_id)
+    await require_rubro(db, project_id, payload.rubro_id)
     await require_assignee(db, access.company_id, payload.assigned_user_id)
     template = await require_task_template(db, access.company_id, payload.template_id)
     values = payload.model_dump(exclude={"template_id", "inventory_item_ids"})
@@ -889,6 +908,8 @@ async def update_task(
 
     if "level_id" in changes:
         await require_level(db, project_id, changes["level_id"])
+    if "rubro_id" in changes:
+        await require_rubro(db, project_id, changes["rubro_id"])
     if "assigned_user_id" in changes:
         await require_assignee(db, access.company_id, changes["assigned_user_id"])
     final_start = changes.get("planned_start_at", task.planned_start_at)

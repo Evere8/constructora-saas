@@ -1,6 +1,62 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 @layer base {
+  :root {
+    --background: 30 33% 98%;
+    --foreground: 20 14% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 20 14% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 20 14% 12%;
+    --primary: 22 90% 48%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 215 28% 17%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 30 15% 94%;
+    --muted-foreground: 20 8% 40%;
+    --accent: 30 20% 92%;
+    --accent-foreground: 20 14% 12%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 20 15% 88%;
+    --input: 20 15% 88%;
+    --ring: 22 90% 48%;
+    --sidebar: 215 32% 14%;
+    --sidebar-foreground: 210 20% 92%;
+    --sidebar-accent: 215 28% 22%;
+    --sidebar-border: 215 25% 24%;
+  }
+
+  .dark {
+    --background: 222 30% 9%;
+    --foreground: 210 30% 95%;
+    --card: 222 26% 13%;
+    --card-foreground: 210 30% 95%;
+    --popover: 222 26% 13%;
+    --popover-foreground: 210 30% 95%;
+    --primary: 25 96% 56%;
+    --primary-foreground: 20 18% 10%;
+    --secondary: 215 20% 25%;
+    --secondary-foreground: 210 30% 95%;
+    --muted: 222 20% 18%;
+    --muted-foreground: 215 18% 70%;
+    --accent: 222 20% 20%;
+    --accent-foreground: 210 30% 95%;
+    --destructive: 0 78% 62%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 221 18% 26%;
+    --input: 221 18% 26%;
+    --ring: 25 96% 56%;
+    --sidebar: 222 33% 7%;
+    --sidebar-foreground: 210 30% 95%;
+    --sidebar-accent: 222 24% 17%;
+    --sidebar-border: 221 20% 23%;
+  }
+
   * {
     @apply border-border;
   }
@@ -16,6 +72,16 @@
   }
 }
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@layer components {
+  .surface-solid {
+    @apply bg-card shadow-sm;
+  }
+
+  .surface-glass {
+    @apply border-white/60 bg-card/75 shadow-sm backdrop-blur-md dark:border-white/10 dark:bg-card/80;
+  }
+
+  .bubble-nav {
+    @apply rounded-2xl border border-border/70 bg-card/80 p-1.5 shadow-sm backdrop-blur-md;
+  }
+}

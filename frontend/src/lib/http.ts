@@ -192,6 +192,7 @@ export const api = {
     apiRequest<T>('GET', path, { params, signal }),
   post: <T>(path: string, body?: unknown) => apiRequest<T>('POST', path, { body }),
   upload: <T>(path: string, body: FormData) => apiRequest<T>('POST', path, { body }),
+  put: <T>(path: string, body?: unknown) => apiRequest<T>('PUT', path, { body }),
   patch: <T>(path: string, body?: unknown) => apiRequest<T>('PATCH', path, { body }),
   del: <T>(path: string) => apiRequest<T>('DELETE', path),
   blob: (path: string, params?: QueryParams) => apiBlobRequest(path, params),
