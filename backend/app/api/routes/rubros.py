@@ -561,6 +561,10 @@ async def set_rubro_features(
     existing = await rubro_features(db, rubro.id)
     for feature in existing:
         await db.delete(feature)
+    # MySQL checks the unique (rubro_id, feature_key) index while flushing
+    # inserts.  Flush the deletes first so saving an unchanged or reordered
+    # set of functions cannot collide with the rows it is replacing.
+    await db.flush()
     seen: set[str] = set()
     for item in sorted(payload.features, key=lambda value: FEATURE_ORDER[value.feature_key]):
         if item.feature_key in seen:

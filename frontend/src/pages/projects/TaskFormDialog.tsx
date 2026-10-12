@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -9,7 +9,7 @@ import { projectsApi, type TaskInput } from '@/lib/api/projects';
 import { inventoryApi, membersApi } from '@/lib/api/modules';
 import { taskLibraryApi } from '@/lib/api/taskLibrary';
 import { roleLabel } from '@/auth/permissions';
-import type { Level, ProjectRubro, Task, TaskPriority, TaskStatus, TaskType } from '@/types/api';
+import type { Level, ProjectRubro, ProjectSector, Task, TaskPriority, TaskStatus, TaskType } from '@/types/api';
 import { ApiError } from '@/lib/http';
 import {
   TASK_PRIORITY_OPTIONS,
@@ -82,6 +82,13 @@ export function TaskFormDialog({
   const isEdit = Boolean(task);
   const queryClient = useQueryClient();
   const [formError, setFormError] = useState<string | null>(null);
+  const [sectorId, setSectorId] = useState(
+    levels.find((level) => level.id === task?.level_id)?.sector_id ?? NONE,
+  );
+  useEffect(() => {
+    const taskSectorId = levels.find((level) => level.id === task?.level_id)?.sector_id;
+    if (taskSectorId) setSectorId(taskSectorId);
+  }, [levels, task?.level_id]);
 
   const {
     register,
@@ -112,6 +119,16 @@ export function TaskFormDialog({
   const membersQuery = useQuery({
     queryKey: ['members', companyId],
     queryFn: ({ signal }) => membersApi.list(companyId, signal),
+    enabled: open,
+  });
+  const projectQuery = useQuery({
+    queryKey: ['project', companyId, projectId],
+    queryFn: ({ signal }) => projectsApi.get(companyId, projectId, signal),
+    enabled: open,
+  });
+  const sectorsQuery = useQuery({
+    queryKey: ['project-sectors', companyId, projectId],
+    queryFn: ({ signal }) => projectsApi.listSectors(companyId, projectId, signal),
     enabled: open,
   });
   const inventoryQuery = useQuery({
@@ -154,6 +171,10 @@ export function TaskFormDialog({
   const requiresRelocation = selectedEquipment.some(
     (item) => item.current_project_id !== projectId,
   );
+  const sectors: ProjectSector[] = sectorsQuery.data ?? [];
+  const visibleLevels = sectorId === NONE
+    ? levels
+    : levels.filter((level) => level.sector_id === sectorId);
 
   const applyTemplate = (value: string) => {
     const nextId = value === NONE ? NONE : value;
@@ -285,10 +306,27 @@ export function TaskFormDialog({
             </div>
           ) : null}
 
-          <div className="space-y-2">
-            <Label htmlFor="task-title">Título</Label>
-            <Input id="task-title" {...register('title')} />
-            {errors.title ? <p className="text-sm text-destructive">{errors.title.message}</p> : null}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2 sm:col-span-2">
+              <Label htmlFor="task-title">Título</Label>
+              <Input id="task-title" {...register('title')} />
+              {errors.title ? <p className="text-sm text-destructive">{errors.title.message}</p> : null}
+            </div>
+            <div className="space-y-2">
+              <Label>Obra</Label>
+              <Input value={projectQuery.data?.name ?? 'Cargando obra…'} readOnly aria-label="Obra seleccionada" className="bg-muted/40" />
+              <p className="text-xs text-muted-foreground">La tarea se guardará dentro de esta obra.</p>
+            </div>
+            <div className="space-y-2">
+              <Label>Sector</Label>
+              <Select value={sectorId} onValueChange={(value) => { setSectorId(value); if (value !== NONE && levelId !== NONE && !levels.some((level) => level.id === levelId && level.sector_id === value)) setValue('level_id', NONE); }}>
+                <SelectTrigger><SelectValue placeholder="Sin sector" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NONE}>Todos los sectores</SelectItem>
+                  {sectors.map((sector) => <SelectItem key={sector.id} value={sector.id}>{sector.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
@@ -382,11 +420,11 @@ export function TaskFormDialog({
             </div>
             <div className="space-y-2">
               <Label>Nivel</Label>
-              <Select value={levelId} onValueChange={(value) => setValue('level_id', value)}>
+              <Select value={levelId} onValueChange={(value) => { setValue('level_id', value); const level = levels.find((item) => item.id === value); if (level?.sector_id) setSectorId(level.sector_id); }}>
                 <SelectTrigger><SelectValue placeholder="Sin nivel" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NONE}>Sin nivel</SelectItem>
-                  {levels.map((level) => (
+                  {visibleLevels.map((level) => (
                     <SelectItem key={level.id} value={level.id}>
                       {(level.building_name || 'Obra general')} · {level.name}
                     </SelectItem>

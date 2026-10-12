@@ -11,14 +11,22 @@ import {
   ChevronLeft,
   ChevronRight,
   FileText,
+  Hand,
+  Highlighter,
+  MapPin,
   Maximize2,
+  MessageSquarePlus,
   Paperclip,
   Pencil,
+  PencilLine,
   Plus,
+  Ruler,
   Settings2,
   Trash2,
   Upload,
   X,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useCan } from '@/auth/useCan';
@@ -38,10 +46,34 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 
 type DragState = { pointId: string; pointerId: number; originX: number; originY: number } | null;
+type CanvasPoint = { x: number; y: number };
+type PerforationTool = 'point' | 'pan' | 'note' | 'draw' | 'highlight' | 'straight';
+type CanvasAnnotation = {
+  id: string;
+  type: 'line' | 'note';
+  points?: CanvasPoint[];
+  point?: CanvasPoint;
+  text?: string;
+  color: string;
+  width: number;
+  opacity: number;
+};
+
+const PENCIL_COLORS = ['#f97316', '#2563eb', '#16a34a', '#dc2626', '#7c3aed', '#111827'];
+const STROKE_OPTIONS = [
+  { value: 2, label: 'Fino' },
+  { value: 4, label: 'Medio' },
+  { value: 7, label: 'Grueso' },
+  { value: 11, label: 'Marcado' },
+];
 
 function asNumber(value: string | number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizedCoordinate(value: number): number {
+  return Number(Math.max(0, Math.min(1, value)).toFixed(6));
 }
 
 function pointColor(point: PerforationPoint): string {
@@ -181,9 +213,12 @@ function PointInspector({
   const fileInput = useRef<HTMLInputElement>(null);
   const [note, setNote] = useState(point.note_text ?? '');
   const [label, setLabel] = useState(point.label ?? '');
+  const [checklistOpen, setChecklistOpen] = useState(false);
+  const [checklistDraft, setChecklistDraft] = useState('');
   useEffect(() => {
     setNote(point.note_text ?? '');
     setLabel(point.label ?? '');
+    setChecklistDraft(point.checklist_json.map((entry) => entry.title).join('\n'));
   }, [point.id, point.note_text, point.label]);
   const refresh = () => void queryClient.invalidateQueries({
     queryKey: ['perforation-workspace', companyId, projectId, rubro.id],
@@ -216,6 +251,14 @@ function PointInspector({
   const toggleCheck = (entry: PerforationChecklistEntry) => {
     checklist.mutate(point.checklist_json.map((item) => item.id === entry.id ? { ...item, checked: !item.checked } : item));
   };
+  const saveChecklist = () => {
+    const entries = checklistDraft
+      .split('\n')
+      .map((title) => title.trim())
+      .filter(Boolean)
+      .map((title, index) => ({ id: `point-step-${index + 1}`, title, checked: false }));
+    checklist.mutate(entries, { onSuccess: () => setChecklistOpen(false) });
+  };
   const downloadAttachment = async () => {
     try {
       const blob = await rubrosApi.downloadPerforationAttachment(companyId, projectId, rubro.id, point.id);
@@ -242,9 +285,17 @@ function PointInspector({
         </div>
       </div>
       <div className="mt-3 space-y-1"><Label>Nota</Label><Textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Escribe una observación del punto" className="min-h-20" /></div>
-      <div className="mt-2 flex flex-wrap gap-2"><Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>Guardar nota</Button><Button size="sm" variant={editMode ? 'default' : 'outline'} onClick={onToggleEdit}><Pencil className="h-4 w-4" /> {editMode ? 'Terminar edición' : 'Mover / tamaño'}</Button><Button size="sm" variant="outline" onClick={() => fileInput.current?.click()}><Paperclip className="h-4 w-4" /> Cargar nota</Button><input ref={fileInput} className="sr-only" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachment.mutate(file); event.target.value = ''; }} /></div>
+      <div className="mt-2 flex flex-wrap gap-2"><Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>Guardar nota</Button><Button size="sm" variant="outline" onClick={() => { setChecklistDraft(point.checklist_json.map((entry) => entry.title).join('\n')); setChecklistOpen(true); }}><Settings2 className="h-4 w-4" /> Configurar checklist</Button><Button size="sm" variant={editMode ? 'default' : 'outline'} onClick={onToggleEdit}><Pencil className="h-4 w-4" /> {editMode ? 'Terminar edición' : 'Mover / tamaño'}</Button><Button size="sm" variant="outline" onClick={() => fileInput.current?.click()}><Paperclip className="h-4 w-4" /> Cargar nota</Button><input ref={fileInput} className="sr-only" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachment.mutate(file); event.target.value = ''; }} /></div>
       {point.note_original_filename ? <button type="button" className="mt-2 flex max-w-full items-center gap-1 text-xs text-primary underline" onClick={() => void downloadAttachment()}><FileText className="h-3.5 w-3.5" /><span className="truncate">{point.note_original_filename}</span></button> : null}
       {editMode ? <div className="mt-3 rounded-lg border border-primary/30 bg-primary/5 p-2 text-xs"><div className="flex items-center justify-between gap-2"><span>Arrastra el punto o ajusta su tamaño.</span><span>{Math.round(asNumber(point.diameter) * 100)}%</span></div><input className="mt-2 w-full accent-primary" type="range" min="0.8" max="12" step="0.2" value={asNumber(point.diameter) * 100} onChange={(event) => pointUpdate.mutate({ diameter: Number(event.target.value) / 100 })} /></div> : null}
+      <Dialog open={checklistOpen} onOpenChange={setChecklistOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Configurar checklist del punto</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">Un control por línea. Al guardar se reinicia el estado del punto.</p>
+          <Textarea value={checklistDraft} onChange={(event) => setChecklistDraft(event.target.value)} className="min-h-40" placeholder="Perforado\nVerificar punto\nRegistrar evidencia" />
+          <DialogFooter><Button type="button" variant="outline" onClick={() => setChecklistOpen(false)}>Cancelar</Button><Button type="button" disabled={checklist.isPending} onClick={saveChecklist}>Guardar checklist</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }
@@ -252,7 +303,15 @@ function PointInspector({
 export function PerforationBoard({ companyId, projectId, rubro }: { companyId: string; projectId: string; rubro: ProjectRubro }) {
   const canEdit = useCan('projects.edit');
   const queryClient = useQueryClient();
+  const viewportRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const interaction = useRef<
+    | { kind: 'pan'; clientX: number; clientY: number; offsetX: number; offsetY: number }
+    | { kind: 'draw'; mode: 'draw' | 'highlight' }
+    | { kind: 'straight'; start: CanvasPoint }
+    | null
+  >(null);
+  const drawingRef = useRef<CanvasPoint[]>([]);
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [selectedColorId, setSelectedColorId] = useState<string | null>(null);
@@ -263,6 +322,15 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [colorSettingsOpen, setColorSettingsOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [tool, setTool] = useState<PerforationTool>('point');
+  const [scale, setScale] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [drawing, setDrawing] = useState<CanvasPoint[]>([]);
+  const [straightLine, setStraightLine] = useState<{ start: CanvasPoint; end: CanvasPoint } | null>(null);
+  const [note, setNote] = useState<{ point: CanvasPoint; text: string } | null>(null);
+  const [annotations, setAnnotations] = useState<CanvasAnnotation[]>([]);
+  const [pencilColor, setPencilColor] = useState('#f97316');
+  const [strokeWidth, setStrokeWidth] = useState(4);
 
   const workspace = useQuery({
     queryKey: ['perforation-workspace', companyId, projectId, rubro.id],
@@ -271,6 +339,7 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
   const data = workspace.data;
   const documents = data?.documents ?? [];
   const colors = data?.colors ?? [];
+  const activeColorId = selectedColorId ?? colors.find((color) => color.is_active)?.id ?? null;
   const selectedDocument = documents.find((document) => document.id === selectedDocumentId) ?? documents[0] ?? null;
   const selectedPoint = (data?.points ?? []).find((point) => point.id === selectedPointId) ?? null;
   const filteredPoints = useMemo(() => (data?.points ?? []).filter((point) => point.document_id === selectedDocument?.id && point.page_number === page), [data?.points, page, selectedDocument?.id]);
@@ -292,6 +361,12 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
     setSelectedPointId(null);
     setEditingPointId(null);
   }, [page, selectedDocument?.id, selectedPoint]);
+  useEffect(() => {
+    setAnnotations([]);
+    setScale(1);
+    setOffset({ x: 0, y: 0 });
+    setTool('point');
+  }, [page, selectedDocument?.id]);
 
   const preview = useQuery({
     queryKey: ['perforation-preview', companyId, projectId, rubro.id, selectedDocument?.id, page],
@@ -318,7 +393,7 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
   const createPoint = useMutation({
     mutationFn: ({ x, y }: { x: number; y: number }) => rubrosApi.createPerforationPoint(companyId, projectId, rubro.id, {
       document_id: selectedDocument!.id,
-      color_id: selectedColorId as string,
+      color_id: activeColorId as string,
       page_number: page,
       x,
       y,
@@ -342,13 +417,91 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const createAtEvent = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!canEdit || !selectedDocument || !selectedColorId || drag) return;
+  const pointFromClient = (clientX: number, clientY: number): CanvasPoint | null => {
     const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-    const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
-    createPoint.mutate({ x, y });
+    if (!rect || rect.width <= 0 || rect.height <= 0) return null;
+    return {
+      x: normalizedCoordinate((clientX - rect.left) / rect.width),
+      y: normalizedCoordinate((clientY - rect.top) / rect.height),
+    };
+  };
+  const annotationStyle = (mode: 'draw' | 'highlight' | 'straight') => ({
+    color: pencilColor,
+    width: mode === 'highlight' ? Math.max(strokeWidth * 3, 14) : strokeWidth,
+    opacity: mode === 'highlight' ? 0.32 : 1,
+  });
+  const pointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    const point = pointFromClient(event.clientX, event.clientY);
+    if (!point) return;
+    if (tool === 'point') {
+      if (!canEdit || !selectedDocument || !activeColorId || drag) return;
+      createPoint.mutate({ x: point.x, y: point.y });
+      return;
+    }
+    if (!canEdit) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    if (tool === 'pan') {
+      interaction.current = { kind: 'pan', clientX: event.clientX, clientY: event.clientY, offsetX: offset.x, offsetY: offset.y };
+      return;
+    }
+    if (tool === 'note') {
+      setNote({ point, text: '' });
+      return;
+    }
+    if (tool === 'draw' || tool === 'highlight') {
+      interaction.current = { kind: 'draw', mode: tool };
+      drawingRef.current = [point];
+      setDrawing([point]);
+      return;
+    }
+    interaction.current = { kind: 'straight', start: point };
+    setStraightLine({ start: point, end: point });
+  };
+  const pointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const active = interaction.current;
+    if (!active) return;
+    if (active.kind === 'pan') {
+      setOffset({ x: active.offsetX + event.clientX - active.clientX, y: active.offsetY + event.clientY - active.clientY });
+      return;
+    }
+    const point = pointFromClient(event.clientX, event.clientY);
+    if (!point) return;
+    if (active.kind === 'draw') {
+      const previous = drawingRef.current[drawingRef.current.length - 1];
+      if (!previous || Math.abs(previous.x - point.x) + Math.abs(previous.y - point.y) > 0.002) {
+        drawingRef.current = [...drawingRef.current, point];
+        setDrawing(drawingRef.current);
+      }
+      return;
+    }
+    setStraightLine({ start: active.start, end: point });
+  };
+  const saveNote = () => {
+    if (!note?.text.trim()) return;
+    setAnnotations((current) => [...current, { id: `local-${Date.now()}`, type: 'note', point: note.point, text: note.text.trim(), ...annotationStyle('draw') }]);
+    setNote(null);
+    setTool('pan');
+  };
+  const pointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const active = interaction.current;
+    interaction.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (!active) return;
+    if (active.kind === 'draw') {
+      const points = drawingRef.current;
+      drawingRef.current = [];
+      setDrawing([]);
+      if (points.length > 1) setAnnotations((current) => [...current, { id: `local-${Date.now()}`, type: 'line', points, ...annotationStyle(active.mode) }]);
+      return;
+    }
+    if (active.kind === 'straight') {
+      const end = pointFromClient(event.clientX, event.clientY);
+      setStraightLine(null);
+      if (end && (Math.abs(active.start.x - end.x) + Math.abs(active.start.y - end.y) > 0.002)) {
+        setAnnotations((current) => [...current, { id: `local-${Date.now()}`, type: 'line', points: [active.start, end], ...annotationStyle('straight') }]);
+      }
+    }
   };
   const beginDrag = (event: ReactPointerEvent<HTMLButtonElement>, point: PerforationPoint) => {
     // A point sits inside the canvas.  Stop the initial press even outside
@@ -364,8 +517,8 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
     if (!drag || event.pointerId !== drag.pointerId) return;
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-    const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+    const x = normalizedCoordinate((event.clientX - rect.left) / rect.width);
+    const y = normalizedCoordinate((event.clientY - rect.top) / rect.height);
     const element = document.getElementById(`perforation-point-${drag.pointId}`);
     if (element) { element.style.left = `${x * 100}%`; element.style.top = `${y * 100}%`; }
   };
@@ -373,8 +526,8 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
     if (!drag || event.pointerId !== drag.pointerId) return;
     const rect = canvasRef.current?.getBoundingClientRect();
     if (rect) {
-      const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-      const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+      const x = normalizedCoordinate((event.clientX - rect.left) / rect.width);
+      const y = normalizedCoordinate((event.clientY - rect.top) / rect.height);
       movePoint.mutate({ pointId: drag.pointId, x, y });
     }
     setDrag(null);
@@ -398,11 +551,46 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
               <div className="flex min-w-0 flex-wrap gap-2">{documents.map((document) => <button type="button" key={document.id} onClick={() => { setSelectedDocumentId(document.id); setPage(1); }} className={`rounded-xl border px-3 py-2 text-left text-sm transition ${selectedDocument?.id === document.id ? 'border-primary bg-primary/10 ring-1 ring-primary' : 'bg-card hover:border-primary/50'}`}><span className="block max-w-52 truncate font-semibold">{document.title}</span><span className="text-xs text-muted-foreground">{document.points_completed}/{document.points_total} listos</span></button>)}</div>
               <div className="flex flex-wrap items-center gap-2">{canEdit && selectedDocument ? <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => { if (window.confirm(`¿Eliminar ${selectedDocument.title} y todos sus puntos?`)) deleteDocument.mutate(selectedDocument.id); }}><Trash2 className="h-4 w-4" /> Eliminar plano</Button> : null}<Button size="sm" variant="outline" onClick={() => setIsFullscreen((value) => !value)}>{isFullscreen ? <X className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}{isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}</Button></div>
             </div>
-            <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card/85 p-3"><span className="text-sm font-semibold">Nuevo punto:</span>{colors.filter((color) => color.is_active).map((color) => <button key={color.id} type="button" disabled={!canEdit} onClick={() => setSelectedColorId(color.id)} className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-medium transition ${selectedColorId === color.id ? 'border-foreground ring-2 ring-primary/30' : 'hover:border-primary/50'}`}><span className="h-3 w-3 rounded-full" style={{ backgroundColor: color.color_hex }} />{color.name}</button>)}{!colors.length ? <span className="text-sm text-muted-foreground">Configura al menos un color.</span> : null}</div>
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card/85 p-3"><span className="text-sm font-semibold">Nuevo punto:</span>{colors.filter((color) => color.is_active).map((color) => <button key={color.id} type="button" disabled={!canEdit} onClick={() => { setSelectedColorId(color.id); setTool('point'); }} className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-medium transition ${selectedColorId === color.id ? 'border-foreground ring-2 ring-primary/30' : 'hover:border-primary/50'}`}><span className="h-3 w-3 rounded-full" style={{ backgroundColor: color.color_hex }} />{color.name}</button>)}{!colors.length ? <span className="text-sm text-muted-foreground">Configura al menos un color.</span> : null}</div>
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-card/85 p-2 shadow-sm">
+              <div className="flex flex-wrap gap-1.5">
+                <Button size="sm" variant="outline" className={tool === 'point' ? 'border-orange-500 bg-orange-500 text-white hover:bg-orange-600 hover:text-white' : ''} onClick={() => setTool('point')} disabled={!canEdit}><MapPin className="h-4 w-4" /> Punto</Button>
+                <Button size="sm" variant="outline" className={tool === 'pan' ? 'border-orange-500 bg-orange-500 text-white hover:bg-orange-600 hover:text-white' : ''} onClick={() => setTool('pan')}><Hand className="h-4 w-4" /> Mover</Button>
+                {canEdit ? <>
+                  <Button size="sm" variant="outline" className={tool === 'note' ? 'border-orange-500 bg-orange-500 text-white hover:bg-orange-600 hover:text-white' : ''} onClick={() => setTool('note')}><MessageSquarePlus className="h-4 w-4" /> Texto</Button>
+                  <Button size="sm" variant="outline" className={tool === 'draw' ? 'border-orange-500 bg-orange-500 text-white hover:bg-orange-600 hover:text-white' : ''} onClick={() => setTool('draw')}><PencilLine className="h-4 w-4" /> Lápiz</Button>
+                  <Button size="sm" variant="outline" className={tool === 'highlight' ? 'border-orange-500 bg-orange-500 text-white hover:bg-orange-600 hover:text-white' : ''} onClick={() => setTool('highlight')}><Highlighter className="h-4 w-4" /> Iluminador</Button>
+                  <Button size="sm" variant="outline" className={tool === 'straight' ? 'border-orange-500 bg-orange-500 text-white hover:bg-orange-600 hover:text-white' : ''} onClick={() => setTool('straight')}><Ruler className="h-4 w-4" /> Trazo recto</Button>
+                </> : null}
+              </div>
+              <div className="flex items-center gap-1">
+                <Button size="icon" variant="ghost" aria-label="Alejar plano" onClick={() => setScale((value) => Math.max(0.65, value - 0.2))}><ZoomOut className="h-4 w-4" /></Button>
+                <span className="w-12 text-center text-xs font-semibold">{Math.round(scale * 100)}%</span>
+                <Button size="icon" variant="ghost" aria-label="Acercar plano" onClick={() => setScale((value) => Math.min(3, value + 0.2))}><ZoomIn className="h-4 w-4" /></Button>
+                <Button size="sm" variant="ghost" onClick={() => { setScale(1); setOffset({ x: 0, y: 0 }); }}>Restablecer</Button>
+              </div>
+            </div>
+            {canEdit && (tool === 'draw' || tool === 'highlight' || tool === 'straight') ? <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card/85 px-3 py-2 text-xs"><span className="font-semibold">Color</span>{PENCIL_COLORS.map((color) => <button key={color} type="button" aria-label={`Usar color ${color}`} className={`h-6 w-6 rounded-full border-2 ${pencilColor === color ? 'scale-110 border-slate-900' : 'border-white'}`} style={{ backgroundColor: color }} onClick={() => setPencilColor(color)} />)}<input aria-label="Color personalizado" className="h-7 w-8 cursor-pointer rounded border p-0.5" type="color" value={pencilColor} onChange={(event) => setPencilColor(event.target.value)} /><span className="ml-1 font-semibold">Grosor</span><select aria-label="Grosor del trazo" className="h-8 rounded-md border bg-background px-2 text-xs" value={strokeWidth} onChange={(event) => setStrokeWidth(Number(event.target.value))}>{STROKE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div> : null}
             {selectedDocument && (selectedDocument.page_count ?? 1) > 1 ? <div className="flex items-center justify-between rounded-lg border bg-card p-2 text-sm"><Button size="sm" variant="ghost" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft className="h-4 w-4" /> Anterior</Button><span>Página {page} de {selectedDocument.page_count}</span><Button size="sm" variant="ghost" disabled={page >= (selectedDocument.page_count ?? 1)} onClick={() => setPage((value) => value + 1)}>Siguiente <ChevronRight className="h-4 w-4" /></Button></div> : null}
             <div className={`relative overflow-hidden rounded-2xl border bg-muted/50 shadow-inner ${isFullscreen ? 'min-h-[calc(100vh-16rem)]' : 'min-h-[26rem]'}`}>
-              {preview.isLoading ? <div className="grid min-h-[26rem] place-items-center text-sm text-muted-foreground">Preparando vista del PDF…</div> : preview.isError || !previewUrl ? <div className="grid min-h-[26rem] place-items-center text-sm text-destructive">No se pudo mostrar este plano.</div> : <div ref={canvasRef} className="relative mx-auto inline-block min-h-[18rem] min-w-full touch-none select-none" onPointerDown={createAtEvent} onPointerMove={dragMove} onPointerUp={endDrag} onPointerCancel={endDrag}><img src={previewUrl} alt={`Plano de perforaciones ${selectedDocument.title}`} className="block w-full" draggable={false} />{filteredPoints.map((point) => { const diameter = asNumber(point.diameter) * 100; const selected = point.id === selectedPointId; const editing = point.id === editingPointId; return <button id={`perforation-point-${point.id}`} key={point.id} type="button" aria-label={`Punto ${point.label || point.id}`} className={`absolute z-20 grid -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border-2 border-white shadow-lg transition ${selected ? 'ring-4 ring-foreground/25' : ''} ${editing ? 'cursor-grab ring-4 ring-primary/35 active:cursor-grabbing' : 'cursor-pointer'}`} style={{ left: `${asNumber(point.x) * 100}%`, top: `${asNumber(point.y) * 100}%`, width: `${Math.max(16, diameter * 1.9)}px`, height: `${Math.max(16, diameter * 1.9)}px`, backgroundColor: pointColor(point) }} onPointerDown={(event) => beginDrag(event, point)} onClick={(event) => { event.stopPropagation(); if (!drag) setSelectedPointId(point.id); }} onDoubleClick={(event) => { event.stopPropagation(); setSelectedPointId(point.id); setEditingPointId((id) => id === point.id ? null : point.id); }}><span className="h-1.5 w-1.5 rounded-full bg-white/90" /></button>; })}{selectedPoint ? <PointInspector point={selectedPoint} companyId={companyId} projectId={projectId} rubro={rubro} colors={colors} editMode={editingPointId === selectedPoint.id} onClose={() => { setSelectedPointId(null); setEditingPointId(null); }} onToggleEdit={() => setEditingPointId((id) => id === selectedPoint.id ? null : selectedPoint.id)} /> : null}</div>}
-              {selectedPoint && canEdit ? <Button className="absolute bottom-3 left-3 z-40" size="sm" variant="destructive" onClick={() => { if (window.confirm('¿Eliminar este punto?')) deletePoint.mutate(selectedPoint.id); }}><Trash2 className="h-4 w-4" /> Eliminar punto</Button> : null}
+              {preview.isLoading ? <div className="grid min-h-[26rem] place-items-center text-sm text-muted-foreground">Preparando vista del PDF…</div> : preview.isError || !previewUrl ? <div className="grid min-h-[26rem] place-items-center text-sm text-destructive">No se pudo mostrar este plano.</div> : <div ref={viewportRef} className="relative min-h-[26rem] h-full w-full touch-none overflow-hidden" onPointerDown={pointerDown} onPointerMove={(event) => { dragMove(event); pointerMove(event); }} onPointerUp={(event) => { endDrag(event); pointerUp(event); }} onPointerCancel={(event) => { endDrag(event); pointerUp(event); }} onDoubleClick={() => setScale((value) => Math.min(3, value * 1.7))}>
+                <div ref={canvasRef} className="relative mx-auto inline-block min-h-[18rem] min-w-full select-none" style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`, transformOrigin: '0 0' }}>
+                  <img src={previewUrl} alt={`Plano de perforaciones ${selectedDocument.title}`} className="block w-full" draggable={false} />
+                  <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 1000 1000" preserveAspectRatio="none">
+                    {annotations.map((annotation) => {
+                      if (annotation.type === 'line' && annotation.points && annotation.points.length > 1) return <polyline key={annotation.id} fill="none" stroke={annotation.color} strokeWidth={annotation.width} strokeOpacity={annotation.opacity} strokeLinecap="round" strokeLinejoin="round" points={annotation.points.map((point) => `${point.x * 1000},${point.y * 1000}`).join(' ')} />;
+                      if (annotation.type === 'note' && annotation.point) return <g key={annotation.id}><rect x={annotation.point.x * 1000} y={annotation.point.y * 1000} width="220" height="42" rx="8" fill="#ffedd5" stroke="#f97316" /><text x={annotation.point.x * 1000 + 10} y={annotation.point.y * 1000 + 27} fill="#7c2d12" fontSize="18">{(annotation.text || 'Nota').slice(0, 25)}</text></g>;
+                      return null;
+                    })}
+                    {drawing.length > 1 ? <polyline fill="none" stroke={pencilColor} strokeWidth={tool === 'highlight' ? Math.max(strokeWidth * 3, 14) : strokeWidth} strokeOpacity={tool === 'highlight' ? 0.32 : 1} strokeLinecap="round" strokeLinejoin="round" points={drawing.map((point) => `${point.x * 1000},${point.y * 1000}`).join(' ')} /> : null}
+                    {straightLine ? <line x1={straightLine.start.x * 1000} y1={straightLine.start.y * 1000} x2={straightLine.end.x * 1000} y2={straightLine.end.y * 1000} stroke={pencilColor} strokeWidth={strokeWidth} strokeLinecap="round" /> : null}
+                  </svg>
+                  {filteredPoints.map((point) => { const diameter = asNumber(point.diameter) * 100; const selected = point.id === selectedPointId; const editing = point.id === editingPointId; return <button id={`perforation-point-${point.id}`} key={point.id} type="button" aria-label={`Punto ${point.label || point.id}`} className={`absolute z-20 grid -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border-2 border-white shadow-lg transition ${selected ? 'ring-4 ring-foreground/25' : ''} ${editing ? 'cursor-grab ring-4 ring-primary/35 active:cursor-grabbing' : 'cursor-pointer'}`} style={{ left: `${asNumber(point.x) * 100}%`, top: `${asNumber(point.y) * 100}%`, width: `${Math.max(16, diameter * 1.9)}px`, height: `${Math.max(16, diameter * 1.9)}px`, backgroundColor: pointColor(point) }} onPointerDown={(event) => beginDrag(event, point)} onClick={(event) => { event.stopPropagation(); if (!drag) setSelectedPointId(point.id); }} onDoubleClick={(event) => { event.stopPropagation(); setSelectedPointId(point.id); setEditingPointId((id) => id === point.id ? null : point.id); }}><span className="h-1.5 w-1.5 rounded-full bg-white/90" /></button>; })}
+                  {selectedPoint ? <PointInspector point={selectedPoint} companyId={companyId} projectId={projectId} rubro={rubro} colors={colors} editMode={editingPointId === selectedPoint.id} onClose={() => { setSelectedPointId(null); setEditingPointId(null); }} onToggleEdit={() => setEditingPointId((id) => id === selectedPoint.id ? null : selectedPoint.id)} /> : null}
+                  {note ? <div className="absolute z-40 w-60 rounded-xl border bg-card p-2 shadow-xl" style={{ left: `${note.point.x * 100}%`, top: `${note.point.y * 100}%` }} onPointerDown={(event) => event.stopPropagation()}><Input autoFocus placeholder="Escribe una nota" value={note.text} onChange={(event) => setNote({ ...note, text: event.target.value })} onKeyDown={(event) => { if (event.key === 'Enter') saveNote(); if (event.key === 'Escape') setNote(null); }} /><div className="mt-2 flex justify-end gap-2"><Button size="sm" variant="ghost" onClick={() => setNote(null)}>Cancelar</Button><Button size="sm" onClick={saveNote}>Guardar</Button></div></div> : null}
+                </div>
+                {selectedPoint && canEdit ? <Button className="absolute bottom-3 left-3 z-40" size="sm" variant="destructive" onPointerDown={(event) => event.stopPropagation()} onClick={() => { if (window.confirm('¿Eliminar este punto?')) deletePoint.mutate(selectedPoint.id); }}><Trash2 className="h-4 w-4" /> Eliminar punto</Button> : null}
+              </div>}
             </div>
             <p className="text-xs text-muted-foreground">Los puntos terminados se muestran en azul. El PDF sigue siendo interactivo en pantalla completa; usa “Salir” o la X para volver.</p>
           </>}

@@ -234,7 +234,17 @@ function ProgressRing({ value, color, label }: { value: number; color: string; l
   );
 }
 
-function BuildingSummary({ levels, sectors }: { levels: Level[]; sectors: ProjectSector[] }) {
+function BuildingSummary({
+  levels,
+  sectors,
+  selectedSectorId,
+  onSelectSector,
+}: {
+  levels: Level[];
+  sectors: ProjectSector[];
+  selectedSectorId: string | null;
+  onSelectSector: (sectorId: string | null) => void;
+}) {
   const sectorGroups = useMemo(() => {
     const groups = new Map<string, Level[]>();
     for (const sector of sectors) groups.set(sector.id, []);
@@ -245,7 +255,7 @@ function BuildingSummary({ levels, sectors }: { levels: Level[]; sectors: Projec
     return Array.from(groups.entries()).map(([sectorId, sectorLevels]) => {
       const name = sectors.find((sector) => sector.id === sectorId)?.name
         ?? (sectorLevels[0] ? sectorName(sectorLevels[0]) : 'Obra general');
-      return [name, sectorLevels] as const;
+      return { id: sectorId, name, levels: sectorLevels };
     });
   }, [levels, sectors]);
 
@@ -253,7 +263,7 @@ function BuildingSummary({ levels, sectors }: { levels: Level[]; sectors: Projec
 
   return (
     <div className="grid gap-3 lg:grid-cols-4">
-      {sectorGroups.map(([sector, sectorLevels]) => {
+      {sectorGroups.map(({ id, name: sector, levels: sectorLevels }) => {
         const completed = sectorLevels.filter((level) => level.work_status === 'concreted');
         const inProgress = sectorLevels.some((level) => level.work_status === 'in_progress');
         const percent = sectorLevels.length ? Math.round((completed.length / sectorLevels.length) * 100) : 0;
@@ -270,8 +280,15 @@ function BuildingSummary({ levels, sectors }: { levels: Level[]; sectors: Projec
           .sort();
         const lastConcreted = concretedDates[concretedDates.length - 1];
 
+        const selected = selectedSectorId === id;
         return (
-          <Card key={sector} className="overflow-hidden border-slate-200 shadow-sm">
+          <Card key={id} className={'overflow-hidden border-slate-200 shadow-sm transition ' + (selected ? 'border-primary ring-2 ring-primary/20' : '')}>
+            <button
+              type="button"
+              className="block w-full text-left"
+              onClick={() => onSelectSector(selected ? null : id)}
+              aria-expanded={selected}
+            >
             <CardContent className="p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -283,13 +300,21 @@ function BuildingSummary({ levels, sectors }: { levels: Level[]; sectors: Projec
                 </div>
                 <ProgressRing value={percent} color={status.color} label={'Avance de ' + sector} />
               </div>
-              <div className="mt-3 grid grid-cols-3 gap-2 border-t pt-3 text-xs">
-                <div><p className="text-muted-foreground">Losas</p><p className="mt-0.5 text-base font-semibold">{sectorLevels.length}</p></div>
-                <div><p className="text-muted-foreground">Hormig.</p><p className="mt-0.5 text-base font-semibold text-emerald-600">{completed.length}</p></div>
-                <div><p className="text-muted-foreground">Restan</p><p className="mt-0.5 text-base font-semibold">{sectorLevels.length - completed.length}</p></div>
-              </div>
-              <p className="mt-2 text-xs text-muted-foreground">Último hormigonado: {formatDate(lastConcreted)}</p>
+              {selected ? (
+                <>
+                  <div className="mt-3 grid grid-cols-3 gap-2 border-t pt-3 text-xs">
+                    <div><p className="text-muted-foreground">Losas</p><p className="mt-0.5 text-base font-semibold">{sectorLevels.length}</p></div>
+                    <div><p className="text-muted-foreground">Hormig.</p><p className="mt-0.5 text-base font-semibold text-emerald-600">{completed.length}</p></div>
+                    <div><p className="text-muted-foreground">Restan</p><p className="mt-0.5 text-base font-semibold">{sectorLevels.length - completed.length}</p></div>
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">Último hormigonado: {formatDate(lastConcreted)}</p>
+                  <p className="mt-2 text-xs font-semibold text-primary">Toca para ocultar el resumen</p>
+                </>
+              ) : (
+                <p className="mt-2 text-xs text-muted-foreground">Toca el sector para ver su resumen y sus niveles.</p>
+              )}
             </CardContent>
+            </button>
           </Card>
         );
       })}
@@ -313,12 +338,16 @@ function BuildingSummary({ levels, sectors }: { levels: Level[]; sectors: Projec
 function SectorLevelPicker({
   levels,
   sectors,
+  selectedSectorId,
   selectedLevelId,
+  onSelectSector,
   onSelectLevel,
 }: {
   levels: Level[];
   sectors: ProjectSector[];
+  selectedSectorId: string | null;
   selectedLevelId: string | null;
+  onSelectSector: (sectorId: string | null) => void;
   onSelectLevel: (levelId: string) => void;
 }) {
   const groups = useMemo(() => {
@@ -337,13 +366,15 @@ function SectorLevelPicker({
         levels: [...group.levels].sort((left, right) => left.sort_order - right.sort_order || left.name.localeCompare(right.name)),
       }));
   }, [levels, sectors]);
-  const initiallySelected = groups.find((group) => group.levels.some((level) => level.id === selectedLevelId))?.id ?? groups[0]?.id ?? null;
-  const [expandedId, setExpandedId] = useState<string | null>(initiallySelected);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (expandedId && groups.some((group) => group.id === expandedId)) return;
-    setExpandedId(initiallySelected);
-  }, [expandedId, groups, initiallySelected]);
+    if (selectedSectorId && groups.some((group) => group.id === selectedSectorId)) {
+      setExpandedId(selectedSectorId);
+      return;
+    }
+    if (!selectedSectorId) setExpandedId(null);
+  }, [groups, selectedSectorId]);
 
   if (!groups.length) return null;
   return (
@@ -356,7 +387,11 @@ function SectorLevelPicker({
             <button
               key={group.id}
               type="button"
-              onClick={() => setExpandedId(expanded ? null : group.id)}
+              onClick={() => {
+                const next = expanded ? null : group.id;
+                setExpandedId(next);
+                onSelectSector(next);
+              }}
               className={'inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition ' + (expanded ? 'border-primary bg-primary text-primary-foreground shadow-sm' : 'bg-card hover:border-primary/45')}
             >
               <span className="max-w-48 truncate">{group.name}</span>
@@ -374,7 +409,7 @@ function SectorLevelPicker({
           const status = LEVEL_STATUS[level.work_status];
           return <button key={level.id} type="button" onClick={() => onSelectLevel(level.id)} className={'flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm transition ' + (active ? 'border-primary bg-primary/10 ring-1 ring-primary' : 'bg-card hover:border-primary/45')}><span className="truncate font-medium">{level.name}</span><span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: status.color }} />{status.label}</span></button>;
         })}</div>;
-      })() : <p className="mt-3 border-t pt-3 text-sm text-muted-foreground">Toca un sector para ver sus niveles.</p>}
+      })() : <p className="mt-3 border-t pt-3 text-sm text-muted-foreground">Toca un sector para ver sus niveles y su reporte de avance.</p>}
     </section>
   );
 }
@@ -843,7 +878,7 @@ function PlanCanvas({
         ) : null}
 
         <div className={'relative overflow-hidden rounded-2xl border bg-slate-100 shadow-inner ' + (isFullscreen ? 'h-[calc(100vh-158px)] min-h-[560px]' : 'h-[650px]')}>
-          <Button className="absolute left-1/2 top-3 z-40 -translate-x-1/2 rounded-full bg-white/95 shadow-md hover:bg-white" size="sm" variant="secondary" onClick={() => setIsFullscreen((value) => !value)}>
+          <Button className="absolute left-1/2 top-3 z-40 -translate-x-1/2 rounded-full border border-slate-300 bg-white/95 text-slate-950 shadow-md hover:bg-white hover:text-slate-950" size="sm" variant="secondary" onClick={() => setIsFullscreen((value) => !value)}>
             {isFullscreen ? <X className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}{isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
           </Button>
           <div
@@ -999,10 +1034,11 @@ export function ProjectPlanBoard({ companyId, project }: { companyId: string; pr
     [project.overview_plan_version_id, versions],
   );
   const [selectedLevelId, setSelectedLevelId] = useState<string | null>(null);
+  const [selectedSectorId, setSelectedSectorId] = useState<string | null>(null);
 
   useEffect(() => {
     if (selectedLevelId && levels.some((level) => level.id === selectedLevelId)) return;
-    setSelectedLevelId(levels[0]?.id ?? null);
+    setSelectedLevelId(null);
   }, [levels, selectedLevelId]);
 
   const previewQuery = useQuery({
@@ -1089,12 +1125,29 @@ export function ProjectPlanBoard({ companyId, project }: { companyId: string; pr
         <div><h2 className="text-xl font-bold tracking-tight">Plano operativo</h2><p className="text-sm text-muted-foreground">{version.original_filename} · seguimiento visual de avance por sector</p></div>
         {canEditPlan ? <Button size="sm" variant="outline" disabled={levels.length === 0 || detectLevelsMutation.isPending} onClick={() => detectLevelsMutation.mutate(version.id)}>{detectLevelsMutation.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />} Detectar niveles del PDF</Button> : null}
       </div>
-      <BuildingSummary levels={levels} sectors={sectors} />
+      <BuildingSummary
+        levels={levels}
+        sectors={sectors}
+        selectedSectorId={selectedSectorId}
+        onSelectSector={(sectorId) => {
+          setSelectedSectorId(sectorId);
+          if (!sectorId) setSelectedLevelId(null);
+        }}
+      />
       <SectorLevelPicker
         levels={levels}
         sectors={sectors}
+        selectedSectorId={selectedSectorId}
         selectedLevelId={selectedLevelId}
-        onSelectLevel={setSelectedLevelId}
+        onSelectSector={(sectorId) => {
+          setSelectedSectorId(sectorId);
+          if (!sectorId) setSelectedLevelId(null);
+        }}
+        onSelectLevel={(levelId) => {
+          setSelectedLevelId(levelId);
+          const level = levels.find((item) => item.id === levelId);
+          setSelectedSectorId(level?.sector_id ?? null);
+        }}
       />
       <p className="text-xs text-muted-foreground">Abre un sector, selecciona un nivel y usa <strong>Ubicar nivel</strong> para dibujar su borde en el PDF. El trazo se transforma en una franja visible con pin; el checklist se mueve desde su encabezado.</p>
       {previewQuery.isLoading ? (
@@ -1110,7 +1163,11 @@ export function ProjectPlanBoard({ companyId, project }: { companyId: string; pr
           levels={levels}
           annotations={annotationsQuery.data ?? []}
           selectedLevelId={selectedLevelId}
-          onSelectLevel={setSelectedLevelId}
+          onSelectLevel={(levelId) => {
+            setSelectedLevelId(levelId);
+            const level = levels.find((item) => item.id === levelId);
+            if (level) setSelectedSectorId(level.sector_id ?? null);
+          }}
           canEdit={canEditPlan}
           onCreateAnnotation={(input) => annotationMutation.mutate({ versionId: version.id, input: { page_number: 1, ...input } })}
           onSaveLevelGeometry={(levelId, geometry, announce) => geometryMutation.mutate({ levelId, versionId: version.id, geometry, announce })}

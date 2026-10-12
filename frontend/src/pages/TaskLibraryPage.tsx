@@ -19,6 +19,9 @@ import {
   type DailyTaskInput,
   type TaskTemplateInput,
 } from '@/lib/api/taskLibrary';
+import { projectsApi } from '@/lib/api/projects';
+import { rubrosApi } from '@/lib/api/rubros';
+import { asItems } from '@/lib/collection';
 import type { DailyTaskStatus, TaskPriority, TaskTemplate, TaskType } from '@/types/api';
 import { TASK_PRIORITY_OPTIONS, TASK_TYPE_OPTIONS } from '@/lib/labels';
 import { Badge } from '@/components/ui/badge';
@@ -29,6 +32,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { TaskFormDialog } from '@/pages/projects/TaskFormDialog';
 
 const NONE = 'none';
 
@@ -68,6 +72,8 @@ export function TaskLibraryPage() {
   const [dailyAssigneeId, setDailyAssigneeId] = useState(NONE);
   const [saveAsDailyTemplate, setSaveAsDailyTemplate] = useState(false);
   const [autoRenewDaily, setAutoRenewDaily] = useState(false);
+  const [selectedProjectId, setSelectedProjectId] = useState(NONE);
+  const [taskDialogOpen, setTaskDialogOpen] = useState(false);
 
   const templatesQuery = useQuery({
     queryKey: ['task-templates', companyId, 'all'],
@@ -96,6 +102,23 @@ export function TaskLibraryPage() {
     queryFn: ({ signal }) => taskLibraryApi.listDailyTemplates(companyId, selectedDailyAssignee, signal),
     enabled: Boolean(companyId),
   });
+  const projectsQuery = useQuery({
+    queryKey: ['projects', companyId, { limit: 100 }],
+    queryFn: ({ signal }) => projectsApi.list(companyId, { limit: 100 }, signal),
+    enabled: Boolean(companyId) && canManageTemplates,
+  });
+  const selectedProjectLevelsQuery = useQuery({
+    queryKey: ['levels', companyId, selectedProjectId],
+    queryFn: ({ signal }) => projectsApi.listLevels(companyId, selectedProjectId, signal),
+    enabled: selectedProjectId !== NONE && canManageTemplates,
+  });
+  const selectedProjectRubrosQuery = useQuery({
+    queryKey: ['project-rubros', companyId, selectedProjectId],
+    queryFn: ({ signal }) => rubrosApi.list(companyId, selectedProjectId, signal),
+    enabled: selectedProjectId !== NONE && canManageTemplates,
+  });
+  const projects = asItems(projectsQuery.data);
+  const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
 
   const equipment = useMemo(
     () => (inventoryQuery.data ?? []).filter((item) => item.item_type === 'machine' || item.item_type === 'tool'),
@@ -250,6 +273,28 @@ export function TaskLibraryPage() {
         <p className="text-sm text-muted-foreground">Define trabajos recurrentes con sus herramientas y organiza las tareas personales de cada día.</p>
       </div>
 
+      {canManageTemplates ? (
+        <Card className="surface-glass border-primary/25">
+          <CardHeader>
+            <CardTitle className="text-base">Nueva tarea de obra</CardTitle>
+            <p className="text-sm text-muted-foreground">Selecciona la obra y luego el sector y nivel donde se realizará. También puedes vincular un rubro.</p>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <Label>Obra</Label>
+              <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
+                <SelectTrigger><SelectValue placeholder="Seleccionar obra" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NONE}>Seleccionar obra</SelectItem>
+                  {projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}{project.code ? ` · ${project.code}` : ''}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button disabled={!selectedProject || selectedProjectLevelsQuery.isLoading || selectedProjectRubrosQuery.isLoading} onClick={() => setTaskDialogOpen(true)}><Plus className="h-4 w-4" /> Abrir tarea</Button>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Tabs defaultValue="templates">
         <TabsList>
           <TabsTrigger value="templates"><ClipboardList className="mr-2 h-4 w-4" />Predeterminadas de obra</TabsTrigger>
@@ -330,6 +375,17 @@ export function TaskLibraryPage() {
           </div>
         </TabsContent>
       </Tabs>
+      {selectedProject && taskDialogOpen ? (
+        <TaskFormDialog
+          key={`global-task-${selectedProject.id}`}
+          companyId={companyId}
+          projectId={selectedProject.id}
+          levels={asItems(selectedProjectLevelsQuery.data)}
+          rubros={selectedProjectRubrosQuery.data ?? []}
+          open={taskDialogOpen}
+          onOpenChange={setTaskDialogOpen}
+        />
+      ) : null}
     </div>
   );
 }
