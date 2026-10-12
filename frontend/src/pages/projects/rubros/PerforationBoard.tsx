@@ -277,7 +277,7 @@ function PointInspector({
   };
 
   return (
-    <section style={anchorStyle} className="absolute z-30 max-h-[calc(100%-1rem)] w-[min(22rem,calc(100%-1rem))] overflow-y-auto rounded-2xl border border-border bg-card p-3 shadow-2xl" onPointerDown={(event) => event.stopPropagation()}>
+    <section style={anchorStyle} className="absolute z-30 max-h-[min(80vh,calc(100%-1rem))] w-[min(22rem,calc(100%-1rem))] touch-pan-y overscroll-contain overflow-y-auto rounded-2xl border border-border bg-card p-3 shadow-2xl" onPointerDown={(event) => event.stopPropagation()}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0"><p className="flex items-center gap-2 text-sm font-bold"><span className="h-3 w-3 rounded-full" style={{ backgroundColor: pointColor(point) }} /> Punto {complete ? 'completado' : 'en proceso'}</p><p className="text-xs text-muted-foreground">{complete ? 'Checklist completo: ahora se muestra azul.' : 'Completa los pasos para marcarlo como terminado.'}</p></div>
         <button type="button" aria-label="Cerrar detalle del punto" className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground" onClick={onClose}><X className="h-5 w-5" /></button>
@@ -316,6 +316,7 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
   const canvasRef = useRef<HTMLDivElement>(null);
   const interaction = useRef<
     | { kind: 'pan'; clientX: number; clientY: number; offsetX: number; offsetY: number }
+    | { kind: 'point'; clientX: number; clientY: number; offsetX: number; offsetY: number; point: CanvasPoint }
     | { kind: 'draw'; mode: 'draw' | 'highlight' }
     | { kind: 'straight'; start: CanvasPoint }
     | null
@@ -429,6 +430,15 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
     return () => window.cancelAnimationFrame(frame);
   }, [constrainOffset, previewUrl]);
 
+  useEffect(() => {
+    if (!isFullscreen) return undefined;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsFullscreen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [isFullscreen]);
+
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ['perforation-workspace', companyId, projectId, rubro.id] });
   const createDocument = useMutation({
     mutationFn: () => rubrosApi.uploadPerforationDocument(companyId, projectId, rubro.id, uploadName.trim(), uploadFile as File),
@@ -477,11 +487,22 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
   });
   const pointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
+    event.preventDefault();
     const point = pointFromClient(event.clientX, event.clientY);
     if (!point) return;
     if (tool === 'point') {
       if (!canEdit || !selectedDocument || !activeColorId || drag) return;
-      createPoint.mutate({ x: point.x, y: point.y });
+      event.currentTarget.setPointerCapture(event.pointerId);
+      // A tap creates a point; keeping the finger/mouse pressed and moving
+      // pans the PDF instead, so navigation does not require changing tools.
+      interaction.current = {
+        kind: 'point',
+        clientX: event.clientX,
+        clientY: event.clientY,
+        offsetX: offset.x,
+        offsetY: offset.y,
+        point,
+      };
       return;
     }
     if (!canEdit) return;
@@ -506,6 +527,22 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
   const pointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const active = interaction.current;
     if (!active) return;
+    if (active.kind === 'point') {
+      const distance = Math.hypot(event.clientX - active.clientX, event.clientY - active.clientY);
+      if (distance <= 6) return;
+      interaction.current = {
+        kind: 'pan',
+        clientX: active.clientX,
+        clientY: active.clientY,
+        offsetX: active.offsetX,
+        offsetY: active.offsetY,
+      };
+      setOffset(constrainOffset({
+        x: active.offsetX + event.clientX - active.clientX,
+        y: active.offsetY + event.clientY - active.clientY,
+      }));
+      return;
+    }
     if (active.kind === 'pan') {
       setOffset(constrainOffset({
         x: active.offsetX + event.clientX - active.clientX,
@@ -536,6 +573,13 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
     interaction.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     if (!active) return;
+    if (active.kind === 'point') {
+      const distance = Math.hypot(event.clientX - active.clientX, event.clientY - active.clientY);
+      if (distance <= 8 && canEdit && selectedDocument && activeColorId && !createPoint.isPending) {
+        createPoint.mutate(active.point);
+      }
+      return;
+    }
     if (active.kind === 'draw') {
       const points = drawingRef.current;
       drawingRef.current = [];
@@ -585,22 +629,22 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
   if (workspace.isError || !data) return <Card className="surface-solid"><CardContent className="space-y-3 p-6"><p className="font-semibold text-destructive">No se pudo cargar Perforaciones.</p><Button size="sm" variant="outline" onClick={() => void workspace.refetch()}>Reintentar</Button></CardContent></Card>;
 
   return (
-    <div className={isFullscreen ? 'fixed inset-0 z-[70] overflow-auto bg-background p-3 sm:p-5' : 'space-y-4'}>
-      <Card className="surface-glass overflow-hidden">
-        <CardHeader className="flex-row items-start justify-between gap-3 space-y-0">
+    <div className={isFullscreen ? 'fixed inset-0 z-[70] overflow-hidden bg-background p-0' : 'space-y-4'}>
+      <Card className={isFullscreen ? 'surface-glass h-full overflow-hidden rounded-none border-0 shadow-none' : 'surface-glass overflow-hidden'}>
+        <CardHeader className={isFullscreen ? 'hidden' : 'flex-row items-start justify-between gap-3 space-y-0'}>
           <div><CardTitle className="text-lg">Plano interactivo de perforaciones</CardTitle><p className="mt-1 text-sm text-muted-foreground">Selecciona un color y toca el PDF para crear un punto. Toca un punto para abrir su checklist; doble toque para moverlo o cambiar su tamaño.</p></div>
           <div className="flex shrink-0 gap-2"><Button size="sm" variant="outline" onClick={() => setColorSettingsOpen(true)}><Settings2 className="h-4 w-4" /> Colores</Button>{isFullscreen ? <Button size="sm" onClick={() => setIsFullscreen(false)}><X className="h-4 w-4" /> Salir</Button> : null}</div>
         </CardHeader>
-        <CardContent className="space-y-4">
-          {canEdit ? <div className="grid gap-3 rounded-xl border bg-card/90 p-3 lg:grid-cols-[1fr_1.3fr_auto]"><div className="space-y-1"><Label htmlFor="perforation-file">PDF o imagen</Label><Input id="perforation-file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0] ?? null; setUploadFile(file); if (file && !uploadName) setUploadName(file.name.replace(/\.[^.]+$/, '')); }} /></div><div className="space-y-1"><Label htmlFor="perforation-title">Nombre del plano</Label><Input id="perforation-title" value={uploadName} onChange={(event) => setUploadName(event.target.value)} placeholder="Ej. Planta nivel 6" /></div><Button className="self-end" disabled={!uploadFile || uploadName.trim().length < 2 || createDocument.isPending} onClick={() => createDocument.mutate()}><Upload className="h-4 w-4" /> Cargar PDF</Button></div> : null}
+        <CardContent className={isFullscreen ? 'relative h-full p-0' : 'space-y-4'}>
+          {!isFullscreen && canEdit ? <div className="grid gap-3 rounded-xl border bg-card/90 p-3 lg:grid-cols-[1fr_1.3fr_auto]"><div className="space-y-1"><Label htmlFor="perforation-file">PDF o imagen</Label><Input id="perforation-file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0] ?? null; setUploadFile(file); if (file && !uploadName) setUploadName(file.name.replace(/\.[^.]+$/, '')); }} /></div><div className="space-y-1"><Label htmlFor="perforation-title">Nombre del plano</Label><Input id="perforation-title" value={uploadName} onChange={(event) => setUploadName(event.target.value)} placeholder="Ej. Planta nivel 6" /></div><Button className="self-end" disabled={!uploadFile || uploadName.trim().length < 2 || createDocument.isPending} onClick={() => createDocument.mutate()}><Upload className="h-4 w-4" /> Cargar PDF</Button></div> : null}
 
           {documents.length === 0 ? <div className="rounded-2xl border border-dashed p-8 text-center"><FileText className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 font-semibold">Aún no hay un plano de perforaciones</p><p className="mt-1 text-sm text-muted-foreground">Carga el PDF desde arriba para ubicar puntos, checklist y notas directamente sobre el plano.</p></div> : <>
-            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <div className={isFullscreen ? 'hidden' : 'flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between'}>
               <div className="flex min-w-0 flex-wrap gap-2">{documents.map((document) => <button type="button" key={document.id} onClick={() => { setSelectedDocumentId(document.id); setPage(1); }} className={`rounded-xl border px-3 py-2 text-left text-sm transition ${selectedDocument?.id === document.id ? 'border-primary bg-primary/10 ring-1 ring-primary' : 'bg-card hover:border-primary/50'}`}><span className="block max-w-52 truncate font-semibold">{document.title}</span><span className="text-xs text-muted-foreground">{document.points_completed}/{document.points_total} listos</span></button>)}</div>
               <div className="flex flex-wrap items-center gap-2">{canEdit && selectedDocument ? <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => { if (window.confirm(`¿Eliminar ${selectedDocument.title} y todos sus puntos?`)) deleteDocument.mutate(selectedDocument.id); }}><Trash2 className="h-4 w-4" /> Eliminar plano</Button> : null}<Button size="sm" variant="outline" onClick={() => setIsFullscreen((value) => !value)}>{isFullscreen ? <X className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}{isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}</Button></div>
             </div>
-            <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card/85 p-3"><span className="text-sm font-semibold">Nuevo punto:</span>{colors.filter((color) => color.is_active).map((color) => <button key={color.id} type="button" disabled={!canEdit} onClick={() => { setSelectedColorId(color.id); setTool('point'); }} className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-medium transition ${selectedColorId === color.id ? 'border-foreground ring-2 ring-primary/30' : 'hover:border-primary/50'}`}><span className="h-3 w-3 rounded-full" style={{ backgroundColor: color.color_hex }} />{color.name}</button>)}{!colors.length ? <span className="text-sm text-muted-foreground">Configura al menos un color.</span> : null}</div>
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-card/85 p-2 shadow-sm">
+            <div className={isFullscreen ? 'hidden' : 'flex flex-wrap items-center gap-2 rounded-xl border bg-card/85 p-3'}><span className="text-sm font-semibold">Nuevo punto:</span>{colors.filter((color) => color.is_active).map((color) => <button key={color.id} type="button" disabled={!canEdit} onClick={() => { setSelectedColorId(color.id); setTool('point'); }} className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-medium transition ${selectedColorId === color.id ? 'border-foreground ring-2 ring-primary/30' : 'hover:border-primary/50'}`}><span className="h-3 w-3 rounded-full" style={{ backgroundColor: color.color_hex }} />{color.name}</button>)}{!colors.length ? <span className="text-sm text-muted-foreground">Configura al menos un color.</span> : null}</div>
+            <div className={isFullscreen ? 'hidden' : 'flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-card/85 p-2 shadow-sm'}>
               <div className="flex flex-wrap gap-1.5">
                 <Button size="sm" variant="outline" className={tool === 'point' ? 'border-orange-500 bg-orange-500 text-white hover:bg-orange-600 hover:text-white' : ''} onClick={() => setTool('point')} disabled={!canEdit}><MapPin className="h-4 w-4" /> Punto</Button>
                 <Button size="sm" variant="outline" className={tool === 'pan' ? 'border-orange-500 bg-orange-500 text-white hover:bg-orange-600 hover:text-white' : ''} onClick={() => setTool('pan')}><Hand className="h-4 w-4" /> Mover</Button>
@@ -618,10 +662,11 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
                 <Button size="sm" variant="ghost" onClick={() => { setScale(1); setOffset({ x: 0, y: 0 }); }}>Restablecer</Button>
               </div>
             </div>
-            {canEdit && (tool === 'draw' || tool === 'highlight' || tool === 'straight') ? <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card/85 px-3 py-2 text-xs"><span className="font-semibold">Color</span>{PENCIL_COLORS.map((color) => <button key={color} type="button" aria-label={`Usar color ${color}`} className={`h-6 w-6 rounded-full border-2 ${pencilColor === color ? 'scale-110 border-slate-900' : 'border-white'}`} style={{ backgroundColor: color }} onClick={() => setPencilColor(color)} />)}<input aria-label="Color personalizado" className="h-7 w-8 cursor-pointer rounded border p-0.5" type="color" value={pencilColor} onChange={(event) => setPencilColor(event.target.value)} /><span className="ml-1 font-semibold">Grosor</span><select aria-label="Grosor del trazo" className="h-8 rounded-md border bg-background px-2 text-xs" value={strokeWidth} onChange={(event) => setStrokeWidth(Number(event.target.value))}>{STROKE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div> : null}
-            {selectedDocument && (selectedDocument.page_count ?? 1) > 1 ? <div className="flex items-center justify-between rounded-lg border bg-card p-2 text-sm"><Button size="sm" variant="ghost" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft className="h-4 w-4" /> Anterior</Button><span>Página {page} de {selectedDocument.page_count}</span><Button size="sm" variant="ghost" disabled={page >= (selectedDocument.page_count ?? 1)} onClick={() => setPage((value) => value + 1)}>Siguiente <ChevronRight className="h-4 w-4" /></Button></div> : null}
-            <div className={`relative overflow-hidden rounded-2xl bg-slate-100 shadow-inner ${isFullscreen ? 'h-[calc(100vh-12rem)] min-h-[32rem]' : 'h-[650px]'}`}>
-              {preview.isLoading ? <div className="grid h-full min-h-[26rem] place-items-center text-sm text-muted-foreground">Preparando vista del PDF…</div> : preview.isError || !previewUrl ? <div className="grid h-full min-h-[26rem] place-items-center text-sm text-destructive">No se pudo mostrar este plano.</div> : <div ref={viewportRef} className="relative h-full w-full touch-none overflow-hidden" onPointerDown={pointerDown} onPointerMove={(event) => { dragMove(event); pointerMove(event); }} onPointerUp={(event) => { endDrag(event); pointerUp(event); }} onPointerCancel={(event) => { endDrag(event); pointerUp(event); }} onDoubleClick={() => setScale((value) => Math.min(3, value * 1.7))}>
+            {!isFullscreen && canEdit && (tool === 'draw' || tool === 'highlight' || tool === 'straight') ? <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card/85 px-3 py-2 text-xs"><span className="font-semibold">Color</span>{PENCIL_COLORS.map((color) => <button key={color} type="button" aria-label={`Usar color ${color}`} className={`h-6 w-6 rounded-full border-2 ${pencilColor === color ? 'scale-110 border-slate-900' : 'border-white'}`} style={{ backgroundColor: color }} onClick={() => setPencilColor(color)} />)}<input aria-label="Color personalizado" className="h-7 w-8 cursor-pointer rounded border p-0.5" type="color" value={pencilColor} onChange={(event) => setPencilColor(event.target.value)} /><span className="ml-1 font-semibold">Grosor</span><select aria-label="Grosor del trazo" className="h-8 rounded-md border bg-background px-2 text-xs" value={strokeWidth} onChange={(event) => setStrokeWidth(Number(event.target.value))}>{STROKE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div> : null}
+            {!isFullscreen && selectedDocument && (selectedDocument.page_count ?? 1) > 1 ? <div className="flex items-center justify-between rounded-lg border bg-card p-2 text-sm"><Button size="sm" variant="ghost" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft className="h-4 w-4" /> Anterior</Button><span>Página {page} de {selectedDocument.page_count}</span><Button size="sm" variant="ghost" disabled={page >= (selectedDocument.page_count ?? 1)} onClick={() => setPage((value) => value + 1)}>Siguiente <ChevronRight className="h-4 w-4" /></Button></div> : null}
+            <div className={`relative overflow-hidden bg-slate-100 ${isFullscreen ? 'h-full w-full' : 'h-[650px] rounded-2xl shadow-inner'}`}>
+              {isFullscreen ? <Button type="button" size="sm" className="absolute right-4 top-4 z-[60] shadow-lg" onClick={() => setIsFullscreen(false)}><X className="h-4 w-4" /> Salir</Button> : null}
+              {preview.isLoading ? <div className="grid h-full min-h-[26rem] place-items-center text-sm text-muted-foreground">Preparando vista del PDF…</div> : preview.isError || !previewUrl ? <div className="grid h-full min-h-[26rem] place-items-center text-sm text-destructive">No se pudo mostrar este plano.</div> : <div ref={viewportRef} className="relative h-full w-full overflow-hidden" onPointerDown={pointerDown} onPointerMove={(event) => { dragMove(event); pointerMove(event); }} onPointerUp={(event) => { endDrag(event); pointerUp(event); }} onPointerCancel={(event) => { endDrag(event); pointerUp(event); }} onDoubleClick={() => setScale((value) => Math.min(3, value * 1.7))}>
                 <div ref={canvasRef} className="absolute left-0 top-0 w-full select-none" style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`, transformOrigin: '0 0' }}>
                   <img src={previewUrl} alt={`Plano de perforaciones ${selectedDocument.title}`} className="block w-full" draggable={false} onLoad={() => setOffset((current) => constrainOffset(current))} />
                   <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 1000 1000" preserveAspectRatio="none">
@@ -639,7 +684,7 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
                 </div>
               </div>}
             </div>
-            <p className="text-xs text-muted-foreground">Los puntos terminados se muestran en azul. El PDF sigue siendo interactivo en pantalla completa; usa “Salir” o la X para volver.</p>
+            <p className={isFullscreen ? 'hidden' : 'text-xs text-muted-foreground'}>Los puntos terminados se muestran en azul. El PDF sigue siendo interactivo en pantalla completa; usa “Salir” o la X para volver.</p>
           </>}
         </CardContent>
       </Card>
