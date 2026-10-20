@@ -60,9 +60,10 @@ async def store_upload(
     *path_parts: str,
     allowed_mime_types: dict[str, str] | None = None,
     max_bytes: int | None = None,
+    mime_type_override: str | None = None,
 ) -> StoredUpload:
     allowed = allowed_mime_types or DOCUMENT_MIME_TYPES
-    mime_type = file.content_type or ""
+    mime_type = mime_type_override or file.content_type or ""
     extension = allowed.get(mime_type)
     if extension is None:
         raise HTTPException(

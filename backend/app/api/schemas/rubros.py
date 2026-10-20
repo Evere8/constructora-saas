@@ -224,8 +224,56 @@ class PerforationPointResponse(BaseModel):
     created_by_user_id: str
 
 
+class PerforationCanvasPoint(BaseModel):
+    x: Decimal = Field(ge=0, le=1, max_digits=8, decimal_places=6)
+    y: Decimal = Field(ge=0, le=1, max_digits=8, decimal_places=6)
+
+
+class PerforationAnnotationCreate(BaseModel):
+    document_id: str = Field(min_length=36, max_length=36)
+    page_number: int = Field(ge=1, le=10000)
+    kind: Literal["line", "note"]
+    points: list[PerforationCanvasPoint] = Field(min_length=1, max_length=2000)
+    text: str | None = Field(default=None, max_length=500)
+    color_hex: str = Field(pattern=r"^#[0-9A-Fa-f]{6}$")
+    stroke_width: int = Field(ge=1, le=40)
+    opacity: Decimal = Field(ge=0, le=1, max_digits=4, decimal_places=3)
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> "PerforationAnnotationCreate":
+        if self.kind == "line" and len(self.points) < 2:
+            raise ValueError("El trazo necesita al menos dos posiciones")
+        if self.kind == "note" and (len(self.points) != 1 or not (self.text or "").strip()):
+            raise ValueError("La nota necesita una posición y texto")
+        if self.kind == "line" and self.text:
+            raise ValueError("Un trazo no puede contener texto")
+        if self.text is not None:
+            self.text = self.text.strip()
+        return self
+
+
+class PerforationAnnotationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    company_id: str
+    project_id: str
+    rubro_id: str
+    document_id: str
+    page_number: int
+    kind: Literal["line", "note"]
+    points: list[PerforationCanvasPoint] = Field(validation_alias="points_json")
+    text: str | None
+    color_hex: str
+    stroke_width: int
+    opacity: Decimal
+    created_by_user_id: str
+    created_at: datetime
+
+
 class PerforationWorkspaceResponse(BaseModel):
     rubro: ProjectRubroResponse
     colors: list[PerforationColorResponse] = Field(default_factory=list)
     documents: list[PerforationDocumentResponse] = Field(default_factory=list)
     points: list[PerforationPointResponse] = Field(default_factory=list)
+    annotations: list[PerforationAnnotationResponse] = Field(default_factory=list)

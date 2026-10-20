@@ -1,5 +1,6 @@
 import { api } from '@/lib/http';
 import type {
+  PerforationAnnotation,
   PerforationChecklistEntry,
   PerforationColor,
   PerforationDocument,
@@ -126,4 +127,21 @@ export const rubrosApi = {
     api.blob(`${rubroBase(companyId, projectId, rubroId)}/perforation-points/${pointId}/attachment`),
   removePerforationPoint: (companyId: string, projectId: string, rubroId: string, pointId: string) =>
     api.del<void>(`${rubroBase(companyId, projectId, rubroId)}/perforation-points/${pointId}`),
+  createPerforationAnnotation: (
+    companyId: string,
+    projectId: string,
+    rubroId: string,
+    input: {
+      document_id: string;
+      page_number: number;
+      kind: 'line' | 'note';
+      points: { x: number; y: number }[];
+      text?: string | null;
+      color_hex: string;
+      stroke_width: number;
+      opacity: number;
+    },
+  ) => api.post<PerforationAnnotation>(`${rubroBase(companyId, projectId, rubroId)}/perforation-annotations`, input),
+  removePerforationAnnotation: (companyId: string, projectId: string, rubroId: string, annotationId: string) =>
+    api.del<void>(`${rubroBase(companyId, projectId, rubroId)}/perforation-annotations/${annotationId}`),
 };

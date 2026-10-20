@@ -764,6 +764,46 @@ class PerforationPoint(UUIDPrimaryKeyMixin, Base):
     )
 
 
+class PerforationAnnotation(UUIDPrimaryKeyMixin, Base):
+    """A persisted pen stroke or text label on one page of a rubro document."""
+
+    __tablename__ = "perforation_annotations"
+    __table_args__ = (
+        Index(
+            "ix_perforation_annotations_document_page",
+            "document_id",
+            "page_number",
+            "created_at",
+        ),
+    )
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    rubro_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("project_rubros.id", ondelete="CASCADE"), nullable=False
+    )
+    document_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("perforation_documents.id", ondelete="CASCADE"), nullable=False
+    )
+    page_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    points_json: Mapped[list] = mapped_column(JSON, nullable=False)
+    text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    color_hex: Mapped[str] = mapped_column(String(7), nullable=False)
+    stroke_width: Mapped[int] = mapped_column(Integer, nullable=False)
+    opacity: Mapped[Decimal] = mapped_column(Numeric(4, 3), nullable=False)
+    created_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+
 class ElongationJob(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "elongation_jobs"
     __table_args__ = (

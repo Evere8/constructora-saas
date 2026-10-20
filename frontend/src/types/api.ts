@@ -187,11 +187,29 @@ export interface PerforationPoint {
   created_by_user_id: string;
 }
 
+export interface PerforationAnnotation {
+  id: string;
+  company_id: string;
+  project_id: string;
+  rubro_id: string;
+  document_id: string;
+  page_number: number;
+  kind: 'line' | 'note';
+  points: { x: number | string; y: number | string }[];
+  text: string | null;
+  color_hex: string;
+  stroke_width: number;
+  opacity: string | number;
+  created_by_user_id: string;
+  created_at: string;
+}
+
 export interface PerforationWorkspace {
   rubro: ProjectRubro;
   colors: PerforationColor[];
   documents: PerforationDocument[];
   points: PerforationPoint[];
+  annotations: PerforationAnnotation[];
 }
 
 export interface LevelPlanGeometry {

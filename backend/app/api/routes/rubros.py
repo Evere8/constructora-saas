@@ -30,6 +30,8 @@ from app.api.routes.operations import (
 )
 from app.api.routes.plans import preview_png
 from app.api.schemas.rubros import (
+    PerforationAnnotationCreate,
+    PerforationAnnotationResponse,
     PerforationChecklistPatch,
     PerforationColorCreate,
     PerforationColorPatch,
@@ -51,6 +53,7 @@ from app.api.schemas.rubros import (
 from app.core.config import get_settings
 from app.db.models import (
     ActivityLog,
+    PerforationAnnotation,
     PerforationColor,
     PerforationDocument,
     PerforationPoint,
@@ -403,6 +406,26 @@ async def require_point(
     if point is None:
         raise HTTPException(status_code=404, detail="Punto de perforación no encontrado")
     return point
+
+
+async def require_annotation(
+    db: DbSession,
+    company_id: str,
+    project_id: str,
+    rubro_id: str,
+    annotation_id: str,
+) -> PerforationAnnotation:
+    annotation = await db.scalar(
+        select(PerforationAnnotation).where(
+            PerforationAnnotation.id == annotation_id,
+            PerforationAnnotation.company_id == company_id,
+            PerforationAnnotation.project_id == project_id,
+            PerforationAnnotation.rubro_id == rubro_id,
+        )
+    )
+    if annotation is None:
+        raise HTTPException(status_code=404, detail="Marca del plano no encontrada")
+    return annotation
 
 
 def page_count(path: Path, mime_type: str) -> int | None:
@@ -771,11 +794,21 @@ async def perforation_workspace(
             )
         ).scalars()
     )
+    annotations = list(
+        (
+            await db.execute(
+                select(PerforationAnnotation)
+                .where(PerforationAnnotation.rubro_id == rubro.id)
+                .order_by(PerforationAnnotation.created_at, PerforationAnnotation.id)
+            )
+        ).scalars()
+    )
     return PerforationWorkspaceResponse(
         rubro=await rubro_response(db, rubro),
         colors=[color_response(color) for color in colors],
         documents=[await document_response(db, document) for document in documents],
         points=[point_response(point) for point in points],
+        annotations=[PerforationAnnotationResponse.model_validate(item) for item in annotations],
     )
 
 
@@ -796,6 +829,16 @@ async def upload_perforation_document(
     await require_project(db, access.company_id, project_id)
     rubro = await require_rubro(db, access.company_id, project_id, rubro_id)
     await require_interactive_pdf_feature(db, rubro)
+    # Some tablet file pickers label a valid PDF as an opaque binary stream.
+    # Recognize it by both filename and signature, without trusting extensions alone.
+    mime_type_override = None
+    if file.content_type in ("", "application/octet-stream", "application/x-pdf") and (
+        file.filename or ""
+    ).lower().endswith(".pdf"):
+        signature = await file.read(5)
+        await file.seek(0)
+        if signature == b"%PDF-":
+            mime_type_override = "application/pdf"
     stored = await store_upload(
         file,
         "companies",
@@ -806,6 +849,7 @@ async def upload_perforation_document(
         rubro.id,
         "perforations",
         max_bytes=get_settings().document_max_bytes,
+        mime_type_override=mime_type_override,
     )
     document = PerforationDocument(
         company_id=access.company_id,
@@ -830,6 +874,74 @@ async def upload_perforation_document(
         raise
     await db.refresh(document)
     return await document_response(db, document)
+
+
+@router.post(
+    "/projects/{project_id}/rubros/{rubro_id}/perforation-annotations",
+    response_model=PerforationAnnotationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_perforation_annotation(
+    project_id: str,
+    rubro_id: str,
+    payload: PerforationAnnotationCreate,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+) -> PerforationAnnotationResponse:
+    require_role(access, WORK_EDITOR_ROLES)
+    await require_project(db, access.company_id, project_id)
+    rubro = await require_rubro(db, access.company_id, project_id, rubro_id)
+    await require_interactive_pdf_feature(db, rubro)
+    document = await require_document(
+        db, access.company_id, project_id, rubro.id, payload.document_id
+    )
+    if document.page_count is not None and payload.page_number > document.page_count:
+        raise HTTPException(status_code=422, detail="La página solicitada no existe en el plano")
+    annotation = PerforationAnnotation(
+        company_id=access.company_id,
+        project_id=project_id,
+        rubro_id=rubro.id,
+        document_id=document.id,
+        page_number=payload.page_number,
+        kind=payload.kind,
+        points_json=[{"x": float(point.x), "y": float(point.y)} for point in payload.points],
+        text=payload.text,
+        color_hex=payload.color_hex,
+        stroke_width=payload.stroke_width,
+        opacity=payload.opacity,
+        created_by_user_id=access.user.id,
+    )
+    db.add(annotation)
+    add_activity(
+        db, access, "perforation_annotation.created", "perforation_annotation", annotation.id
+    )
+    await commit_or_conflict(db, "No fue posible guardar la marca del plano")
+    await db.refresh(annotation)
+    return PerforationAnnotationResponse.model_validate(annotation)
+
+
+@router.delete(
+    "/projects/{project_id}/rubros/{rubro_id}/perforation-annotations/{annotation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_perforation_annotation(
+    project_id: str,
+    rubro_id: str,
+    annotation_id: str,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+) -> Response:
+    require_role(access, WORK_EDITOR_ROLES)
+    await require_project(db, access.company_id, project_id)
+    annotation = await require_annotation(
+        db, access.company_id, project_id, rubro_id, annotation_id
+    )
+    await db.delete(annotation)
+    add_activity(
+        db, access, "perforation_annotation.deleted", "perforation_annotation", annotation.id
+    )
+    await commit_or_conflict(db, "No fue posible borrar la marca del plano")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete(
