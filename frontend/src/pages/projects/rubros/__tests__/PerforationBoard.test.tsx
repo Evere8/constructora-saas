@@ -3,10 +3,11 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PerforationWorkspace, ProjectRubro } from '@/types/api';
 
-const { workspace, preview, createAnnotation } = vi.hoisted(() => ({
+const { workspace, preview, createAnnotation, createPoint } = vi.hoisted(() => ({
   workspace: vi.fn(),
   preview: vi.fn(),
   createAnnotation: vi.fn(),
+  createPoint: vi.fn(),
 }));
 
 vi.mock('@/auth/useCan', () => ({ useCan: () => true }));
@@ -15,6 +16,7 @@ vi.mock('@/lib/api/rubros', () => ({
     perforationWorkspace: workspace,
     previewPerforationDocument: preview,
     createPerforationAnnotation: createAnnotation,
+    createPerforationPoint: createPoint,
   },
 }));
 
@@ -38,6 +40,18 @@ function firePointer(target: Element, type: string, pointerType: string, pointer
   fireEvent(target, event);
 }
 
+async function renderBoard() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  render(<QueryClientProvider client={queryClient}><PerforationBoard companyId="company-1" projectId="project-1" rubro={rubro} /></QueryClientProvider>);
+  const image = await screen.findByAltText('Plano de perforaciones Nivel 2');
+  const canvas = image.parentElement as HTMLElement;
+  const viewport = canvas.parentElement as HTMLElement;
+  canvas.getBoundingClientRect = () => ({ left: 0, top: 0, right: 300, bottom: 200, width: 300, height: 200 } as DOMRect);
+  Object.defineProperties(canvas, { offsetWidth: { value: 300, configurable: true }, offsetHeight: { value: 200, configurable: true } });
+  Object.defineProperties(viewport, { clientWidth: { value: 300, configurable: true }, clientHeight: { value: 200, configurable: true } });
+  return { canvas, viewport, queryClient };
+}
+
 describe('PerforationBoard on a tablet', () => {
   afterEach(() => {
     cleanup();
@@ -49,6 +63,7 @@ describe('PerforationBoard on a tablet', () => {
     workspace.mockResolvedValue(board);
     preview.mockResolvedValue(new Blob(['preview'], { type: 'image/png' }));
     createAnnotation.mockResolvedValue({ id: 'mark-1', kind: 'line', points: [], document_id: 'document-1', page_number: 1 });
+    createPoint.mockResolvedValue({ id: 'point-new' });
     vi.stubGlobal('ResizeObserver', class {
       observe() {}
       disconnect() {}
@@ -61,32 +76,71 @@ describe('PerforationBoard on a tablet', () => {
     HTMLElement.prototype.hasPointerCapture = vi.fn(() => false);
   });
 
-  it('pans with a finger and saves only a pen stroke inside the PDF', async () => {
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-    render(<QueryClientProvider client={queryClient}><PerforationBoard companyId="company-1" projectId="project-1" rubro={rubro} /></QueryClientProvider>);
-    const image = await screen.findByAltText('Plano de perforaciones Nivel 2');
-    const canvas = image.parentElement as HTMLElement;
-    const viewport = canvas.parentElement as HTMLElement;
-    canvas.getBoundingClientRect = () => ({ left: 0, top: 0, right: 300, bottom: 200, width: 300, height: 200 } as DOMRect);
-    Object.defineProperties(canvas, { offsetWidth: { value: 300 }, offsetHeight: { value: 200 } });
-    Object.defineProperties(viewport, { clientWidth: { value: 300 }, clientHeight: { value: 200 } });
-
+  it('uses a finger or a pen for the chosen tool, without panning the PDF', async () => {
+    const { canvas, viewport } = await renderBoard();
     fireEvent.click(screen.getByRole('button', { name: 'Trazo recto' }));
     firePointer(viewport, 'pointerdown', 'touch', 1, 75, 50);
     firePointer(viewport, 'pointermove', 'touch', 1, 225, 150);
     firePointer(viewport, 'pointerup', 'touch', 1, 225, 150);
-    expect(createAnnotation).not.toHaveBeenCalled();
+    await waitFor(() => expect(createAnnotation).toHaveBeenCalledTimes(1));
+    expect(createAnnotation).toHaveBeenLastCalledWith('company-1', 'project-1', 'rubro-1', expect.objectContaining({
+      kind: 'line',
+      document_id: 'document-1',
+      points: [{ x: 0.25, y: 0.25 }, { x: 0.75, y: 0.75 }],
+    }));
     await waitFor(() => expect(canvas.style.transform).toContain('translate(0px, 0px)'));
 
     firePointer(viewport, 'pointerdown', 'pen', 2, 75, 50);
     firePointer(viewport, 'pointermove', 'pen', 2, 225, 150);
     firePointer(viewport, 'pointerup', 'pen', 2, 225, 150);
-    await waitFor(() => expect(createAnnotation).toHaveBeenCalledTimes(1));
-    expect(createAnnotation).toHaveBeenCalledWith('company-1', 'project-1', 'rubro-1', expect.objectContaining({
-      kind: 'line',
-      document_id: 'document-1',
-      points: [{ x: 0.25, y: 0.25 }, { x: 0.75, y: 0.75 }],
+    await waitFor(() => expect(createAnnotation).toHaveBeenCalledTimes(2));
+  });
+
+  it('pans only in Mover mode and creates a point from a finger tap', async () => {
+    const { canvas, viewport } = await renderBoard();
+    fireEvent.click(screen.getByRole('button', { name: 'Acercar plano' }));
+    await waitFor(() => expect(canvas.style.transform).toContain('scale(1.2)'));
+    firePointer(viewport, 'pointerdown', 'touch', 1, 200, 100);
+    firePointer(viewport, 'pointermove', 'touch', 1, 160, 80);
+    firePointer(viewport, 'pointerup', 'touch', 1, 160, 80);
+    await waitFor(() => expect(canvas.style.transform).toContain('translate(-40px, -20px)'));
+    expect(createPoint).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Punto' }));
+    firePointer(viewport, 'pointerdown', 'touch', 2, 75, 50);
+    firePointer(viewport, 'pointermove', 'touch', 2, 125, 100);
+    firePointer(viewport, 'pointerup', 'touch', 2, 125, 100);
+    expect(createPoint).not.toHaveBeenCalled();
+    expect(canvas.style.transform).toContain('translate(-40px, -20px)');
+
+    firePointer(viewport, 'pointerdown', 'touch', 3, 75, 50);
+    firePointer(viewport, 'pointerup', 'touch', 3, 75, 50);
+    await waitFor(() => expect(createPoint).toHaveBeenCalledTimes(1));
+    expect(createPoint).toHaveBeenCalledWith('company-1', 'project-1', 'rubro-1', expect.objectContaining({
+      document_id: 'document-1', color_id: 'color-1', x: 0.25, y: 0.25,
     }));
+  });
+
+  it('keeps every drawing control usable over the PDF in fullscreen', async () => {
+    const { viewport } = await renderBoard();
+    fireEvent.click(screen.getByRole('button', { name: 'Pantalla completa' }));
+    expect(screen.getByRole('button', { name: 'Mover' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Punto' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Lápiz' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Iluminador' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Trazo recto' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Borrador' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Lápiz' }));
+    expect(screen.getByLabelText('Grosor del trazo')).toBeVisible();
+    firePointer(viewport, 'pointerdown', 'touch', 1, 75, 50);
+    firePointer(viewport, 'pointermove', 'touch', 1, 150, 100);
+    firePointer(viewport, 'pointerup', 'touch', 1, 150, 100);
+    await waitFor(() => expect(createAnnotation).toHaveBeenCalledTimes(1));
+    expect(createAnnotation).toHaveBeenLastCalledWith('company-1', 'project-1', 'rubro-1', expect.objectContaining({
+      points: [{ x: 0.25, y: 0.25 }, { x: 0.5, y: 0.5 }],
+    }));
+    fireEvent.click(screen.getByRole('button', { name: 'Salir' }));
+    expect(screen.getByRole('button', { name: 'Pantalla completa' })).toBeVisible();
   });
 
   it('keeps an unsaved point note when the board refreshes and exposes a close button', async () => {
