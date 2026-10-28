@@ -19,7 +19,7 @@ from app.api.routes.operations import (
 )
 from app.core.config import get_settings
 from app.db.models import ProjectFile, ProjectFolder
-from app.services import project_drive
+from app.services import project_drive, project_file_codec
 
 router = APIRouter()
 EDITOR_ROLES = {"owner", "admin", "engineer", "supervisor"}
@@ -42,6 +42,8 @@ class FileResponse(BaseModel):
     original_filename: str
     mime_type: str
     size_bytes: int
+    stored_size_bytes: int
+    storage_encoding: str
     sha256: str
 
 
@@ -147,7 +149,8 @@ async def upload_file(
         raise HTTPException(status_code=422, detail="El archivo está vacío")
     original = PurePath((file.filename or "archivo").replace("\\", "/")).name[:255]
     mime = (mimetypes.guess_type(original)[0] or "application/octet-stream")[:120]
-    await project_drive.upload(key, content)
+    stored, encoding = project_file_codec.encode(content)
+    await project_drive.upload(key, stored)
     record = ProjectFile(
         company_id=access.company_id,
         project_id=project_id,
@@ -155,6 +158,8 @@ async def upload_file(
         original_filename=original,
         mime_type=mime,
         size_bytes=len(content),
+        stored_size_bytes=len(stored),
+        storage_encoding=encoding,
         sha256=hashlib.sha256(content).hexdigest(),
         drive_key=key,
         uploaded_by_user_id=access.user.id,
@@ -181,7 +186,13 @@ async def download_file(project_id: str, file_id: str, access: CurrentCompanyAcc
     )
     if record is None:
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
-    content = await project_drive.download(record.drive_key)
+    stored = await project_drive.download(record.drive_key)
+    if len(stored) != record.stored_size_bytes:
+        raise HTTPException(status_code=502, detail="Tamaño en Drive distinto al registrado")
+    try:
+        content = project_file_codec.decode(stored, record.storage_encoding, record.size_bytes)
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail="El archivo almacenado está dañado") from exc
     if hashlib.sha256(content).hexdigest() != record.sha256:
         raise HTTPException(
             status_code=502,

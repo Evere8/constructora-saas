@@ -752,6 +752,8 @@ class ProjectFile(UUIDPrimaryKeyMixin, Base):
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     mime_type: Mapped[str] = mapped_column(String(120), nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    stored_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    storage_encoding: Mapped[str] = mapped_column(String(16), nullable=False, default="identity")
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     drive_key: Mapped[str] = mapped_column(String(250), nullable=False, unique=True)
     uploaded_by_user_id: Mapped[str] = mapped_column(

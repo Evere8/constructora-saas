@@ -18,6 +18,8 @@ def test_openapi_exposes_company_operation_routes() -> None:
     assert "delete" in paths[f"{prefix}/projects/{{project_id}}/tasks/{{task_id}}"]
     assert "delete" in paths[f"{prefix}/projects/{{project_id}}/levels/{{level_id}}"]
     assert "patch" in paths[f"{prefix}/projects/{{project_id}}/sectors/{{sector_id}}"]
+    assert "post" in paths[f"{prefix}/projects/{{project_id}}/deactivate"]
+    assert "post" in paths[f"{prefix}/projects/{{project_id}}/reactivate"]
 
 
 def test_openapi_exposes_company_onboarding_route() -> None:

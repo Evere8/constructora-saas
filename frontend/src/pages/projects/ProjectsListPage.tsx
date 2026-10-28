@@ -12,6 +12,7 @@ import { PROJECT_STATUS, PROJECT_STATUS_OPTIONS } from '@/lib/labels';
 import { formatDate } from '@/lib/utils';
 import { EmptyState, ErrorState, LoadingState, PageHeader } from '@/components/common/states';
 import { ProjectFormDialog } from '@/pages/projects/ProjectFormDialog';
+import { ProjectStatusAction } from '@/pages/projects/ProjectStatusAction';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -116,7 +117,7 @@ export function ProjectsListPage() {
       <div className="grid gap-3 sm:grid-cols-3" role="tablist" aria-label="Estado de las obras">
         {GROUPS.map((group) => <button key={group.value} type="button" role="tab" aria-selected={status === group.value} className={`rounded-xl border p-4 text-left transition-colors ${status === group.value ? 'border-primary bg-primary/10 ring-1 ring-primary/40' : 'bg-card hover:bg-muted/50'}`} onClick={() => { setStatus(group.value); setPage(0); }}><span className="text-sm font-semibold">{group.label}</span><span className="ml-2 text-xl font-bold">{allProjects.filter((project) => group.value === 'completed' ? project.status === 'completed' || project.status === 'archived' : project.status === group.value).length}</span><p className="text-xs text-muted-foreground">{group.description}</p></button>)}
       </div>
-      {status === 'inactive' || status === 'completed' ? <p className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">Los planos y documentos existentes siguen disponibles en su ubicación original. El archivado comprimido en Drive se habilitará después de configurar un almacenamiento operativo separado de los respaldos.</p> : null}
+      {status === 'inactive' || status === 'completed' ? <p className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">Inactivar o completar una obra no borra ni mueve archivos. Los nuevos documentos de carpetas en Drive solo se comprimen si ahorran espacio; los planos interactivos existentes permanecen intactos.</p> : null}
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="relative flex-1">
@@ -214,15 +215,18 @@ export function ProjectsListPage() {
                         {formatDate(project.planned_end_date)}
                       </TableCell>
                       <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                        {canEdit ? (
-                          <Button variant="ghost" size="sm" onClick={() => openEdit(project)}>
-                            <Pencil className="h-4 w-4" /> Editar
-                          </Button>
-                        ) : (
-                          <Button variant="ghost" size="sm" onClick={() => navigate(`/obras/${project.id}`)}>
-                            Ver
-                          </Button>
-                        )}
+                        <div className="flex justify-end gap-1">
+                          <ProjectStatusAction project={project} />
+                          {canEdit ? (
+                            <Button variant="ghost" size="sm" onClick={() => openEdit(project)}>
+                              <Pencil className="h-4 w-4" /> Editar
+                            </Button>
+                          ) : (
+                            <Button variant="ghost" size="sm" onClick={() => navigate(`/obras/${project.id}`)}>
+                              Ver
+                            </Button>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   );

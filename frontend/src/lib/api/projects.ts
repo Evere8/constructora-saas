@@ -53,6 +53,10 @@ export const projectsApi = {
     api.post<Project>(base(companyId), input),
   update: (companyId: string, projectId: string, input: Partial<ProjectInput>) =>
     api.patch<Project>(`${base(companyId)}/${projectId}`, input),
+  deactivate: (companyId: string, projectId: string) =>
+    api.post<Project>(`${base(companyId)}/${projectId}/deactivate`, {}),
+  reactivate: (companyId: string, projectId: string) =>
+    api.post<Project>(`${base(companyId)}/${projectId}/reactivate`, {}),
 
   listLevels: (companyId: string, projectId: string, signal?: AbortSignal) =>
     api.get<Paginated<Level> | Level[]>(`${base(companyId)}/${projectId}/levels`, undefined, signal),

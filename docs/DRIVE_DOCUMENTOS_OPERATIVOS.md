@@ -3,7 +3,11 @@
 Los archivos de **Carpetas y documentos de la obra** no se guardan de forma
 permanente en `app_uploads`. Se cargan a Drive mediante un remoto cifrado de
 rclone con rutas opacas (ID de constructora/obra/archivo); MySQL conserva el
-nombre, la carpeta lógica, el tamaño y el SHA-256. La descarga verifica ese hash.
+nombre, la carpeta lógica, el tamaño original y el SHA-256. Antes de subir,
+se prueba compresión gzip sin pérdidas: se guarda comprimido **solo si ahorra
+al menos 1 KiB y 5 %**; si no, por ejemplo un DWG ya comprimido, se guarda
+íntegro con su peso. La descarga restaura los bytes originales y verifica
+su tamaño y hash. El tamaño guardado y la codificación quedan registrados.
 Los planos PDF interactivos existentes **no se migran ni se borran**: conservan
 su almacenamiento local, anotaciones y versiones actuales. Las carpetas nuevas
 no modifican el sistema de respaldos de `docs/BACKUPS_GOOGLE_DRIVE.md`.
@@ -71,12 +75,17 @@ nunca se ejecutan dentro de la aplicación.
 
 ## Archivo de obras completadas/inactivas
 
-La navegación por estado (`Activas`, `Completadas`, `Inactivas`) está disponible
-sin alterar bytes. **No hay compresión automática todavía**. Comprimir PDFs e
-imágenes ya comprimidos puede no reducir tamaño; comprimir el volumen antiguo
-sin un proceso verificado de restauración podría romper los PDF interactivos,
-los enlaces de versiones y las copias de seguridad. Primero se debe diseñar y
-probar una migración reversible con inventario de archivos, sumas de
-verificación, restauración bajo demanda y una política de retención aprobada.
-No debe interpretarse el estado `Completada` como autorización para borrar o
-comprimir permanentemente los planos.
+Un propietario o administrador dispone de un botón **Marcar inactiva**, con
+confirmación, en cada obra activa. La acción se audita y puede revertirse con
+**Reactivar obra**. Un ingeniero no puede inactivarla mediante el formulario
+ni mediante la API; crear una obra inactiva directamente tampoco está
+permitido. El cambio de estado **no borra, mueve ni recomprime** archivos.
+
+La compresión condicional descrita arriba se aplica a **nuevos documentos de
+carpetas operativas en Drive**, sean de una obra activa, inactiva o completada.
+No se aplica retroactivamente a archivos ya cargados, ni al volumen local de
+planos PDF interactivos, versiones y anotaciones del VPS. Comprimir ese volumen
+sin un proceso verificado de restauración podría romper enlaces y copias de
+seguridad. Primero se necesita un inventario de originales, prueba de
+integridad/restauración y una política de retención aprobada. No interprete
+`Inactiva` o `Completada` como autorización para borrar planos existentes.

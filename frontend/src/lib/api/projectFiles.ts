@@ -1,7 +1,7 @@
 import { api } from '@/lib/http';
 
 export interface ProjectFolder { id: string; name: string; parent_id: string | null }
-export interface ProjectFile { id: string; folder_id: string | null; original_filename: string; mime_type: string; size_bytes: number; sha256: string }
+export interface ProjectFile { id: string; folder_id: string | null; original_filename: string; mime_type: string; size_bytes: number; stored_size_bytes: number; storage_encoding: 'identity' | 'gzip'; sha256: string }
 
 const base = (companyId: string, projectId: string) => `/v1/companies/${companyId}/projects/${projectId}`;
 
