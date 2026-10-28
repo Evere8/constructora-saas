@@ -78,7 +78,7 @@ def snapshot_response(snapshot: InventoryDaySnapshot) -> InventoryDayResponse:
         id=snapshot.id,
         snapshot_date=snapshot.snapshot_date,
         revision=snapshot.revision,
-        registered_at=snapshot.registered_at,
+        registered_at=snapshot.registered_at.replace(tzinfo=UTC),
         registered_by_user_id=snapshot.registered_by_user_id,
         items=snapshot.items_json,
     )
@@ -411,8 +411,10 @@ async def present_plan(
     return DailyActivityResponse(
         id=plan.id if plan else None,
         plan_date=plan_date,
-        registered_at=plan.registered_at if plan else None,
-        inventory_registered_at=snapshot.registered_at if snapshot else None,
+        registered_at=plan.registered_at.replace(tzinfo=UTC)
+        if plan and plan.registered_at
+        else None,
+        inventory_registered_at=snapshot.registered_at.replace(tzinfo=UTC) if snapshot else None,
         total_people=sum(entry["people_count"] for entry in entries),
         entries=entries,
     )
