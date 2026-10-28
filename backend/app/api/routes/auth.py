@@ -27,6 +27,7 @@ async def me(user: CurrentUser, db: DbSession) -> CurrentUserResponse:
             company_status=company.status,
             role=membership.role,
             membership_status=membership.status,
+            can_register_inventory_day=membership.can_register_inventory_day,
         )
         for membership, company in result.all()
     ]

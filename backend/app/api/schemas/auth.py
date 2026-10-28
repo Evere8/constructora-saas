@@ -8,6 +8,7 @@ class MembershipSummary(BaseModel):
     company_status: str
     role: str
     membership_status: str
+    can_register_inventory_day: bool = False
 
 
 class CurrentUserResponse(BaseModel):

@@ -10,6 +10,7 @@ import {
   CalendarClock,
 } from 'lucide-react';
 import { projectsApi } from '@/lib/api/projects';
+import { taskLibraryApi } from '@/lib/api/taskLibrary';
 import { useCompany } from '@/context/CompanyProvider';
 import { useMe } from '@/auth/useMe';
 import { roleLabel } from '@/auth/permissions';
@@ -53,6 +54,13 @@ export function DashboardPage() {
     queryFn: ({ signal }) => projectsApi.list(activeCompanyId as string, { limit: 100 }, signal),
     enabled: Boolean(activeCompanyId),
   });
+  const pendingQuery = useQuery({
+    queryKey: ['my-tasks-summary', activeCompanyId],
+    queryFn: ({ signal }) => taskLibraryApi.mySummary(activeCompanyId as string, signal),
+    enabled: Boolean(activeCompanyId),
+    refetchInterval: 30_000,
+  });
+  const pending = pendingQuery.data?.total_pending ?? 0;
 
   const projects = asItems(query.data);
   const stats = {
@@ -103,10 +111,11 @@ export function DashboardPage() {
             <Link
               key={action.label}
               to={action.to}
-              className="flex flex-col items-center gap-2 rounded-lg border bg-card p-4 text-center text-sm font-medium transition-colors hover:border-primary hover:text-primary"
+              className={`relative flex flex-col items-center gap-2 rounded-lg border p-4 text-center text-sm font-medium transition-colors ${action.to === '/tareas' && pending > 0 ? 'border-orange-600 bg-orange-500 text-black shadow-md hover:bg-orange-400' : 'bg-card hover:border-primary hover:text-primary'}`}
             >
-              <action.icon className="h-6 w-6 text-primary" />
+              <action.icon className={`h-6 w-6 ${action.to === '/tareas' && pending > 0 ? 'text-white' : 'text-primary'}`} />
               <span>{action.label}</span>
+              {action.to === '/tareas' && pending > 0 ? <span className="absolute right-2 top-2 rounded-full bg-white px-1.5 py-0.5 text-xs font-bold text-black" aria-label={`${pending} tareas pendientes`}>{pending}</span> : null}
             </Link>
           ))}
         </div>

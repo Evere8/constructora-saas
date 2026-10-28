@@ -34,6 +34,11 @@ import {
 
 const PAGE_SIZE = 10;
 const ALL = 'all';
+const GROUPS = [
+  { value: 'active', label: 'Activas', description: 'En ejecución' },
+  { value: 'completed', label: 'Completadas', description: 'Consulta rápida' },
+  { value: 'inactive', label: 'Inactivas', description: 'Fuera de operación' },
+] as const;
 
 export function ProjectsListPage() {
   const { activeCompanyId } = useCompany();
@@ -41,7 +46,7 @@ export function ProjectsListPage() {
   const navigate = useNavigate();
 
   const [search, setSearch] = useState('');
-  const [status, setStatus] = useState<ProjectStatus | typeof ALL>(ALL);
+  const [status, setStatus] = useState<ProjectStatus | typeof ALL>('active');
   const [page, setPage] = useState(0);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Project | undefined>(undefined);
@@ -64,6 +69,12 @@ export function ProjectsListPage() {
     enabled: Boolean(activeCompanyId),
     placeholderData: keepPreviousData,
   });
+  const countsQuery = useQuery({
+    queryKey: ['projects', activeCompanyId, { limit: 100 }],
+    queryFn: ({ signal }) => projectsApi.list(activeCompanyId as string, { limit: 100 }, signal),
+    enabled: Boolean(activeCompanyId),
+  });
+  const allProjects = asItems(countsQuery.data);
 
   const projects = asItems(query.data);
   const total = asTotal(query.data);
@@ -101,6 +112,11 @@ export function ProjectsListPage() {
           ) : undefined
         }
       />
+
+      <div className="grid gap-3 sm:grid-cols-3" role="tablist" aria-label="Estado de las obras">
+        {GROUPS.map((group) => <button key={group.value} type="button" role="tab" aria-selected={status === group.value} className={`rounded-xl border p-4 text-left transition-colors ${status === group.value ? 'border-primary bg-primary/10 ring-1 ring-primary/40' : 'bg-card hover:bg-muted/50'}`} onClick={() => { setStatus(group.value); setPage(0); }}><span className="text-sm font-semibold">{group.label}</span><span className="ml-2 text-xl font-bold">{allProjects.filter((project) => group.value === 'completed' ? project.status === 'completed' || project.status === 'archived' : project.status === group.value).length}</span><p className="text-xs text-muted-foreground">{group.description}</p></button>)}
+      </div>
+      {status === 'inactive' || status === 'completed' ? <p className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">Los planos y documentos existentes siguen disponibles en su ubicación original. El archivado comprimido en Drive se habilitará después de configurar un almacenamiento operativo separado de los respaldos.</p> : null}
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="relative flex-1">

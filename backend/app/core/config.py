@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     supabase_audience: str = "authenticated"
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
     upload_root: Path = Path("/data/uploads")
+    drive_document_remote: str | None = None
+    drive_document_config: Path = Path("/etc/constructora/drive-rclone.conf")
     evidence_max_bytes: int = 10 * 1024 * 1024
     document_max_bytes: int = 50 * 1024 * 1024
     ocr_max_pdf_pages: int = 25

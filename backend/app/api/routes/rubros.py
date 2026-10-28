@@ -1203,13 +1203,27 @@ async def update_perforation_point_checklist(
     point = await require_point(db, access.company_id, project_id, rubro_id, point_id)
     point.checklist_json = [entry.model_dump() for entry in payload.checklist]
     point.status = point_status(point.checklist_json)
+    if payload.save_as_color_default:
+        if len(payload.checklist) > 30:
+            raise HTTPException(
+                status_code=422, detail="El modelo de color admite hasta 30 controles"
+            )
+        if point.color_id is None:
+            raise HTTPException(
+                status_code=409, detail="Este punto no tiene un color para guardar el modelo"
+            )
+        color = await require_color(db, rubro_id, point.color_id)
+        color.checklist_json = checklist_snapshot(payload.checklist)
     add_activity(
         db,
         access,
         "perforation_point.checklist_updated",
         "perforation_point",
         point.id,
-        {"completed": point.status == "completed"},
+        {
+            "completed": point.status == "completed",
+            "saved_color_default": payload.save_as_color_default,
+        },
     )
     await commit_or_conflict(db, "No fue posible guardar el checklist")
     await db.refresh(point)

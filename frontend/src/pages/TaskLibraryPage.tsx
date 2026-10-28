@@ -17,6 +17,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { TaskFormDialog } from '@/pages/projects/TaskFormDialog';
+import { DailyActivitiesBoard } from '@/pages/DailyActivitiesBoard';
 
 const NONE = 'none';
 
@@ -149,9 +150,11 @@ export function TaskLibraryPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">Tareas</h1>
-        <p className="text-sm text-muted-foreground">Crea tareas de obra con sector y nivel, y administra las tareas diarias desde esta pantalla.</p>
+        <h1 className="text-2xl font-semibold">Tareas / actividades</h1>
+        <p className="text-sm text-muted-foreground">Asigna tareas, distribuye el personal de cada día y verifica las herramientas por obra.</p>
       </div>
+
+      <DailyActivitiesBoard />
 
       {canEditTasks ? (
         <Card className="surface-glass border-primary/25">

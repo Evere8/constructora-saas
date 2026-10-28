@@ -46,6 +46,10 @@ export interface DailyTaskInput {
 }
 
 export const taskLibraryApi = {
+  mySummary: (companyId: string, signal?: AbortSignal) =>
+    api.get<{ work_pending: number; daily_pending: number; total_pending: number }>(
+      `${base(companyId)}/my-tasks/summary`, undefined, signal,
+    ),
   listTemplates: (companyId: string, activeOnly = true, signal?: AbortSignal) =>
     api.get<TaskTemplate[]>(`${base(companyId)}/task-templates`, { active_only: activeOnly }, signal),
   createTemplate: (companyId: string, input: TaskTemplateInput) =>

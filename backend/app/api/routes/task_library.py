@@ -1,7 +1,8 @@
 from datetime import UTC, date, datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Response, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from app.api.dependencies import CurrentCompanyAccess, DbSession
 from app.api.routes.operations import (
@@ -32,12 +33,40 @@ from app.db.models import (
     DailyTaskTemplate,
     DailyTaskTemplateChecklistItem,
     InventoryItem,
+    Task,
     TaskTemplate,
     TaskTemplateChecklistItem,
     TaskTemplateRequirement,
 )
 
 router = APIRouter()
+
+
+def operational_today() -> date:
+    return datetime.now(ZoneInfo("America/Asuncion")).date()
+
+
+@router.get("/my-tasks/summary")
+async def my_tasks_summary(access: CurrentCompanyAccess, db: DbSession) -> dict[str, int]:
+    """Count unfinished work and today's personal tasks across the active company."""
+    today = operational_today()
+    await materialize_recurring_daily_tasks(db, access, today)
+    work = await db.scalar(
+        select(func.count(Task.id)).where(
+            Task.company_id == access.company_id,
+            Task.assigned_user_id == access.user.id,
+            Task.status.in_(("pending", "in_progress", "review")),
+        )
+    ) or 0
+    daily = await db.scalar(
+        select(func.count(DailyTask.id)).where(
+            DailyTask.company_id == access.company_id,
+            DailyTask.assigned_user_id == access.user.id,
+            DailyTask.task_date == today,
+            DailyTask.status.in_(("pending", "in_progress")),
+        )
+    ) or 0
+    return {"work_pending": work, "daily_pending": daily, "total_pending": work + daily}
 
 
 async def require_inventory_item(
@@ -581,7 +610,7 @@ async def list_daily_tasks(
     task_date: date | None = None,
     assigned_user_id: str | None = None,
 ) -> list[DailyTaskResponse]:
-    target_date = task_date or date.today()
+    target_date = task_date or operational_today()
     target_assignee = await validate_daily_assignee(db, access, assigned_user_id)
     await materialize_recurring_daily_tasks(db, access, target_date)
     tasks = list(

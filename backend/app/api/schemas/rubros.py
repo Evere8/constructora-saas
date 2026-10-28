@@ -199,6 +199,7 @@ class PerforationPointPatch(BaseModel):
 
 class PerforationChecklistPatch(BaseModel):
     checklist: list[PerforationChecklistEntry] = Field(default_factory=list, max_length=40)
+    save_as_color_default: bool = False
 
 
 class PerforationPointResponse(BaseModel):

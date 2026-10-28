@@ -1,0 +1,9 @@
+# Opt-in ONLY after provisioning /etc/constructora/drive-rclone.conf with a
+# dedicated project-docs remote. Never mount the backup rclone.conf into API.
+services:
+  api:
+    environment:
+      DRIVE_DOCUMENT_REMOTE: "project-docs:"
+      DRIVE_DOCUMENT_CONFIG: "/etc/constructora/drive-rclone.conf"
+    volumes:
+      - /etc/constructora/drive-rclone.conf:/etc/constructora/drive-rclone.conf:ro

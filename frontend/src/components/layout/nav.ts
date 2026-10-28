@@ -20,7 +20,7 @@ export interface NavItem {
 export const PRIMARY_NAV: NavItem[] = [
   { label: 'Resumen', to: '/', icon: LayoutDashboard, end: true },
   { label: 'Obras', to: '/obras', icon: Building2 },
-  { label: 'Tareas', to: '/tareas', icon: ClipboardList },
+  { label: 'Tareas / actividades', to: '/tareas', icon: ClipboardList },
 ];
 
 export const SECONDARY_NAV: NavItem[] = [

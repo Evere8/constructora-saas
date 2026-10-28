@@ -69,7 +69,9 @@ def require_relocation_actor(
     access: CurrentCompanyAccess,
     relocation: InventoryRelocationRequest,
 ) -> None:
-    if access.role in MOVEMENT_EDITOR_ROLES:
+    # Task-linked relocation has its own workflow and assignee checks; it is
+    # independent of the permission to close the company's daily inventory.
+    if access.role in MOVEMENT_EDITOR_ROLES or access.can_register_inventory_day:
         return
     if (
         access.role in RELOCATION_SELF_ROLES
@@ -271,7 +273,12 @@ async def update_inventory_item(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="El estado de traslado solo se actualiza desde la solicitud de reubicación",
         )
-    if {"status", "current_project_id"}.intersection(changes):
+    if "current_project_id" in changes:
+        raise HTTPException(
+            status_code=422,
+            detail="Registre los cambios de obra desde Movimientos diarios",
+        )
+    if "status" in changes:
         active_relocation = await db.scalar(
             select(InventoryRelocationRequest.id).where(
                 InventoryRelocationRequest.company_id == access.company_id,
@@ -284,8 +291,6 @@ async def update_inventory_item(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="El equipo tiene una reubicación pendiente; actualícela desde el Resumen",
             )
-    if changes.get("current_project_id"):
-        await require_project(db, access.company_id, changes["current_project_id"])
     for field, value in changes.items():
         setattr(item, field, value)
     add_activity(db, access, "inventory.updated", "inventory_item", item.id, changes)
@@ -326,7 +331,8 @@ async def create_inventory_movement(
     access: CurrentCompanyAccess,
     db: DbSession,
 ) -> InventoryMovement:
-    require_role(access, MOVEMENT_EDITOR_ROLES)
+    if access.role not in {"owner", "admin"} and not access.can_register_inventory_day:
+        raise HTTPException(status_code=403, detail="No tiene permiso para registrar movimientos")
     item = await require_item(db, access.company_id, payload.item_id)
     if item.status in {"relocation_pending", "in_transit"}:
         raise HTTPException(

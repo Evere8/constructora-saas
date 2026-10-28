@@ -117,7 +117,8 @@ export const rubrosApi = {
     rubroId: string,
     pointId: string,
     checklist: PerforationChecklistEntry[],
-  ) => api.put<PerforationPoint>(`${rubroBase(companyId, projectId, rubroId)}/perforation-points/${pointId}/checklist`, { checklist }),
+    saveAsColorDefault = false,
+  ) => api.put<PerforationPoint>(`${rubroBase(companyId, projectId, rubroId)}/perforation-points/${pointId}/checklist`, { checklist, save_as_color_default: saveAsColorDefault }),
   uploadPerforationAttachment: (companyId: string, projectId: string, rubroId: string, pointId: string, file: File) => {
     const body = new FormData();
     body.set('file', file);

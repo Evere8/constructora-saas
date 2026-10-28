@@ -5,6 +5,7 @@ from app.api.routes import (
     auth,
     checklists,
     company_admin,
+    daily_operations,
     documents,
     elongations,
     health,
@@ -12,6 +13,7 @@ from app.api.routes import (
     operations,
     plans,
     platform,
+    project_files,
     reports,
     rubros,
     task_library,
@@ -42,6 +44,11 @@ api_router.include_router(
     tags=["plans"],
 )
 api_router.include_router(
+    project_files.router,
+    prefix="/v1/companies/{company_id}",
+    tags=["project-files"],
+)
+api_router.include_router(
     documents.router,
     prefix="/v1/companies/{company_id}",
     tags=["documents"],
@@ -55,6 +62,11 @@ api_router.include_router(
     inventory.router,
     prefix="/v1/companies/{company_id}",
     tags=["inventory"],
+)
+api_router.include_router(
+    daily_operations.router,
+    prefix="/v1/companies/{company_id}",
+    tags=["daily-operations"],
 )
 api_router.include_router(
     company_admin.router,

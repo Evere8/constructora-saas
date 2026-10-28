@@ -277,6 +277,7 @@ class CompanyMemberCreate(BaseModel):
 
 
 class CompanyMemberPatch(BaseModel):
+    can_register_inventory_day: bool | None = None
     role: (
         Literal[
             "owner", "admin", "engineer", "supervisor", "warehouse", "transport", "worker", "viewer"
@@ -299,6 +300,7 @@ class CompanyMemberResponse(BaseModel):
     full_name: str | None
     role: str
     status: str
+    can_register_inventory_day: bool = False
     created_at: datetime
     assigned_tasks: int = 0
     assigned_checklist: int = 0
