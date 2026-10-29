@@ -1,6 +1,7 @@
 """Real HTTP routes + isolated SQL database. No production credentials or files."""
 
 import hashlib
+import os
 from datetime import timedelta
 from types import SimpleNamespace
 from uuid import uuid4
@@ -8,6 +9,7 @@ from uuid import uuid4
 import httpx
 import pytest
 import pytest_asyncio
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -396,9 +398,120 @@ async def test_pdf_color_defaults_annotation_idempotence_and_deletion(flow):
     assert created.status_code == 201, created.text
     retried = await f.client.post(url + "/perforation-annotations", json=mark)
     assert retried.json()["id"] == created.json()["id"]
+    conflict = await f.client.post(
+        url + "/perforation-annotations", json={**mark, "stroke_width": 7}
+    )
+    assert conflict.status_code == 409
     assert (
         await f.client.delete(url + "/perforation-annotations/" + created.json()["id"])
     ).status_code == 204
     assert (
         await f.client.delete(url + "/perforation-points/" + point.json()["id"])
     ).status_code == 204
+
+
+def legacy_drive_file(f, content):
+    key = f"{f.company.id.replace('-', '')}/{f.project.id.replace('-', '')}/{uuid4().hex}"
+    record = ProjectFile(
+        company_id=f.company.id,
+        project_id=f.project.id,
+        original_filename="original.dwg",
+        mime_type="application/octet-stream",
+        size_bytes=len(content),
+        stored_size_bytes=len(content),
+        storage_encoding="identity",
+        compression_checked=False,
+        sha256=hashlib.sha256(content).hexdigest(),
+        drive_key=key,
+        uploaded_by_user_id=f.user.id,
+    )
+    f.project.status = "inactive"
+    f.session.add(record)
+    f.session.commit()
+    f.remote[key] = content
+    return record, key
+
+
+@pytest.mark.asyncio
+async def test_existing_drive_file_archive_keeps_exact_original_and_retires_only_old_object(flow):
+    f = flow
+    content = b"DWG layer " * 10000
+    record, key = legacy_drive_file(f, content)
+    url = f.base + f"/projects/{f.project.id}"
+    response = await f.client.post(url + "/archive-step")
+    assert response.status_code == 200, response.text
+    assert response.json()["complete"]
+    f.session.refresh(record)
+    assert record.storage_encoding == "gzip"
+    assert key not in f.remote and record.drive_key in f.remote
+    assert (await f.client.get(url + f"/files/{record.id}/download")).content == content
+
+
+@pytest.mark.asyncio
+async def test_already_dense_dwg_is_checked_but_not_replaced(flow):
+    f = flow
+    content = os.urandom(40_000)
+    record, key = legacy_drive_file(f, content)
+    response = await f.client.post(f.base + f"/projects/{f.project.id}/archive-step")
+    assert response.status_code == 200
+    assert response.json()["complete"] and response.json()["saved_bytes"] == 0
+    f.session.refresh(record)
+    assert record.drive_key == key and record.storage_encoding == "identity"
+    assert f.remote[key] == content and record.compression_checked
+
+
+@pytest.mark.asyncio
+async def test_corrupt_replacement_cannot_delete_or_change_original(flow, monkeypatch):
+    f = flow
+    content = b"original " * 10000
+    record, key = legacy_drive_file(f, content)
+
+    async def broken_upload(new_key, value):
+        f.remote[new_key] = value[:-3]
+
+    monkeypatch.setattr(project_drive, "upload", broken_upload)
+    response = await f.client.post(f.base + f"/projects/{f.project.id}/archive-step")
+    assert response.status_code == 502
+    f.session.refresh(record)
+    assert record.drive_key == key and not record.compression_checked
+    assert f.remote[key] == content
+
+
+@pytest.mark.asyncio
+async def test_failed_database_commit_during_archive_retains_readable_original(flow, monkeypatch):
+    f = flow
+    content = b"original " * 10000
+    record, key = legacy_drive_file(f, content)
+
+    async def failed_commit(self):
+        raise HTTPException(status_code=503, detail="Database unavailable")
+
+    monkeypatch.setattr(AsyncAdapter, "commit", failed_commit)
+    response = await f.client.post(f.base + f"/projects/{f.project.id}/archive-step")
+    assert response.status_code == 503
+    f.session.refresh(record)
+    assert record.drive_key == key and not record.compression_checked
+    assert f.remote[key] == content
+
+
+@pytest.mark.asyncio
+async def test_archive_preview_temporary_is_cleaned_on_reader_error(flow):
+    from app.services import project_file_codec
+
+    content = b"%PDF-1.7\n" + b"preview " * 10000
+    stored, encoding = project_file_codec.encode(content)
+    (flow.root / "archived.gz").write_bytes(stored)
+    ref = file_storage.archive_reference("archived.gz", content, len(stored), encoding, local=True)
+    with pytest.raises(RuntimeError, match="reader failed"):
+        async with file_storage.stored_path(ref) as path:
+            assert path.read_bytes() == content
+            raise RuntimeError("reader failed")
+    assert not path.exists()
+
+
+@pytest.mark.asyncio
+async def test_blank_folder_name_is_rejected(flow):
+    response = await flow.client.post(
+        flow.base + f"/projects/{flow.project.id}/folders", json={"name": "   "}
+    )
+    assert response.status_code == 422

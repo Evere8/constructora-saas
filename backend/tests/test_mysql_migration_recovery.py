@@ -7,6 +7,7 @@ MIGRATION_TEST_MYSQL_PASSWORD (the isolated CI MySQL service, never production).
 import asyncio
 import json
 import os
+from contextlib import asynccontextmanager
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -312,7 +313,11 @@ def test_documentation_review_and_rereading_preserve_saved_data(database, monkey
         engine = create_async_engine(database.url, poolclass=NullPool)
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         monkeypatch.setattr(pipeline, "SessionLocal", sessions)
-        monkeypatch.setattr(pipeline, "storage_path", lambda key: Path("synthetic.pdf"))
+        @asynccontextmanager
+        async def synthetic_source(_key):
+            yield Path("synthetic.pdf")
+
+        monkeypatch.setattr(pipeline, "stored_path", synthetic_source)
         monkeypatch.setattr(
             pipeline,
             "extract_theory",
