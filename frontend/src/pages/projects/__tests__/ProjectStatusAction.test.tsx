@@ -12,7 +12,7 @@ const { deactivate, reactivate, membership } = vi.hoisted(() => ({
 vi.mock('@/context/CompanyProvider', () => ({
   useCompany: () => ({ activeCompanyId: 'company-1', activeMembership: membership }),
 }));
-vi.mock('@/lib/api/projects', () => ({ projectsApi: { deactivate, reactivate } }));
+vi.mock('@/lib/api/projects', () => ({ projectsApi: { deactivate, reactivate, archiveStep: vi.fn().mockResolvedValue({ complete: true }) } }));
 
 import { ProjectStatusAction } from '@/pages/projects/ProjectStatusAction';
 

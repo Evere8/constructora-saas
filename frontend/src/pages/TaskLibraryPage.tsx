@@ -18,6 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { TaskFormDialog } from '@/pages/projects/TaskFormDialog';
 import { DailyActivitiesBoard } from '@/pages/DailyActivitiesBoard';
+import { AssignedTasks } from '@/pages/AssignedTasks';
 
 const NONE = 'none';
 
@@ -65,8 +66,8 @@ export function TaskLibraryPage() {
     enabled: Boolean(companyId),
   });
   const projectsQuery = useQuery({
-    queryKey: ['projects', companyId, { limit: 100 }],
-    queryFn: ({ signal }) => projectsApi.list(companyId, { limit: 100 }, signal),
+    queryKey: ['projects', companyId, 'all'],
+    queryFn: ({ signal }) => projectsApi.listAll(companyId, signal),
     enabled: Boolean(companyId) && canEditTasks,
   });
   const selectedProjectLevelsQuery = useQuery({
@@ -83,6 +84,7 @@ export function TaskLibraryPage() {
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
 
   const refreshDaily = () => {
+    void queryClient.invalidateQueries({ queryKey: ['my-tasks-summary', companyId] });
     void queryClient.invalidateQueries({ queryKey: ['daily-tasks', companyId] });
     void queryClient.invalidateQueries({ queryKey: ['daily-task-templates', companyId] });
   };
@@ -102,6 +104,11 @@ export function TaskLibraryPage() {
   const dailyChecklistMutation = useMutation({
     mutationFn: ({ taskId, itemId, status }: { taskId: string; itemId: string; status: DailyTaskStatus }) =>
       taskLibraryApi.updateDailyChecklist(companyId, taskId, itemId, status),
+    onSuccess: refreshDaily,
+    onError: (error: Error) => toast.error(error.message),
+  });
+  const dailyStatusMutation = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: DailyTaskStatus }) => taskLibraryApi.updateDailyTask(companyId, id, { status }),
     onSuccess: refreshDaily,
     onError: (error: Error) => toast.error(error.message),
   });
@@ -154,7 +161,8 @@ export function TaskLibraryPage() {
         <p className="text-sm text-muted-foreground">Asigna tareas, distribuye el personal de cada día y verifica las herramientas por obra.</p>
       </div>
 
-      <DailyActivitiesBoard />
+      <AssignedTasks key={`assigned-${companyId}`} companyId={companyId} />
+      <DailyActivitiesBoard key={companyId} />
 
       {canEditTasks ? (
         <Card className="surface-glass border-primary/25">
@@ -198,7 +206,7 @@ export function TaskLibraryPage() {
         </Card>
 
         <div className="grid gap-4 xl:grid-cols-2">
-          <Card><CardHeader className="flex-row items-center justify-between space-y-0"><div><CardTitle className="text-base">Tareas de hoy</CardTitle><p className="mt-1 text-xs text-muted-foreground">Marca el checklist sin salir del resumen.</p></div><Button size="icon" variant="ghost" aria-label="Actualizar tareas diarias" onClick={() => void dailyTasksQuery.refetch()}><RefreshCw className="h-4 w-4" /></Button></CardHeader><CardContent className="space-y-3">{dailyTasksQuery.isLoading ? <p className="text-sm text-muted-foreground">Cargando…</p> : (dailyTasksQuery.data ?? []).length === 0 ? <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">No hay tareas para hoy.</p> : (dailyTasksQuery.data ?? []).map((task) => <div key={task.id} className="rounded-md border p-3"><div className="flex items-start justify-between gap-2"><div><p className={task.status === 'completed' ? 'font-medium line-through text-muted-foreground' : 'font-medium'}>{task.title}</p>{task.description ? <p className="mt-1 text-xs text-muted-foreground">{task.description}</p> : null}</div><Button size="icon" variant="ghost" aria-label="Eliminar tarea diaria" onClick={() => deleteDailyTaskMutation.mutate(task.id)}><Trash2 className="h-4 w-4" /></Button></div>{task.checklist_items.length ? <div className="mt-3 space-y-2">{task.checklist_items.map((item) => <label key={item.id} className="flex items-center gap-2 text-sm"><input type="checkbox" className="h-4 w-4 accent-primary" checked={item.status === 'completed'} disabled={dailyChecklistMutation.isPending} onChange={(event) => dailyChecklistMutation.mutate({ taskId: task.id, itemId: item.id, status: event.target.checked ? 'completed' : 'pending' })} /><span className={item.status === 'completed' ? 'line-through text-muted-foreground' : ''}>{item.title}</span></label>)}</div> : null}</div>)}</CardContent></Card>
+          <Card><CardHeader className="flex-row items-center justify-between space-y-0"><div><CardTitle className="text-base">Tareas de hoy</CardTitle><p className="mt-1 text-xs text-muted-foreground">Marca el checklist sin salir del resumen.</p></div><Button size="icon" variant="ghost" aria-label="Actualizar tareas diarias" onClick={() => void dailyTasksQuery.refetch()}><RefreshCw className="h-4 w-4" /></Button></CardHeader><CardContent className="space-y-3">{dailyTasksQuery.isLoading ? <p className="text-sm text-muted-foreground">Cargando…</p> : (dailyTasksQuery.data ?? []).length === 0 ? <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">No hay tareas para hoy.</p> : (dailyTasksQuery.data ?? []).map((task) => <div key={task.id} className="rounded-md border p-3"><div className="flex items-start justify-between gap-2"><div><p className={task.status === 'completed' ? 'font-medium line-through text-muted-foreground' : 'font-medium'}>{task.title}</p>{task.description ? <p className="mt-1 text-xs text-muted-foreground">{task.description}</p> : null}</div><Button size="icon" variant="ghost" aria-label="Eliminar tarea diaria" onClick={() => deleteDailyTaskMutation.mutate(task.id)}><Trash2 className="h-4 w-4" /></Button></div>{task.checklist_items.length ? <div className="mt-3 space-y-2">{task.checklist_items.map((item) => <label key={item.id} className="flex items-center gap-2 text-sm"><input type="checkbox" className="h-4 w-4 accent-primary" checked={item.status === 'completed'} disabled={dailyChecklistMutation.isPending} onChange={(event) => dailyChecklistMutation.mutate({ taskId: task.id, itemId: item.id, status: event.target.checked ? 'completed' : 'pending' })} /><span className={item.status === 'completed' ? 'line-through text-muted-foreground' : ''}>{item.title}</span></label>)}</div> : <Button size="sm" variant="outline" className="mt-2" disabled={dailyStatusMutation.isPending} onClick={() => dailyStatusMutation.mutate({ id: task.id, status: task.status === 'completed' ? 'pending' : 'completed' })}>{task.status === 'completed' ? 'Reabrir tarea' : 'Marcar completada'}</Button>}</div>)}</CardContent></Card>
           <Card><CardHeader><CardTitle className="text-base">Predeterminadas diarias</CardTitle><p className="mt-1 text-xs text-muted-foreground">Activa la renovación cuando quieras que aparezcan automáticamente.</p></CardHeader><CardContent className="space-y-2">{dailyTemplatesQuery.isLoading ? <p className="text-sm text-muted-foreground">Cargando…</p> : (dailyTemplatesQuery.data ?? []).length === 0 ? <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">Todavía no hay predeterminadas diarias.</p> : (dailyTemplatesQuery.data ?? []).map((template) => <div key={template.id} className="flex items-center justify-between gap-3 rounded-md border p-3"><div><p className="text-sm font-medium">{template.title}</p><p className="mt-1 text-xs text-muted-foreground">{template.auto_renew_daily ? 'Se renueva todos los días' : 'Uso manual'} · {template.checklist_items.length} controles</p></div><div className="flex items-center gap-1"><Button size="sm" variant={template.auto_renew_daily ? 'secondary' : 'outline'} onClick={() => dailyTemplateMutation.mutate({ templateId: template.id, autoRenew: !template.auto_renew_daily })}>{template.auto_renew_daily ? 'Renovación activa' : 'Activar renovación'}</Button><Button size="icon" variant="ghost" aria-label="Eliminar predeterminada diaria" onClick={() => deleteDailyTemplateMutation.mutate(template.id)}><Trash2 className="h-4 w-4" /></Button></div></div>)}</CardContent></Card>
         </div>
       </section>

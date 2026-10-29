@@ -61,3 +61,8 @@ async def upload(key: str, content: bytes) -> None:
 
 async def download(key: str) -> bytes:
     return await _rclone("cat", key)
+
+
+async def delete(key: str) -> None:
+    """Only an exact opaque object key; never a directory or backup remote."""
+    await _rclone("deletefile", key)

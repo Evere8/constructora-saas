@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     drive_document_remote: str | None = None
     drive_document_config: Path = Path("/etc/constructora/drive-rclone.conf")
     evidence_max_bytes: int = 10 * 1024 * 1024
-    document_max_bytes: int = 50 * 1024 * 1024
+    document_max_bytes: int = 10 * 1024 * 1024
     ocr_max_pdf_pages: int = 25
     elongation_ocr_provider: Literal["auto", "local", "openai"] = "auto"
     openai_api_key: SecretStr | None = None

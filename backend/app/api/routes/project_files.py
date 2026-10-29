@@ -4,9 +4,9 @@ from pathlib import PurePath
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
 from app.api.dependencies import CurrentCompanyAccess, DbSession
@@ -18,16 +18,65 @@ from app.api.routes.operations import (
     require_role,
 )
 from app.core.config import get_settings
-from app.db.models import ProjectFile, ProjectFolder
-from app.services import project_drive, project_file_codec
+from app.db.models import Project, ProjectFile, ProjectFolder
+from app.services import project_archive, project_drive, project_file_codec
 
 router = APIRouter()
 EDITOR_ROLES = {"owner", "admin", "engineer", "supervisor"}
 
 
+@router.get("/projects/{project_id}/archive-status")
+async def archive_status(project_id: str, access: CurrentCompanyAccess, db: DbSession):
+    await require_project(db, access.company_id, project_id)
+    return await project_archive.status(db, access.company_id, project_id)
+
+
+@router.post("/projects/{project_id}/archive-step")
+async def archive_step(project_id: str, access: CurrentCompanyAccess, db: DbSession):
+    require_role(access, {"owner", "admin"})
+    project = await db.scalar(
+        select(Project)
+        .where(
+            Project.id == project_id,
+            Project.company_id == access.company_id,
+        )
+        .with_for_update()
+    )
+    if project is None:
+        raise HTTPException(status_code=404, detail="Obra no encontrada")
+    if project.status != "inactive":
+        raise HTTPException(
+            status_code=409, detail="Solo se archivan archivos de una obra inactiva"
+        )
+    await project_archive.archive_one(db, access.company_id, project_id)
+    result = await project_archive.status(db, access.company_id, project_id)
+    add_activity(db, access, "project.files.archived", "project", project_id, result)
+    await commit_or_conflict(db, "No se pudo registrar el archivado")
+    return result
+
+
+@router.get("/project-files/storage-status")
+async def storage_status(access: CurrentCompanyAccess):
+    try:
+        project_drive.drive_location(f"{access.company_id.replace('-', '')}/{'0' * 32}/{'0' * 32}")
+        return {"configured": True}
+    except HTTPException as exc:
+        if exc.status_code != 503:
+            raise
+        return {"configured": False, "message": exc.detail}
+
+
 class FolderInput(BaseModel):
     name: str = Field(min_length=1, max_length=180)
     parent_id: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def nonempty_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("El nombre de la carpeta no puede estar vacío")
+        return value
 
 
 class FolderResponse(BaseModel):
@@ -104,8 +153,17 @@ async def create_folder(
 
 
 @router.get("/projects/{project_id}/files", response_model=list[FileResponse])
-async def list_files(project_id: str, access: CurrentCompanyAccess, db: DbSession):
+async def list_files(
+    project_id: str,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+    folder_id: str | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
     await require_project(db, access.company_id, project_id)
+    if folder_id:
+        await require_folder(db, access.company_id, project_id, folder_id)
     return (
         (
             await db.execute(
@@ -113,9 +171,11 @@ async def list_files(project_id: str, access: CurrentCompanyAccess, db: DbSessio
                 .where(
                     ProjectFile.company_id == access.company_id,
                     ProjectFile.project_id == project_id,
+                    ProjectFile.folder_id == folder_id,
                 )
-                .order_by(ProjectFile.created_at.desc())
-                .limit(500)
+                .order_by(ProjectFile.created_at.desc(), ProjectFile.id)
+                .limit(limit)
+                .offset(offset)
             )
         )
         .scalars()
@@ -151,6 +211,11 @@ async def upload_file(
     mime = (mimetypes.guess_type(original)[0] or "application/octet-stream")[:120]
     stored, encoding = project_file_codec.encode(content)
     await project_drive.upload(key, stored)
+    verified = await project_drive.download(key)
+    if verified != stored:
+        raise HTTPException(
+            status_code=502, detail="Drive no confirmó el archivo íntegro. No se registró."
+        )
     record = ProjectFile(
         company_id=access.company_id,
         project_id=project_id,
@@ -160,6 +225,7 @@ async def upload_file(
         size_bytes=len(content),
         stored_size_bytes=len(stored),
         storage_encoding=encoding,
+        compression_checked=True,
         sha256=hashlib.sha256(content).hexdigest(),
         drive_key=key,
         uploaded_by_user_id=access.user.id,

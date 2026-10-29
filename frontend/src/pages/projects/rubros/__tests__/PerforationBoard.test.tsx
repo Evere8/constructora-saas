@@ -11,6 +11,7 @@ const { workspace, preview, createAnnotation, createPoint, updateChecklist } = v
   updateChecklist: vi.fn(),
 }));
 
+vi.mock('@/auth/useMe', () => ({ useMe: () => ({ data: { id: 'test-user' } }) }));
 vi.mock('@/auth/useCan', () => ({ useCan: () => true }));
 vi.mock('@/lib/api/rubros', () => ({
   rubrosApi: {
@@ -62,6 +63,7 @@ describe('PerforationBoard on a tablet', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     workspace.mockResolvedValue(board);
     preview.mockResolvedValue(new Blob(['preview'], { type: 'image/png' }));
     createAnnotation.mockResolvedValue({ id: 'mark-1', kind: 'line', points: [], document_id: 'document-1', page_number: 1 });

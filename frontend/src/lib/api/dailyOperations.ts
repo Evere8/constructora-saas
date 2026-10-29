@@ -39,6 +39,7 @@ export interface DailyActivityEntry {
 
 export interface DailyActivityPlan {
   id: string | null;
+  revision: string | null;
   plan_date: string;
   registered_at: string | null;
   inventory_registered_at: string | null;
@@ -49,10 +50,10 @@ export interface DailyActivityPlan {
 const base = (companyId: string) => `/v1/companies/${companyId}`;
 
 export const dailyOperationsApi = {
-  inventoryDays: (companyId: string, signal?: AbortSignal) => api.get<InventoryDay[]>(`${base(companyId)}/inventory/days`, undefined, signal),
+  inventoryDays: (companyId: string, signal?: AbortSignal, offset = 0) => api.get<InventoryDay[]>(`${base(companyId)}/inventory/days`, { offset, limit: 30 }, signal),
   registerInventory: (companyId: string, snapshot_date: string, assignments: { item_id: string; expected_project_id: string | null; to_project_id: string | null }[]) =>
     api.post<InventoryDay>(`${base(companyId)}/inventory/days`, { snapshot_date, assignments }),
-  restockRequests: (companyId: string, signal?: AbortSignal) => api.get<RestockRequest[]>(`${base(companyId)}/inventory/restock-requests`, undefined, signal),
+  restockRequests: (companyId: string, signal?: AbortSignal, offset = 0) => api.get<RestockRequest[]>(`${base(companyId)}/inventory/restock-requests`, { offset, limit: 30 }, signal),
   requestRestock: (companyId: string, project_id: string | null, name: string, quantity: number, note: string) =>
     api.post<RestockRequest>(`${base(companyId)}/inventory/restock-requests`, { project_id, name, quantity, note }),
   fulfillRestock: (companyId: string, id: string) => api.patch<RestockRequest>(`${base(companyId)}/inventory/restock-requests/${id}/fulfilled`, {}),
@@ -62,10 +63,10 @@ export const dailyOperationsApi = {
   updateDefinition: (companyId: string, id: string, title: string, requirements: { name: string; quantity: number }[]) =>
     api.patch<ActivityDefinition>(`${base(companyId)}/activity-definitions/${id}`, { title, requirements }),
   plan: (companyId: string, date: string, signal?: AbortSignal) => api.get<DailyActivityPlan>(`${base(companyId)}/daily-activity-plans/${date}`, undefined, signal),
-  plans: (companyId: string, signal?: AbortSignal) => api.get<DailyActivityPlan[]>(`${base(companyId)}/daily-activity-plans`, undefined, signal),
-  savePlan: (companyId: string, date: string, entries: { project_id: string; activity_definition_id: string | null; people_count: number; note: string | null }[]) =>
-    api.put<DailyActivityPlan>(`${base(companyId)}/daily-activity-plans/${date}`, { plan_date: date, entries }),
-  registerPlan: (companyId: string, date: string) => api.post<DailyActivityPlan>(`${base(companyId)}/daily-activity-plans/${date}/register`, {}),
+  plans: (companyId: string, signal?: AbortSignal, offset = 0) => api.get<DailyActivityPlan[]>(`${base(companyId)}/daily-activity-plans`, { offset, limit: 30 }, signal),
+  savePlan: (companyId: string, date: string, entries: { project_id: string; activity_definition_id: string | null; people_count: number; note: string | null }[], expected_revision: string | null) =>
+    api.put<DailyActivityPlan>(`${base(companyId)}/daily-activity-plans/${date}`, { plan_date: date, entries, expected_revision }),
+  registerPlan: (companyId: string, date: string, expected_revision: string) => api.post<DailyActivityPlan>(`${base(companyId)}/daily-activity-plans/${date}/register`, { expected_revision }),
 };
 
 export function operationalToday(): string {

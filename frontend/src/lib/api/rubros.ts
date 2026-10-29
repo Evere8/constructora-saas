@@ -136,6 +136,7 @@ export const rubrosApi = {
       document_id: string;
       page_number: number;
       kind: 'line' | 'note';
+      client_id?: string;
       points: { x: number; y: number }[];
       text?: string | null;
       color_hex: string;

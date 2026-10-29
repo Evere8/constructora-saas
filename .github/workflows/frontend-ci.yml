@@ -45,6 +45,20 @@ jobs:
       - name: Tests
         run: npm run test
 
+      - name: Install browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Tablet browser flows
+        run: npm run test:browser
+
+      - name: Browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tablet-browser-results
+          path: frontend/test-results
+          retention-days: 7
+
       - name: Build
         env:
           VITE_APP_NAME: Obrixapy

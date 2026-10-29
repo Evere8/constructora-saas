@@ -73,6 +73,11 @@ class ActivityEntryInput(BaseModel):
 class DailyActivityInput(BaseModel):
     plan_date: date
     entries: list[ActivityEntryInput] = Field(max_length=500)
+    expected_revision: str | None = None
+
+
+class RegisterActivityInput(BaseModel):
+    expected_revision: str
 
 
 class ActivityEntryResponse(BaseModel):
@@ -88,6 +93,7 @@ class ActivityEntryResponse(BaseModel):
 
 class DailyActivityResponse(BaseModel):
     id: str | None
+    revision: str | None
     plan_date: date
     registered_at: datetime | None
     inventory_registered_at: datetime | None

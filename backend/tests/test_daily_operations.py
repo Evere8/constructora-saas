@@ -14,6 +14,18 @@ COMPANY = "12345678-aaaa-4aaa-8aaa-123456789abc"
 PROJECT = "f43f11c9-898a-489a-8acd-923858b23418"
 
 
+def test_activity_revision_changes_with_content_or_registration():
+    plan = SimpleNamespace(id=PROJECT, entries_json=[], registered_at=None)
+    initial = daily_operations.plan_revision(plan)
+    assert initial == daily_operations.plan_revision(plan)
+    assert daily_operations.plan_revision(None) is None
+    plan.entries_json = [{"people_count": 3}]
+    edited = daily_operations.plan_revision(plan)
+    assert edited != initial
+    plan.registered_at = datetime.now()
+    assert daily_operations.plan_revision(plan) != edited
+
+
 def test_new_tables_match_models_on_empty_sqlite_schema():
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)

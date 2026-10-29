@@ -231,6 +231,9 @@ class PerforationCanvasPoint(BaseModel):
 
 
 class PerforationAnnotationCreate(BaseModel):
+    client_id: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    )
     document_id: str = Field(min_length=36, max_length=36)
     page_number: int = Field(ge=1, le=10000)
     kind: Literal["line", "note"]

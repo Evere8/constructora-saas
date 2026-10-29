@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { Archive, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -11,14 +12,24 @@ export function ProjectStatusAction({ project }: { project: Project }) {
   const queryClient = useQueryClient();
   const administrator = activeMembership?.role === 'owner' || activeMembership?.role === 'admin';
   const inactive = project.status === 'inactive';
+  const [archiving, setArchiving] = useState(false);
   const mutation = useMutation({
-    mutationFn: () => inactive
-      ? projectsApi.reactivate(activeCompanyId as string, project.id)
-      : projectsApi.deactivate(activeCompanyId as string, project.id),
+    mutationFn: async () => {
+      if (inactive) return projectsApi.reactivate(activeCompanyId as string, project.id);
+      const result = await projectsApi.deactivate(activeCompanyId as string, project.id);
+      setArchiving(true);
+      try {
+        while (!(await projectsApi.archiveStep(activeCompanyId as string, project.id)).complete) { /* one verified object per request */ }
+      } catch (error) {
+        toast.error(`Obra inactiva; archivado pendiente. Puedes reintentarlo dentro de la obra. ${error instanceof Error ? error.message : ''}`);
+      } finally { setArchiving(false); }
+      return result;
+    },
     onSuccess: () => {
       toast.success(inactive ? 'Obra reactivada' : 'Obra marcada como inactiva');
       void queryClient.invalidateQueries({ queryKey: ['projects', activeCompanyId] });
       void queryClient.invalidateQueries({ queryKey: ['project', activeCompanyId, project.id] });
+      void queryClient.invalidateQueries({ queryKey: ['archive-status', activeCompanyId, project.id] });
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -37,7 +48,7 @@ export function ProjectStatusAction({ project }: { project: Project }) {
       }}
     >
       {inactive ? <RotateCcw className="h-4 w-4" /> : <Archive className="h-4 w-4" />}
-      {inactive ? 'Reactivar obra' : 'Marcar inactiva'}
+      {archiving ? 'Comprimiendo archivos…' : inactive ? 'Reactivar obra' : 'Marcar inactiva'}
     </Button>
   );
 }

@@ -11,6 +11,7 @@ from sqlalchemy import func, select, text
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from app.api.schemas.operations import LevelResponse, SectorResponse
+from app.db.base import Base
 from app.db.models import ChecklistItem, ProjectLevel, ProjectSector, Task
 from app.db.session import SessionLocal, engine
 
@@ -37,6 +38,9 @@ async def verify() -> None:
         # Select mapped columns, not just COUNT(*)/SELECT 1, to catch schema drift.
         await session.execute(select(ChecklistItem).limit(1))
         await session.execute(select(Task).limit(1))
+        for table in Base.metadata.tables.values():
+            # Empty projection still resolves every mapped column on MySQL.
+            await session.execute(select(table).limit(0))
         checks = await session.scalar(select(func.count()).select_from(ChecklistItem))
         print(f"SCHEMA_OK niveles={len(levels)} sectores={len(sectors)} controles={checks}")
         print("Revisión: " + ", ".join(sorted(actual)))

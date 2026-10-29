@@ -14,6 +14,7 @@ import { TareasTab } from '@/pages/projects/tabs/TareasTab';
 import { ChecklistTab } from '@/pages/projects/tabs/ChecklistTab';
 import { ProjectFormDialog } from '@/pages/projects/ProjectFormDialog';
 import { ProjectStatusAction } from '@/pages/projects/ProjectStatusAction';
+import { ProjectArchiveStatus } from '@/pages/projects/ProjectArchiveStatus';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -89,6 +90,7 @@ export function ProjectDetailPage() {
         </div>
       </div>
 
+      {project.status === 'inactive' ? <ProjectArchiveStatus companyId={companyId} projectId={projectId} /> : null}
       <Tabs value={activeTab} onValueChange={setTab}>
         <div className="overflow-x-auto">
           <TabsList className="bubble-nav h-auto w-max gap-1.5 bg-card/80">

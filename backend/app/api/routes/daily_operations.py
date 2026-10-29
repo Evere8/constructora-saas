@@ -4,6 +4,8 @@ Never infer today's availability from yesterday's inventory. Draft activities ca
 be saved before equipment close, but remain unverified until a same-date snapshot.
 """
 
+import hashlib
+import json
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -25,6 +27,7 @@ from app.api.schemas.daily_operations import (
     DailyActivityInput,
     DailyActivityResponse,
     InventoryDayResponse,
+    RegisterActivityInput,
     RegisterInventoryDay,
     RestockCreate,
     RestockResponse,
@@ -86,7 +89,10 @@ def snapshot_response(snapshot: InventoryDaySnapshot) -> InventoryDayResponse:
 
 @router.get("/inventory/days", response_model=list[InventoryDayResponse])
 async def inventory_days(
-    access: CurrentCompanyAccess, db: DbSession, limit: int = Query(default=30, ge=1, le=100)
+    access: CurrentCompanyAccess,
+    db: DbSession,
+    limit: int = Query(default=30, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
 ):
     snapshots = (
         (
@@ -98,6 +104,7 @@ async def inventory_days(
                     InventoryDaySnapshot.revision.desc(),
                 )
                 .limit(limit)
+                .offset(offset)
             )
         )
         .scalars()
@@ -127,7 +134,6 @@ async def register_inventory_day(
                 select(InventoryItem)
                 .where(
                     InventoryItem.company_id == access.company_id,
-                    InventoryItem.item_type.in_(("machine", "tool")),
                 )
                 .order_by(InventoryItem.id)
                 .with_for_update()
@@ -158,7 +164,11 @@ async def register_inventory_day(
             raise HTTPException(
                 status_code=409, detail=f"Cambió la ubicación de {item.name}; actualice el tablero"
             )
-        if entry.to_project_id and entry.to_project_id not in active_projects:
+        if (
+            entry.to_project_id != item.current_project_id
+            and entry.to_project_id
+            and entry.to_project_id not in active_projects
+        ):
             raise HTTPException(
                 status_code=422, detail="El destino debe ser una obra activa de la constructora"
             )
@@ -236,14 +246,20 @@ async def register_inventory_day(
 
 
 @router.get("/inventory/restock-requests", response_model=list[RestockResponse])
-async def list_restock_requests(access: CurrentCompanyAccess, db: DbSession):
+async def list_restock_requests(
+    access: CurrentCompanyAccess,
+    db: DbSession,
+    limit: int = Query(default=30, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
     return (
         (
             await db.execute(
                 select(InventoryRestockRequest)
                 .where(InventoryRestockRequest.company_id == access.company_id)
-                .order_by(InventoryRestockRequest.created_at.desc())
-                .limit(100)
+                .order_by(InventoryRestockRequest.created_at.desc(), InventoryRestockRequest.id)
+                .limit(limit)
+                .offset(offset)
             )
         )
         .scalars()
@@ -368,6 +384,13 @@ async def update_definition(
     return definition_response(definition)
 
 
+def plan_revision(plan: DailyActivityPlan | None) -> str | None:
+    if plan is None:
+        return None
+    value = [plan.id, plan.entries_json, str(plan.registered_at)]
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+
 async def present_plan(
     db: DbSession, company_id: str, plan_date: date, plan: DailyActivityPlan | None
 ) -> DailyActivityResponse:
@@ -410,6 +433,7 @@ async def present_plan(
         )
     return DailyActivityResponse(
         id=plan.id if plan else None,
+        revision=plan_revision(plan),
         plan_date=plan_date,
         registered_at=plan.registered_at.replace(tzinfo=UTC)
         if plan and plan.registered_at
@@ -422,7 +446,10 @@ async def present_plan(
 
 @router.get("/daily-activity-plans", response_model=list[DailyActivityResponse])
 async def list_plans(
-    access: CurrentCompanyAccess, db: DbSession, limit: int = Query(default=30, ge=1, le=100)
+    access: CurrentCompanyAccess,
+    db: DbSession,
+    limit: int = Query(default=30, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
 ):
     plans = (
         (
@@ -431,6 +458,7 @@ async def list_plans(
                 .where(DailyActivityPlan.company_id == access.company_id)
                 .order_by(DailyActivityPlan.plan_date.desc())
                 .limit(limit)
+                .offset(offset)
             )
         )
         .scalars()
@@ -457,6 +485,9 @@ async def save_plan(
     require_role(access, EDIT_ROLES)
     if plan_date != payload.plan_date:
         raise HTTPException(status_code=422, detail="La fecha no coincide")
+    # Also serializes creation of a previously absent day (a row lock cannot
+    # protect a row which does not exist yet).
+    await db.scalar(select(Company).where(Company.id == access.company_id).with_for_update())
     plan = await db.scalar(
         select(DailyActivityPlan)
         .where(
@@ -468,6 +499,14 @@ async def save_plan(
     if plan and plan.registered_at:
         raise HTTPException(
             status_code=409, detail="El informe ya está registrado y no se puede modificar"
+        )
+    if payload.expected_revision != plan_revision(plan):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "La lista cambió en otra sesión. Actualice antes de guardar; "
+                "no se sobrescribieron los datos."
+            ),
         )
     project_ids = {entry.project_id for entry in payload.entries}
     projects = {
@@ -535,7 +574,12 @@ async def save_plan(
 
 
 @router.post("/daily-activity-plans/{plan_date}/register", response_model=DailyActivityResponse)
-async def register_plan(plan_date: date, access: CurrentCompanyAccess, db: DbSession):
+async def register_plan(
+    plan_date: date,
+    payload: RegisterActivityInput,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+):
     require_role(access, EDIT_ROLES)
     plan = await db.scalar(
         select(DailyActivityPlan)
@@ -547,6 +591,10 @@ async def register_plan(plan_date: date, access: CurrentCompanyAccess, db: DbSes
     )
     if plan is None:
         raise HTTPException(status_code=404, detail="Guarde la lista antes de registrarla")
+    if payload.expected_revision != plan_revision(plan):
+        raise HTTPException(
+            status_code=409, detail="La lista cambió. Revísela antes de registrar actividades."
+        )
     if plan.registered_at is None:
         plan.registered_at = datetime.now(UTC).replace(tzinfo=None)
         plan.registered_by_user_id = access.user.id

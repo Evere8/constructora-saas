@@ -16,7 +16,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from PIL import Image, ImageOps
 from sqlalchemy import delete, select
 
@@ -75,9 +75,12 @@ from app.services.elongations.theory import normalise_label
 from app.services.file_storage import (
     DOCUMENT_MIME_TYPES,
     XLSX_MIME_TYPES,
+    read_stored_bytes,
     remove_stored_file,
     storage_path,
     store_upload,
+    stored_path,
+    stored_response,
 )
 
 router = APIRouter()
@@ -336,7 +339,7 @@ async def _source_file_is_available(source: ElongationJobFile | None) -> bool:
     if source is None:
         return False
     try:
-        return await run_in_threadpool(storage_path(source.storage_key).is_file)
+        return bool(await read_stored_bytes(source.storage_key))
     except HTTPException:
         return False
 
@@ -1597,7 +1600,7 @@ async def download_elongation_file(
     file_id: str,
     access: CurrentCompanyAccess,
     db: DbSession,
-) -> FileResponse:
+) -> Response:
     job = await require_job(db, access.company_id, project_id, job_id)
     file = await db.scalar(
         select(ElongationJobFile).where(
@@ -1606,10 +1609,7 @@ async def download_elongation_file(
     )
     if file is None:
         raise HTTPException(status_code=404, detail="Archivo del trabajo no encontrado")
-    path = storage_path(file.storage_key)
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="El archivo ya no está disponible")
-    return FileResponse(path, media_type=file.mime_type, filename=file.original_filename)
+    return await stored_response(file.storage_key, file.mime_type, file.original_filename)
 
 
 @router.get("/projects/{project_id}/elongation-jobs/{job_id}/files/{file_id}/preview")
@@ -1636,11 +1636,9 @@ async def preview_elongation_file(
         raise HTTPException(status_code=404, detail="Archivo del trabajo no encontrado")
     if file.mime_type not in DOCUMENT_MIME_TYPES:
         raise HTTPException(status_code=422, detail="El archivo no admite vista previa de plano")
-    path = storage_path(file.storage_key)
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="El archivo ya no está disponible")
     try:
-        content = await run_in_threadpool(_preview_png, path, file.mime_type, page)
+        async with stored_path(file.storage_key) as path:
+            content = await run_in_threadpool(_preview_png, path, file.mime_type, page)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return Response(
@@ -1656,22 +1654,20 @@ async def _export_response(
     *,
     kind: str,
     user_id: str,
-) -> FileResponse:
+) -> Response:
     export, file = await create_export(db, job, kind=kind, created_by_user_id=user_id)
     try:
         await db.commit()
     except Exception:
         await db.rollback()
         raise
-    path = storage_path(file.storage_key)
-    if not path.is_file():
-        raise HTTPException(status_code=500, detail="El Excel exportado no quedó disponible")
+
     # The endpoint URL is stable although a corrected job gets a new XLSX version.
     # Do not let a browser, proxy or service worker return a previous export body.
-    return FileResponse(
-        path,
-        media_type=file.mime_type,
-        filename=file.original_filename,
+    return await stored_response(
+        file.storage_key,
+        file.mime_type,
+        file.original_filename,
         headers={"Cache-Control": "private, no-store, max-age=0"},
     )
 
@@ -1679,7 +1675,7 @@ async def _export_response(
 @router.get("/projects/{project_id}/elongation-jobs/{job_id}/exports/theoretical")
 async def download_theoretical_export(
     project_id: str, job_id: str, access: CurrentCompanyAccess, db: DbSession
-) -> FileResponse:
+) -> Response:
     job = await require_job(db, access.company_id, project_id, job_id)
     if job.theory_approved_at is None:
         raise HTTPException(status_code=422, detail="La teoría debe aprobarse antes de exportar")
@@ -1689,7 +1685,7 @@ async def download_theoretical_export(
 @router.get("/projects/{project_id}/elongation-jobs/{job_id}/exports/final")
 async def download_final_export(
     project_id: str, job_id: str, access: CurrentCompanyAccess, db: DbSession
-) -> FileResponse:
+) -> Response:
     job = await require_job(db, access.company_id, project_id, job_id)
     if job.approved_at is None:
         raise HTTPException(

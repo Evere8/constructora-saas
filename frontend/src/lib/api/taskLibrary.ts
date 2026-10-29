@@ -6,9 +6,13 @@ import type {
   TaskTemplate,
   TaskType,
   TaskPriority,
+  Task,
+  Paginated,
 } from '@/types/api';
 
 const base = (companyId: string) => `/v1/companies/${companyId}`;
+
+export type AssignedTask = Task & { project_name: string; level_name: string | null; sector_name: string | null };
 
 export interface TemplateResourceInput {
   inventory_item_id?: string | null;
@@ -46,6 +50,8 @@ export interface DailyTaskInput {
 }
 
 export const taskLibraryApi = {
+  myWork: (companyId: string, offset: number, signal?: AbortSignal) =>
+    api.get<Paginated<AssignedTask>>(`${base(companyId)}/my-tasks`, { offset, limit: 30 }, signal),
   mySummary: (companyId: string, signal?: AbortSignal) =>
     api.get<{ work_pending: number; daily_pending: number; total_pending: number }>(
       `${base(companyId)}/my-tasks/summary`, undefined, signal,

@@ -32,6 +32,9 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useMe } from '@/auth/useMe';
+import { useAnnotationOutbox } from './useAnnotationOutbox';
+import type { PerforationAnnotation } from '@/types/api';
 import { useCan } from '@/auth/useCan';
 import { rubrosApi } from '@/lib/api/rubros';
 import { saveBlob } from '@/lib/api/modules';
@@ -48,7 +51,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { annotationAtPoint, canvasPointFromClient, type CanvasPoint } from './perforationGeometry';
+import { annotationAtPoint, canvasPointFromClient, splitStroke, type CanvasPoint } from './perforationGeometry';
 
 type DragState = { pointId: string; pointerId: number; originX: number; originY: number } | null;
 type PerforationTool = 'point' | 'pan' | 'note' | 'draw' | 'highlight' | 'straight' | 'erase';
@@ -281,7 +284,15 @@ function PointInspector({
     }
   };
 
-  const movePanel = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const startPanelDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    event.stopPropagation();
+    if (event.target instanceof Element && event.target.closest('button, input, textarea, select, label, a, [role="dialog"]')) return;
+    if (!event.isPrimary || event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    panelDrag.current = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, left: manualPosition?.left ?? Number(anchorStyle.left ?? 8), top: manualPosition?.top ?? Number(anchorStyle.top ?? 8) };
+  };
+  const movePanel = (event: ReactPointerEvent<HTMLElement>) => {
     const active = panelDrag.current;
     if (!active || active.pointerId !== event.pointerId) return;
     const width = panelRef.current?.offsetWidth ?? 352;
@@ -291,7 +302,7 @@ function PointInspector({
       top: Math.max(8, Math.min(bounds.height - height - 8, active.top + event.clientY - active.clientY)),
     });
   };
-  const endPanelDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const endPanelDrag = (event: ReactPointerEvent<HTMLElement>) => {
     if (panelDrag.current?.pointerId !== event.pointerId) return;
     panelDrag.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
@@ -299,14 +310,10 @@ function PointInspector({
   const panelTop = manualPosition?.top ?? Number(anchorStyle.top ?? 8);
 
   return (
-    <section ref={panelRef} style={{ ...anchorStyle, ...manualPosition, maxHeight: Math.max(80, bounds.height - panelTop - 8) }} className="absolute z-[70] w-[min(22rem,calc(100%-1rem))] touch-pan-y overscroll-contain overflow-y-auto rounded-2xl border border-border bg-card p-3 shadow-2xl" onPointerDown={(event) => event.stopPropagation()}>
-      <div className="sticky top-0 z-10 flex touch-none cursor-grab items-start justify-between gap-3 rounded-lg bg-card/95 py-1 active:cursor-grabbing" onPointerDown={(event) => {
-        if (event.target instanceof Element && event.target.closest('button')) return;
-        event.preventDefault();
-        event.stopPropagation();
-        event.currentTarget.setPointerCapture(event.pointerId);
-        panelDrag.current = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, left: manualPosition?.left ?? Number(anchorStyle.left ?? 8), top: manualPosition?.top ?? Number(anchorStyle.top ?? 8) };
-      }} onPointerMove={movePanel} onPointerUp={endPanelDrag} onPointerCancel={endPanelDrag}>
+    <section ref={panelRef} aria-label="Detalle del punto" style={{ ...anchorStyle, ...manualPosition, maxHeight: Math.max(80, bounds.height - panelTop - 8) }} className="absolute z-[70] w-[min(22rem,calc(100%-1rem))] touch-pan-y overscroll-contain overflow-y-auto rounded-2xl border border-border bg-card p-3 shadow-2xl" onPointerDown={startPanelDrag} onPointerMove={movePanel} onPointerUp={endPanelDrag} onPointerCancel={endPanelDrag}>
+      <div aria-label="Zona para arrastrar detalle" className="absolute inset-0 touch-none cursor-grab active:cursor-grabbing" />
+      <div className="relative pointer-events-none [&_button]:pointer-events-auto [&_input]:pointer-events-auto [&_textarea]:pointer-events-auto [&_select]:pointer-events-auto [&_label]:pointer-events-auto [&_a]:pointer-events-auto">
+      <div className="sticky top-0 z-10 flex items-start justify-between gap-3 rounded-lg bg-card/95 py-1">
         <div className="min-w-0"><p className="flex items-center gap-2 text-sm font-bold"><span className="h-3 w-3 rounded-full" style={{ backgroundColor: pointColor(point) }} /> Punto {complete ? 'completado' : 'en proceso'}</p><p className="text-xs text-muted-foreground">{complete ? 'Checklist completo: ahora se muestra azul.' : 'Completa los pasos para marcarlo como terminado.'}</p></div>
         <button type="button" aria-label="Cerrar detalle del punto" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-muted text-foreground hover:bg-primary hover:text-primary-foreground" onClick={onClose}><X className="h-5 w-5" /></button>
       </div>
@@ -325,6 +332,7 @@ function PointInspector({
       {canEdit ? <Button type="button" size="sm" variant="destructive" className="mt-2" onClick={onDelete}><Trash2 className="h-4 w-4" /> Eliminar punto</Button> : null}
       {point.note_original_filename ? <button type="button" className="mt-2 flex max-w-full items-center gap-1 text-xs text-primary underline" onClick={() => void downloadAttachment()}><FileText className="h-3.5 w-3.5" /><span className="truncate">{point.note_original_filename}</span></button> : null}
       {editMode ? <div className="mt-3 rounded-lg border border-primary/30 bg-primary/5 p-2 text-xs"><div className="flex items-center justify-between gap-2"><span>Arrastra el punto o ajusta su tamaño.</span><span>{Math.round(asNumber(point.diameter) * 100)}%</span></div><input className="mt-2 w-full accent-primary" type="range" min="0.8" max="12" step="0.2" value={asNumber(point.diameter) * 100} onChange={(event) => pointUpdate.mutate({ diameter: Number(event.target.value) / 100 })} /></div> : null}
+      <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-foreground"><span>Arrastra el título o una zona vacía.</span><div className="flex gap-1"><button type="button" aria-label="Subir detalle" className="rounded border px-3 py-2" onClick={() => panelRef.current?.scrollBy({ top: -160, behavior: 'smooth' })}>↑</button><button type="button" aria-label="Bajar detalle" className="rounded border px-3 py-2" onClick={() => panelRef.current?.scrollBy({ top: 160, behavior: 'smooth' })}>↓</button></div></div>
       <Dialog open={checklistOpen} onOpenChange={setChecklistOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>Configurar checklist del punto</DialogTitle></DialogHeader>
@@ -334,11 +342,19 @@ function PointInspector({
           <DialogFooter><Button type="button" variant="outline" onClick={() => setChecklistOpen(false)}>Cancelar</Button><Button type="button" disabled={checklist.isPending} onClick={saveChecklist}>Guardar checklist</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </section>
   );
 }
 
-export function PerforationBoard({ companyId, projectId, rubro }: { companyId: string; projectId: string; rubro: ProjectRubro }) {
+type BoardProps = { companyId: string; projectId: string; rubro: ProjectRubro };
+export function PerforationBoard(props: BoardProps) {
+  const { data: me } = useMe();
+  if (!me?.id) return <p>Cargando usuario…</p>;
+  return <PerforationCanvas key={`${me.id}:${props.companyId}:${props.projectId}:${props.rubro.id}`} {...props} userId={me.id} />;
+}
+
+function PerforationCanvas({ companyId, projectId, rubro, userId }: BoardProps & { userId: string }) {
   const canEdit = useCan('projects.edit');
   const queryClient = useQueryClient();
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -377,6 +393,12 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
     queryFn: ({ signal }) => rubrosApi.perforationWorkspace(companyId, projectId, rubro.id, signal),
     refetchInterval: 3500,
   });
+  const outbox = useAnnotationOutbox(`obrixapy:annotations:v1:${userId}:${companyId}:${projectId}:${rubro.id}`,
+    (input) => rubrosApi.createPerforationAnnotation(companyId, projectId, rubro.id, input),
+    (created) => {
+      queryClient.setQueryData<PerforationWorkspace>(['perforation-workspace', companyId, projectId, rubro.id], (current) => current && ({ ...current, annotations: [...current.annotations.filter((item) => item.id !== created.id), created] }));
+      void queryClient.invalidateQueries({ queryKey: ['perforation-workspace', companyId, projectId, rubro.id] });
+    });
   const data = workspace.data;
   const documents = data?.documents ?? [];
   const colors = useMemo(() => data?.colors ?? [], [data?.colors]);
@@ -384,7 +406,7 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
   const selectedDocument = documents.find((document) => document.id === selectedDocumentId) ?? documents[0] ?? null;
   const selectedPoint = (data?.points ?? []).find((point) => point.id === selectedPointId) ?? null;
   const filteredPoints = useMemo(() => (data?.points ?? []).filter((point) => point.document_id === selectedDocument?.id && point.page_number === page), [data?.points, page, selectedDocument?.id]);
-  const filteredAnnotations = useMemo(() => (data?.annotations ?? []).filter((item) => item.document_id === selectedDocument?.id && item.page_number === page), [data?.annotations, page, selectedDocument?.id]);
+  const filteredAnnotations = useMemo(() => [...(data?.annotations ?? []), ...outbox.pending.filter((input) => !data?.annotations.some((saved) => saved.id === input.client_id)).map((input): PerforationAnnotation => ({ ...input, id: input.client_id, text: input.text ?? null, company_id: companyId, project_id: projectId, rubro_id: rubro.id, created_by_user_id: userId, created_at: '' }))].filter((item) => item.document_id === selectedDocument?.id && item.page_number === page), [data?.annotations, outbox.pending, page, selectedDocument?.id, companyId, projectId, rubro.id, userId]);
   const pointInspectorStyle = useMemo<CSSProperties | undefined>(() => {
     if (!selectedPoint) return undefined;
     const width = viewportSize.width || 650;
@@ -508,7 +530,7 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
   const createDocument = useMutation({
     mutationFn: () => rubrosApi.uploadPerforationDocument(companyId, projectId, rubro.id, uploadName.trim(), uploadFile as File),
     onSuccess: (document) => { toast.success('Plano de perforaciones cargado'); setSelectedDocumentId(document.id); setPage(1); setUploadName(''); setUploadFile(null); refresh(); },
-    onError: (error: Error & { status?: number }) => toast.error(error.status === 413 ? 'El PDF supera el tamaño permitido por el servidor (50 MB).' : error.message),
+    onError: (error: Error & { status?: number }) => toast.error(error.status === 413 ? 'El PDF supera el tamaño permitido por el servidor (10 MB).' : error.message),
   });
   const createPoint = useMutation({
     mutationFn: ({ x, y }: { x: number; y: number }) => rubrosApi.createPerforationPoint(companyId, projectId, rubro.id, {
@@ -537,16 +559,11 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const createAnnotation = useMutation({
-    mutationFn: (input: Parameters<typeof rubrosApi.createPerforationAnnotation>[3]) => rubrosApi.createPerforationAnnotation(companyId, projectId, rubro.id, input),
-    onSuccess: (created) => {
-      queryClient.setQueryData<PerforationWorkspace>(['perforation-workspace', companyId, projectId, rubro.id], (current) => current && ({ ...current, annotations: [...current.annotations, created] }));
-      refresh();
-    },
-    onError: (error: Error) => toast.error(`No se guardó la marca: ${error.message}`),
-  });
   const deleteAnnotation = useMutation({
-    mutationFn: (annotationId: string) => rubrosApi.removePerforationAnnotation(companyId, projectId, rubro.id, annotationId),
+    mutationFn: (annotationId: string) => {
+      if (outbox.pending.some((input) => input.client_id === annotationId)) throw new Error('Esta marca está pendiente de envío. Reintenta guardarla antes de borrarla.');
+      return rubrosApi.removePerforationAnnotation(companyId, projectId, rubro.id, annotationId);
+    },
     onSuccess: (_, annotationId) => {
       queryClient.setQueryData<PerforationWorkspace>(['perforation-workspace', companyId, projectId, rubro.id], (current) => current && ({ ...current, annotations: current.annotations.filter((item) => item.id !== annotationId) }));
       refresh();
@@ -565,7 +582,8 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
   });
   const saveAnnotation = (kind: 'line' | 'note', points: CanvasPoint[], style: ReturnType<typeof annotationStyle>, text?: string) => {
     if (!selectedDocument) return;
-    createAnnotation.mutate({ document_id: selectedDocument.id, page_number: page, kind, points, text, ...style });
+    const chunks = kind === 'line' ? splitStroke(points) : [points];
+    outbox.enqueue(chunks.map((chunk) => ({ document_id: selectedDocument.id, page_number: page, kind, points: chunk, text, ...style })));
   };
   const startPinch = () => {
     const touches = [...activeTouches.current.values()];
@@ -812,7 +830,8 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
             </div>
             {canEdit && (tool === 'draw' || tool === 'highlight' || tool === 'straight') ? <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card/85 px-3 py-2 text-xs"><span className="font-semibold">Color</span>{PENCIL_COLORS.map((color) => <button key={color} type="button" aria-label={`Usar color ${color}`} className={`h-6 w-6 rounded-full border-2 ${pencilColor === color ? 'scale-110 border-slate-900' : 'border-white'}`} style={{ backgroundColor: color }} onClick={() => setPencilColor(color)} />)}<input aria-label="Color personalizado" className="h-7 w-8 cursor-pointer rounded border p-0.5" type="color" value={pencilColor} onChange={(event) => setPencilColor(event.target.value)} /><span className="ml-1 font-semibold">Grosor</span><select aria-label="Grosor del trazo" className="h-8 rounded-md border bg-background px-2 text-xs" value={strokeWidth} onChange={(event) => setStrokeWidth(Number(event.target.value))}>{STROKE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div> : null}
             {selectedDocument && (selectedDocument.page_count ?? 1) > 1 ? <div className="flex items-center justify-between rounded-lg border bg-card p-2 text-sm"><Button size="sm" variant="ghost" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft className="h-4 w-4" /> Anterior</Button><span>Página {page} de {selectedDocument.page_count}</span><Button size="sm" variant="ghost" disabled={page >= (selectedDocument.page_count ?? 1)} onClick={() => setPage((value) => value + 1)}>Siguiente <ChevronRight className="h-4 w-4" /></Button></div> : null}
-            {!isFullscreen ? <p className="text-xs text-muted-foreground">“Mover” desplaza el PDF y permite pellizcar para ampliar. Con “Punto”, “Lápiz” u otra herramienta, el dedo y el lápiz actúan sobre el plano sin desplazarlo. {createAnnotation.isPending ? 'Guardando marca…' : 'Las marcas guardadas aparecen en otros dispositivos.'}</p> : null}
+            {outbox.pending.length > 0 ? <div role="status" className="rounded border border-amber-400 bg-amber-50 p-2 text-sm text-amber-950">{outbox.pending.length} marcas pendientes de guardar. {outbox.error}{!outbox.durable ? ' No hay espacio local: no cierres esta página.' : ' Se conserva una copia local hasta confirmar el envío.'}<Button size="sm" variant="outline" disabled={outbox.busy} onClick={outbox.retry}>Reintentar envío</Button></div> : <p className="text-xs text-green-700">Todas las marcas guardadas</p>}
+            {!isFullscreen ? <p className="text-xs text-muted-foreground">“Mover” desplaza el PDF y permite pellizcar para ampliar. Con “Punto”, “Lápiz” u otra herramienta, el dedo y el lápiz actúan sobre el plano sin desplazarlo. {outbox.busy ? 'Guardando marca…' : 'Las marcas guardadas aparecen en otros dispositivos.'}</p> : null}
             </div>
             <div className={`relative overflow-hidden bg-slate-100 ${isFullscreen ? 'h-full w-full' : 'h-[650px] rounded-2xl shadow-inner'}`}>
               {isFullscreen ? <Button type="button" size="sm" className="absolute right-4 top-4 z-[60] shadow-lg" onClick={() => setIsFullscreen(false)}><X className="h-4 w-4" /> Salir</Button> : null}

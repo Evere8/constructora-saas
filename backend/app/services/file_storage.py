@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
+import tempfile
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import Response
 
 from app.core.config import get_settings
 
@@ -31,6 +37,8 @@ class StoredUpload:
 
 
 def storage_path(storage_key: str) -> Path:
+    if storage_key.startswith(("drive:v1:", "packed:v1:")):
+        raise ValueError("Use stored_path/read_stored_bytes for archived Drive files")
     root = get_settings().upload_root.resolve()
     candidate = (root / storage_key).resolve()
     if candidate == root or root not in candidate.parents:
@@ -39,6 +47,110 @@ def storage_path(storage_key: str) -> Path:
             detail="El archivo tiene una ubicación inválida",
         )
     return candidate
+
+
+def archived_metadata(storage_key: str) -> dict | None:
+    if not storage_key.startswith(("drive:v1:", "packed:v1:")):
+        return None
+    try:
+        prefix = "packed:v1:" if storage_key.startswith("packed:v1:") else "drive:v1:"
+        data = json.loads(base64.urlsafe_b64decode(storage_key[len(prefix) :]))
+        data["provider"] = "local" if prefix == "packed:v1:" else "drive"
+        if (
+            data["e"] not in {"identity", "gzip"}
+            or not isinstance(data["n"], int)
+            or not 0 < data["n"] <= 512 * 1024 * 1024
+            or not isinstance(data["s"], int)
+            or not 0 < data["s"] <= data["n"]
+            or len(data["h"]) != 64
+        ):
+            raise ValueError("Invalid archive metadata")
+        return data
+    except (ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(status_code=500, detail="Referencia de archivo inválida") from exc
+
+
+def archive_reference(
+    key: str, content: bytes, stored_size: int, encoding: str, *, local: bool = False
+) -> str:
+    data = {
+        "k": key,
+        "n": len(content),
+        "s": stored_size,
+        "e": encoding,
+        "h": hashlib.sha256(content).hexdigest(),
+    }
+    return ("packed:v1:" if local else "drive:v1:") + base64.urlsafe_b64encode(
+        json.dumps(data, separators=(",", ":")).encode()
+    ).decode()
+
+
+async def read_stored_bytes(storage_key: str) -> bytes:
+    from app.services import project_drive, project_file_codec
+
+    metadata = archived_metadata(storage_key)
+    if metadata:
+        if metadata["provider"] == "local":
+            try:
+                stored = await run_in_threadpool(storage_path(metadata["k"]).read_bytes)
+            except FileNotFoundError as exc:
+                raise HTTPException(
+                    status_code=404, detail="Archivo archivado no disponible"
+                ) from exc
+        else:
+            stored = await project_drive.download(metadata["k"])
+        if len(stored) != metadata["s"]:
+            raise HTTPException(status_code=502, detail="El archivo archivado está incompleto")
+        try:
+            content = project_file_codec.decode(stored, metadata["e"], metadata["n"])
+        except ValueError as exc:
+            raise HTTPException(status_code=502, detail="Archivo archivado dañado") from exc
+        if hashlib.sha256(content).hexdigest() != metadata["h"]:
+            raise HTTPException(
+                status_code=502, detail="Falló la verificación del original archivado"
+            )
+        return content
+    try:
+        return await run_in_threadpool(storage_path(storage_key).read_bytes)
+    except FileNotFoundError as exc:
+        # A job which started before archival may still hold the original key.
+        # The tiny, atomically written alias keeps that reference readable.
+        alias = storage_path(storage_key + ".archive-ref")
+        if alias.is_file():
+            reference = await run_in_threadpool(alias.read_text)
+            if reference.startswith("packed:v1:"):
+                return await read_stored_bytes(reference)
+        raise HTTPException(status_code=404, detail="El archivo no está disponible") from exc
+
+
+@asynccontextmanager
+async def stored_path(storage_key: str):
+    """Temporary materialization for PDF/XLSX readers; removed even on errors."""
+    if not archived_metadata(storage_key):
+        path = storage_path(storage_key)
+        if path.is_file():
+            yield path
+            return
+    content = await read_stored_bytes(storage_key)
+    with tempfile.TemporaryDirectory(prefix="obrixapy-preview-") as folder:
+        path = Path(folder) / "original"
+        await run_in_threadpool(path.write_bytes, content)
+        yield path
+
+
+async def stored_response(
+    storage_key: str, mime_type: str, filename: str, headers=None
+) -> Response:
+    content = await read_stored_bytes(storage_key)
+    return Response(
+        content,
+        media_type=mime_type,
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename or 'archivo')}",
+            "X-Content-Type-Options": "nosniff",
+            **(headers or {}),
+        },
+    )
 
 
 def _signature_matches(content: bytes, mime_type: str) -> bool:
@@ -144,6 +256,10 @@ async def store_bytes(
 
 async def remove_stored_file(storage_key: str | None) -> None:
     if not storage_key:
+        return
+    if archived_metadata(storage_key):
+        # Shared by versions and processing jobs. Retain the verified archive
+        # rather than deleting an object another record could still reference.
         return
     path = storage_path(storage_key)
     try:

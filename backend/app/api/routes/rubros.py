@@ -16,7 +16,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from sqlalchemy import func, select
 
 from app.api.dependencies import CurrentCompanyAccess, DbSession
@@ -62,7 +62,13 @@ from app.db.models import (
     ProjectRubroObservation,
     Task,
 )
-from app.services.file_storage import remove_stored_file, storage_path, store_upload
+from app.services.file_storage import (
+    remove_stored_file,
+    storage_path,
+    store_upload,
+    stored_path,
+    stored_response,
+)
 
 router = APIRouter()
 
@@ -224,9 +230,7 @@ async def ensure_default_rubros(
     if not created:
         return
     await db.flush()
-    for rubro, (_, _, _, features) in zip(
-        created, missing_defaults, strict=False
-    ):
+    for rubro, (_, _, _, features) in zip(created, missing_defaults, strict=False):
         db.add_all(
             ProjectRubroFeature(
                 rubro_id=rubro.id,
@@ -897,7 +901,33 @@ async def create_perforation_annotation(
     )
     if document.page_count is not None and payload.page_number > document.page_count:
         raise HTTPException(status_code=422, detail="La página solicitada no existe en el plano")
+    if payload.client_id:
+        # A retry after a lost response must not draw the same mark twice.
+        await db.scalar(
+            select(PerforationDocument)
+            .where(PerforationDocument.id == document.id)
+            .with_for_update()
+        )
+        existing = await db.get(PerforationAnnotation, payload.client_id)
+        if existing:
+            if (
+                existing.company_id != access.company_id
+                or existing.rubro_id != rubro.id
+                or existing.document_id != document.id
+                or existing.created_by_user_id != access.user.id
+                or existing.page_number != payload.page_number
+                or existing.kind != payload.kind
+                or existing.points_json
+                != [{"x": float(p.x), "y": float(p.y)} for p in payload.points]
+                or existing.text != payload.text
+                or existing.color_hex != payload.color_hex
+                or float(existing.stroke_width) != float(payload.stroke_width)
+                or float(existing.opacity) != float(payload.opacity)
+            ):
+                raise HTTPException(status_code=409, detail="Identificador de marca en conflicto")
+            return PerforationAnnotationResponse.model_validate(existing)
     annotation = PerforationAnnotation(
+        **({"id": payload.client_id} if payload.client_id else {}),
         company_id=access.company_id,
         project_id=project_id,
         rubro_id=rubro.id,
@@ -912,6 +942,7 @@ async def create_perforation_annotation(
         created_by_user_id=access.user.id,
     )
     db.add(annotation)
+    await flush_or_conflict(db, "No fue posible guardar la marca del plano")
     add_activity(
         db, access, "perforation_annotation.created", "perforation_annotation", annotation.id
     )
@@ -989,11 +1020,9 @@ async def preview_perforation_document(
         raise HTTPException(status_code=422, detail="La página solicitada no es válida")
     await require_project(db, access.company_id, project_id)
     document = await require_document(db, access.company_id, project_id, rubro_id, document_id)
-    path = storage_path(document.storage_key)
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="El archivo del plano no está disponible")
     try:
-        content = await run_in_threadpool(preview_png, path, document.mime_type, page)
+        async with stored_path(document.storage_key) as path:
+            content = await run_in_threadpool(preview_png, path, document.mime_type, page)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return Response(
@@ -1008,13 +1037,12 @@ async def download_perforation_document(
     document_id: str,
     access: CurrentCompanyAccess,
     db: DbSession,
-) -> FileResponse:
+) -> Response:
     await require_project(db, access.company_id, project_id)
     document = await require_document(db, access.company_id, project_id, rubro_id, document_id)
-    path = storage_path(document.storage_key)
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="El archivo del plano no está disponible")
-    return FileResponse(path, media_type=document.mime_type, filename=document.original_filename)
+    return await stored_response(
+        document.storage_key, document.mime_type, document.original_filename
+    )
 
 
 @router.post(
@@ -1278,18 +1306,15 @@ async def download_perforation_note_attachment(
     point_id: str,
     access: CurrentCompanyAccess,
     db: DbSession,
-) -> FileResponse:
+) -> Response:
     await require_project(db, access.company_id, project_id)
     point = await require_point(db, access.company_id, project_id, rubro_id, point_id)
     if not point.note_storage_key:
         raise HTTPException(status_code=404, detail="Este punto no tiene un archivo de nota")
-    path = storage_path(point.note_storage_key)
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="El archivo de nota no está disponible")
-    return FileResponse(
-        path,
-        media_type=point.note_mime_type or "application/octet-stream",
-        filename=point.note_original_filename or "nota",
+    return await stored_response(
+        point.note_storage_key,
+        point.note_mime_type or "application/octet-stream",
+        point.note_original_filename or "nota",
     )
 
 

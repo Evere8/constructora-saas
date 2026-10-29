@@ -2,6 +2,17 @@ import type { PerforationAnnotation } from '@/types/api';
 
 export type CanvasPoint = { x: number; y: number };
 
+// Preserve every sampled point. Adjacent chunks share their endpoint so long
+// handwriting stays continuous without exceeding the API's per-mark bound.
+export function splitStroke(points: CanvasPoint[], limit = 2000): CanvasPoint[][] {
+  if (limit < 2) throw new Error('A stroke chunk needs two points');
+  const chunks: CanvasPoint[][] = [];
+  for (let index = 0; index < points.length - 1; index += limit - 1) {
+    chunks.push(points.slice(index, index + limit));
+  }
+  return chunks;
+}
+
 export function canvasPointFromClient(rect: DOMRect, clientX: number, clientY: number): CanvasPoint | null {
   if (rect.width <= 0 || rect.height <= 0 || clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return null;
   return {

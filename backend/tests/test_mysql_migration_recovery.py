@@ -21,10 +21,11 @@ from sqlalchemy.pool import NullPool
 from alembic import command
 from alembic.config import Config
 from alembic.operations import Operations
+from alembic.script import ScriptDirectory
 from app.core.config import get_settings
 
 REV9 = "0009_task_library_daily_tasks_and_sectors"
-HEAD = "0010_project_sectors_and_level_bands"
+HEAD = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
 pytestmark = pytest.mark.skipif(
     not os.getenv("MIGRATION_TEST_MYSQL_HOST"),
     reason="Requires isolated MySQL test service",
