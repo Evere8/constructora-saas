@@ -10,3 +10,5 @@ coverage
 *.log
 npm-debug.log*
 .vite
+test-results
+playwright-report

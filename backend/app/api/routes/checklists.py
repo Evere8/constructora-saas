@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from sqlalchemy import func, select
 
 from app.api.dependencies import CurrentCompanyAccess, DbSession
@@ -32,7 +32,7 @@ from app.api.schemas.checklists import (
 )
 from app.core.config import get_settings
 from app.db.models import ChecklistEvidence, ChecklistItem, ProjectLevel
-from app.services.file_storage import remove_stored_file
+from app.services.file_storage import remove_stored_file, stored_response
 
 router = APIRouter()
 
@@ -537,7 +537,7 @@ async def create_checklist_evidence(
 
 @router.get(
     "/projects/{project_id}/checklist/{item_id}/evidence/{evidence_id}/file",
-    response_class=FileResponse,
+    response_class=Response,
 )
 async def download_checklist_evidence(
     project_id: str,
@@ -545,7 +545,7 @@ async def download_checklist_evidence(
     evidence_id: str,
     access: CurrentCompanyAccess,
     db: DbSession,
-) -> FileResponse:
+) -> Response:
     await require_project(db, access.company_id, project_id)
     await require_checklist_item(db, access.company_id, project_id, item_id)
     result = await db.execute(
@@ -562,14 +562,8 @@ async def download_checklist_evidence(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Archivo de evidencia no encontrado",
         )
-    path = evidence_path(evidence.storage_key)
-    if not path.is_file():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="El archivo de evidencia ya no está disponible",
-        )
-    return FileResponse(
-        path,
-        media_type=evidence.mime_type,
-        filename=evidence.original_filename or path.name,
+    return await stored_response(
+        evidence.storage_key,
+        evidence.mime_type or "application/octet-stream",
+        evidence.original_filename or "evidencia",
     )

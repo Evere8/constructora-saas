@@ -18,6 +18,7 @@ from sqlalchemy import (
     UniqueConstraint,
     false,
     func,
+    true,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -77,6 +78,9 @@ class CompanyMembership(UUIDPrimaryKeyMixin, Base):
     )
     role: Mapped[str] = mapped_column(String(30), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    can_register_inventory_day: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
     )
@@ -567,6 +571,88 @@ class InventoryMovement(UUIDPrimaryKeyMixin, Base):
     moved_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
 
 
+class InventoryDaySnapshot(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "inventory_day_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id", "snapshot_date", "revision", name="uq_inventory_day_revision"
+        ),
+        Index("ix_inventory_day_company_date", "company_id", "snapshot_date", "revision"),
+    )
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    items_json: Mapped[list] = mapped_column(JSON, nullable=False)
+    registered_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id"), nullable=False
+    )
+    registered_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+
+class InventoryRestockRequest(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "inventory_restock_requests"
+    __table_args__ = (Index("ix_inventory_restock_company_status", "company_id", "status"),)
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True
+    )
+    name: Mapped[str] = mapped_column(String(180), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    requested_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+
+class ActivityDefinition(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "activity_definitions"
+    __table_args__ = (UniqueConstraint("company_id", "title", name="uq_activity_company_title"),)
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(180), nullable=False)
+    requirements_json: Mapped[list] = mapped_column(JSON, nullable=False)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+
+class DailyActivityPlan(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "daily_activity_plans"
+    __table_args__ = (
+        UniqueConstraint("company_id", "plan_date", name="uq_activity_plan_company_date"),
+    )
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    plan_date: Mapped[date] = mapped_column(Date, nullable=False)
+    entries_json: Mapped[list] = mapped_column(JSON, nullable=False)
+    registered_by_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("app_users.id"), nullable=True
+    )
+    registered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+
 class InventoryRelocationRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """A requested move that must be confirmed before changing an item's location."""
 
@@ -621,6 +707,57 @@ class PlanDocument(UUIDPrimaryKeyMixin, Base):
     title: Mapped[str] = mapped_column(String(220), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     created_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+
+class ProjectFolder(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "project_folders"
+    __table_args__ = (Index("ix_project_folders_parent", "company_id", "project_id", "parent_id"),)
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    parent_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("project_folders.id", ondelete="RESTRICT"), nullable=True
+    )
+    name: Mapped[str] = mapped_column(String(180), nullable=False)
+    created_by_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+
+class ProjectFile(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "project_files"
+    __table_args__ = (Index("ix_project_files_folder", "company_id", "project_id", "folder_id"),)
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    folder_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("project_folders.id", ondelete="RESTRICT"), nullable=True
+    )
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    stored_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    storage_encoding: Mapped[str] = mapped_column(String(16), nullable=False, default="identity")
+    compression_checked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    drive_key: Mapped[str] = mapped_column(String(250), nullable=False, unique=True)
+    uploaded_by_user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("app_users.id"), nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(

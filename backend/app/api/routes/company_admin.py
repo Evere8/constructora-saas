@@ -90,6 +90,7 @@ async def list_members(access: CurrentCompanyAccess, db: DbSession) -> list[Comp
             full_name=user.full_name,
             role=membership.role,
             status=membership.status,
+            can_register_inventory_day=membership.can_register_inventory_day,
             created_at=membership.created_at,
             assigned_tasks=task_count,
             assigned_checklist=checklist_count,
@@ -147,6 +148,7 @@ async def create_member(
         full_name=user.full_name,
         role=membership.role,
         status=membership.status,
+        can_register_inventory_day=membership.can_register_inventory_day,
         created_at=membership.created_at,
         invitation_sent=invitation_sent,
     )
@@ -174,6 +176,8 @@ async def update_member(
         raise HTTPException(status_code=404, detail="Miembro no encontrado")
     membership, user = row
     changes = payload.model_dump(exclude_unset=True)
+    if "can_register_inventory_day" in changes and changes["can_register_inventory_day"] is None:
+        raise HTTPException(status_code=422, detail="Indique si habilita o deshabilita el permiso")
     if membership.role == "owner" and access.role != "owner":
         raise HTTPException(
             status_code=403, detail="Solo un propietario puede modificar a otro propietario"
@@ -197,6 +201,7 @@ async def update_member(
         full_name=user.full_name,
         role=membership.role,
         status=membership.status,
+        can_register_inventory_day=membership.can_register_inventory_day,
         created_at=membership.created_at,
     )
 

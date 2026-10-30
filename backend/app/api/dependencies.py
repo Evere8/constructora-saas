@@ -96,6 +96,7 @@ class CompanyAccessContext:
     company_id: str
     company_status: str
     role: str
+    can_register_inventory_day: bool
     user: CurrentUserContext
 
 
@@ -136,6 +137,7 @@ async def get_company_access(
         company_id=company.id,
         company_status=company.status,
         role=membership.role,
+        can_register_inventory_day=membership.can_register_inventory_day,
         user=user,
     )
 

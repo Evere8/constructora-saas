@@ -32,7 +32,7 @@ from app.services.elongations.measurements import (
 )
 from app.services.elongations.template import TemplateMapping, build_export_xlsx
 from app.services.elongations.theory import extract_theory, natural_label_key
-from app.services.file_storage import XLSX_MIME_TYPES, storage_path, store_bytes
+from app.services.file_storage import XLSX_MIME_TYPES, read_stored_bytes, store_bytes, stored_path
 
 PROCESSING_LIMIT = asyncio.Semaphore(2)
 DOCUMENT_APPROVER_ROLES = {"owner", "admin", "engineer"}
@@ -224,11 +224,8 @@ async def process_theory_job(job_id: str) -> None:
             _activity(session, job, "elongation.theory.started", {"file_id": source.id})
             await session.commit()
             try:
-                extraction = await run_in_threadpool(
-                    extract_theory,
-                    storage_path(source.storage_key),
-                    source.mime_type,
-                )
+                async with stored_path(source.storage_key) as path:
+                    extraction = await run_in_threadpool(extract_theory, path, source.mime_type)
                 existing_items = {
                     item.label: item
                     for item in (
@@ -429,12 +426,10 @@ async def process_measurement_files(job_id: str, file_ids: list[str]) -> None:
                 for source in files:
                     from app.services.elongations.readings import extract_measurements
 
-                    extraction = await run_in_threadpool(
-                        extract_measurements,
-                        storage_path(source.storage_key),
-                        source.mime_type,
-                        expected_labels,
-                    )
+                    async with stored_path(source.storage_key) as path:
+                        extraction = await run_in_threadpool(
+                            extract_measurements, path, source.mime_type, expected_labels
+                        )
                     summary: dict[str, Any] = {
                         "engine": extraction.engine,
                         "anchors": 0,
@@ -480,9 +475,7 @@ async def process_measurement_files(job_id: str, file_ids: list[str]) -> None:
                     for label, groups in matched_groups.items():
                         item = by_label[label]
                         values_with_sources = [
-                            (value, group)
-                            for group in groups
-                            for value in group.values
+                            (value, group) for group in groups for value in group.values
                         ]
                         values = [value for value, _ in values_with_sources]
                         slots, extras = expand_measurement_slots(item.strand_count, values)
@@ -538,9 +531,7 @@ async def process_measurement_files(job_id: str, file_ids: list[str]) -> None:
                             measurement.measured_elongation = slot.measured_elongation_cm
                             measurement.raw_text = source_group.raw_text
                             measurement.confidence = (
-                                Decimal("0.5000")
-                                if source_group.uncertain
-                                else Decimal("0.8500")
+                                Decimal("0.5000") if source_group.uncertain else Decimal("0.8500")
                             )
                             measurement.match_method = (
                                 "spatial"
@@ -820,7 +811,7 @@ async def create_export(
         )
         if file.kind in {"plan", "template", "measurement_scan"}
     ]
-    template_content = await run_in_threadpool(storage_path(template.storage_key).read_bytes)
+    template_content = await read_stored_bytes(template.storage_key)
     content = await run_in_threadpool(
         build_export_xlsx,
         template_content,

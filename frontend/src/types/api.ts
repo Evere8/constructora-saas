@@ -28,6 +28,7 @@ export interface Membership {
   company_status: string;
   role: Role;
   membership_status: string;
+  can_register_inventory_day?: boolean;
 }
 
 export interface AuthMe {
@@ -589,6 +590,7 @@ export interface CompanyMember {
   full_name?: string | null;
   role: Role;
   status: string;
+  can_register_inventory_day?: boolean;
   created_at: string;
   assigned_tasks: number;
   assigned_checklist: number;

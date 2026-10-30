@@ -1,10 +1,12 @@
 import { NavLink, Outlet } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   HardHat,
   MoreHorizontal,
   Home,
   Building2,
   UserCircle,
+  ClipboardList,
 } from 'lucide-react';
 import { roleLabel } from '@/auth/permissions';
 import { useCompany } from '@/context/CompanyProvider';
@@ -14,6 +16,18 @@ import { Badge } from '@/components/ui/badge';
 import { UserMenu } from '@/components/layout/UserMenu';
 import { NotificationCenter } from '@/components/notifications/NotificationCenter';
 import { cn } from '@/lib/utils';
+import { taskLibraryApi } from '@/lib/api/taskLibrary';
+
+function usePendingTasks() {
+  const { activeCompanyId } = useCompany();
+  const query = useQuery({
+    queryKey: ['my-tasks-summary', activeCompanyId],
+    queryFn: ({ signal }) => taskLibraryApi.mySummary(activeCompanyId as string, signal),
+    enabled: Boolean(activeCompanyId),
+    refetchInterval: 30_000,
+  });
+  return query.data?.total_pending ?? 0;
+}
 
 function navLinkClass({ isActive }: { isActive: boolean }): string {
   return cn(
@@ -26,6 +40,7 @@ function navLinkClass({ isActive }: { isActive: boolean }): string {
 
 function Sidebar() {
   const { activeMembership } = useCompany();
+  const pendingTasks = usePendingTasks();
 
   return (
     <aside className="group/sidebar hidden w-[5.25rem] shrink-0 bg-background p-3 transition-[width] duration-300 ease-out will-change-[width] motion-reduce:transition-none hover:w-[17rem] focus-within:w-[17rem] lg:flex">
@@ -43,9 +58,10 @@ function Sidebar() {
         <nav className="flex-1 space-y-1 overflow-y-auto px-2 pb-4">
           <p className="max-h-0 -translate-x-2 overflow-hidden px-4 pb-0 pt-1 text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground opacity-0 transition-[max-height,padding,opacity,transform] duration-300 ease-out motion-reduce:transition-none lg:group-hover/sidebar:max-h-8 lg:group-hover/sidebar:translate-x-0 lg:group-hover/sidebar:pb-2 lg:group-hover/sidebar:opacity-100 lg:group-focus-within/sidebar:max-h-8 lg:group-focus-within/sidebar:translate-x-0 lg:group-focus-within/sidebar:pb-2 lg:group-focus-within/sidebar:opacity-100">Espacio de trabajo</p>
           {PRIMARY_NAV.map((item) => (
-            <NavLink key={item.to} to={item.to} end={item.end} className={navLinkClass}>
-              <item.icon className="absolute left-1/2 top-1/2 h-[18px] w-[18px] -translate-x-1/2 -translate-y-1/2 shrink-0 transition-[left,transform] duration-300 ease-out motion-reduce:transition-none lg:group-hover/sidebar:left-3 lg:group-hover/sidebar:translate-x-0 lg:group-focus-within/sidebar:left-3 lg:group-focus-within/sidebar:translate-x-0" />
+            <NavLink key={item.to} to={item.to} end={item.end} className={({ isActive }) => cn(navLinkClass({ isActive }), item.to === '/tareas' && pendingTasks > 0 && 'bg-orange-500 text-black hover:bg-orange-400 hover:text-black')}>
+              <item.icon className={cn('absolute left-1/2 top-1/2 h-[18px] w-[18px] -translate-x-1/2 -translate-y-1/2 shrink-0 transition-[left,transform] duration-300 ease-out motion-reduce:transition-none lg:group-hover/sidebar:left-3 lg:group-hover/sidebar:translate-x-0 lg:group-focus-within/sidebar:left-3 lg:group-focus-within/sidebar:translate-x-0', item.to === '/tareas' && pendingTasks > 0 && 'text-white')} />
               <span className="ml-7 max-w-0 -translate-x-2 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity,transform] duration-300 ease-out motion-reduce:transition-none lg:group-hover/sidebar:max-w-[10rem] lg:group-hover/sidebar:translate-x-0 lg:group-hover/sidebar:opacity-100 lg:group-focus-within/sidebar:max-w-[10rem] lg:group-focus-within/sidebar:translate-x-0 lg:group-focus-within/sidebar:opacity-100">{item.label}</span>
+              {item.to === '/tareas' && pendingTasks > 0 ? <span className="absolute right-0.5 top-0.5 rounded-full bg-white px-1.5 text-[10px] font-bold text-black" aria-label={`${pendingTasks} tareas pendientes`}>{pendingTasks}</span> : null}
             </NavLink>
           ))}
 
@@ -82,13 +98,15 @@ function Sidebar() {
 const MOBILE_NAV = [
   { label: 'Inicio', to: '/', icon: Home, end: true },
   { label: 'Obras', to: '/obras', icon: Building2 },
+  { label: 'Tareas', to: '/tareas', icon: ClipboardList },
   { label: 'Perfil', to: '/perfil', icon: UserCircle },
   { label: 'Mas', to: '/mas', icon: MoreHorizontal },
 ];
 
 function BottomNav() {
+  const pendingTasks = usePendingTasks();
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t bg-card lg:hidden">
+    <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t bg-card lg:hidden">
       {MOBILE_NAV.map((item) => (
         <NavLink
           key={item.to}
@@ -96,13 +114,14 @@ function BottomNav() {
           end={item.end}
           className={({ isActive }) =>
             cn(
-              'flex flex-col items-center gap-1 py-2 text-[11px] font-medium transition-colors',
-              isActive ? 'text-primary' : 'text-muted-foreground',
+              'relative flex flex-col items-center gap-1 py-2 text-[11px] font-medium transition-colors',
+              item.to === '/tareas' && pendingTasks > 0 ? 'bg-orange-500 text-black' : isActive ? 'text-primary' : 'text-muted-foreground',
             )
           }
         >
-          <item.icon className="h-5 w-5" />
+          <item.icon className={cn('h-5 w-5', item.to === '/tareas' && pendingTasks > 0 && 'text-white')} />
           {item.label}
+          {item.to === '/tareas' && pendingTasks > 0 ? <span className="absolute mt-[-0.25rem] ml-8 rounded-full bg-white px-1.5 text-[10px] font-bold text-black">{pendingTasks}</span> : null}
         </NavLink>
       ))}
     </nav>

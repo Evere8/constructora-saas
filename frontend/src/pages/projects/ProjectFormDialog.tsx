@@ -9,6 +9,7 @@ import { projectsApi, type ProjectInput } from '@/lib/api/projects';
 import type { Project, ProjectStatus } from '@/types/api';
 import { ApiError } from '@/lib/http';
 import { PROJECT_STATUS_OPTIONS } from '@/lib/labels';
+import { useCompany } from '@/context/CompanyProvider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -53,6 +54,8 @@ export function ProjectFormDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const isEdit = Boolean(project);
+  const { activeMembership } = useCompany();
+  const isAdmin = activeMembership?.role === 'owner' || activeMembership?.role === 'admin';
   const queryClient = useQueryClient();
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -82,7 +85,7 @@ export function ProjectFormDialog({
         name: values.name,
         code: values.code || null,
         description: values.description || null,
-        status: values.status,
+        ...(isAdmin && isEdit && project?.status !== 'inactive' ? { status: values.status } : {}),
         address: values.address || null,
         start_date: values.start_date || null,
         planned_end_date: values.planned_end_date || null,
@@ -130,21 +133,21 @@ export function ProjectFormDialog({
               <Label htmlFor="code">Codigo</Label>
               <Input id="code" placeholder="OBRA-001" {...register('code')} />
             </div>
-            <div className="space-y-2">
+            {isEdit && isAdmin && project?.status !== 'inactive' ? <div className="space-y-2">
               <Label htmlFor="status">Estado</Label>
               <Select value={status} onValueChange={(v) => setValue('status', v as ProjectStatus)}>
                 <SelectTrigger id="status">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {PROJECT_STATUS_OPTIONS.map((opt) => (
+                  {PROJECT_STATUS_OPTIONS.filter((opt) => opt.value !== 'inactive').map((opt) => (
                     <SelectItem key={opt.value} value={opt.value}>
                       {opt.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-            </div>
+            </div> : <p className="self-center text-sm text-muted-foreground">{project?.status === 'inactive' ? 'La reactivación se realiza con el botón «Reactivar obra».' : 'Las obras nuevas empiezan activas.'}</p>}
           </div>
           <div className="space-y-2">
             <Label htmlFor="address">Direccion</Label>

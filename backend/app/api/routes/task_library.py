@@ -1,7 +1,8 @@
 from datetime import UTC, date, datetime
+from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, HTTPException, Response, status
-from sqlalchemy import delete, select
+from fastapi import APIRouter, HTTPException, Query, Response, status
+from sqlalchemy import delete, func, select
 
 from app.api.dependencies import CurrentCompanyAccess, DbSession
 from app.api.routes.operations import (
@@ -12,6 +13,7 @@ from app.api.routes.operations import (
     require_assignee,
     require_role,
 )
+from app.api.schemas.operations import TaskResponse
 from app.api.schemas.task_library import (
     DailyTaskChecklistPatch,
     DailyTaskChecklistResponse,
@@ -32,12 +34,89 @@ from app.db.models import (
     DailyTaskTemplate,
     DailyTaskTemplateChecklistItem,
     InventoryItem,
+    Project,
+    ProjectLevel,
+    ProjectSector,
+    Task,
     TaskTemplate,
     TaskTemplateChecklistItem,
     TaskTemplateRequirement,
 )
 
 router = APIRouter()
+
+
+@router.get("/my-tasks")
+async def my_work_tasks(
+    access: CurrentCompanyAccess,
+    db: DbSession,
+    limit: int = Query(default=30, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    filters = (
+        Task.company_id == access.company_id,
+        Task.assigned_user_id == access.user.id,
+        Task.status.in_(("pending", "in_progress", "review")),
+    )
+    rows = (
+        await db.execute(
+            select(Task, Project.name, ProjectLevel.name, ProjectSector.name)
+            .join(Project, Project.id == Task.project_id)
+            .outerjoin(ProjectLevel, ProjectLevel.id == Task.level_id)
+            .outerjoin(ProjectSector, ProjectSector.id == ProjectLevel.sector_id)
+            .where(*filters)
+            .order_by(Task.due_at.is_(None), Task.due_at, Task.created_at, Task.id)
+            .limit(limit)
+            .offset(offset)
+        )
+    ).all()
+    return {
+        "items": [
+            {
+                **TaskResponse.model_validate(task).model_dump(),
+                "project_name": project,
+                "level_name": level,
+                "sector_name": sector,
+            }
+            for task, project, level, sector in rows
+        ],
+        "total": await db.scalar(select(func.count(Task.id)).where(*filters)) or 0,
+        "offset": offset,
+        "limit": limit,
+    }
+
+
+def operational_today() -> date:
+    return datetime.now(ZoneInfo("America/Asuncion")).date()
+
+
+@router.get("/my-tasks/summary")
+async def my_tasks_summary(access: CurrentCompanyAccess, db: DbSession) -> dict[str, int]:
+    """Count unfinished work and today's personal tasks across the active company."""
+    today = operational_today()
+    await materialize_recurring_daily_tasks(db, access, today)
+    work = (
+        await db.scalar(
+            select(func.count(Task.id)).where(
+                Task.company_id == access.company_id,
+                Task.assigned_user_id == access.user.id,
+                Task.status.in_(("pending", "in_progress", "review")),
+            )
+        )
+        or 0
+    )
+    daily = (
+        await db.scalar(
+            select(func.count(DailyTask.id)).where(
+                DailyTask.company_id == access.company_id,
+                DailyTask.assigned_user_id == access.user.id,
+                DailyTask.task_date == today,
+                DailyTask.status.in_(("pending", "in_progress")),
+            )
+        )
+        or 0
+    )
+    return {"work_pending": work, "daily_pending": daily, "total_pending": work + daily}
 
 
 async def require_inventory_item(
@@ -56,9 +135,7 @@ async def require_inventory_item(
     return item
 
 
-async def require_template(
-    db: DbSession, company_id: str, template_id: str
-) -> TaskTemplate:
+async def require_template(db: DbSession, company_id: str, template_id: str) -> TaskTemplate:
     template = await db.scalar(
         select(TaskTemplate).where(
             TaskTemplate.id == template_id,
@@ -581,7 +658,7 @@ async def list_daily_tasks(
     task_date: date | None = None,
     assigned_user_id: str | None = None,
 ) -> list[DailyTaskResponse]:
-    target_date = task_date or date.today()
+    target_date = task_date or operational_today()
     target_assignee = await validate_daily_assignee(db, access, assigned_user_id)
     await materialize_recurring_daily_tasks(db, access, target_date)
     tasks = list(
@@ -697,9 +774,7 @@ async def update_daily_task_checklist(
         raise HTTPException(status_code=404, detail="Control diario no encontrado")
     item.status = payload.status
     item.completed_at = (
-        datetime.now(UTC).replace(tzinfo=None)
-        if payload.status == "completed"
-        else None
+        datetime.now(UTC).replace(tzinfo=None) if payload.status == "completed" else None
     )
     items = list(
         (

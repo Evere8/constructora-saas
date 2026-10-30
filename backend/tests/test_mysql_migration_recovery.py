@@ -7,6 +7,7 @@ MIGRATION_TEST_MYSQL_PASSWORD (the isolated CI MySQL service, never production).
 import asyncio
 import json
 import os
+from contextlib import asynccontextmanager
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,10 +22,12 @@ from sqlalchemy.pool import NullPool
 from alembic import command
 from alembic.config import Config
 from alembic.operations import Operations
+from alembic.script import ScriptDirectory
 from app.core.config import get_settings
+from app.db.base import Base
 
 REV9 = "0009_task_library_daily_tasks_and_sectors"
-HEAD = "0010_project_sectors_and_level_bands"
+HEAD = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
 pytestmark = pytest.mark.skipif(
     not os.getenv("MIGRATION_TEST_MYSQL_HOST"),
     reason="Requires isolated MySQL test service",
@@ -133,6 +136,9 @@ class TestDatabase:
             assert "uq_project_level_name" not in indexes
             assert "uq_project_level_sector_name" not in indexes
             assert "uq_project_level_sector_id_name" in indexes
+            for table in Base.metadata.tables.values():
+                # Resolve every mapped column against the real MySQL schema.
+                connection.execute(sa.select(table).limit(0))
 
         self.run(check)
 
@@ -311,7 +317,11 @@ def test_documentation_review_and_rereading_preserve_saved_data(database, monkey
         engine = create_async_engine(database.url, poolclass=NullPool)
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         monkeypatch.setattr(pipeline, "SessionLocal", sessions)
-        monkeypatch.setattr(pipeline, "storage_path", lambda key: Path("synthetic.pdf"))
+        @asynccontextmanager
+        async def synthetic_source(_key):
+            yield Path("synthetic.pdf")
+
+        monkeypatch.setattr(pipeline, "stored_path", synthetic_source)
         monkeypatch.setattr(
             pipeline,
             "extract_theory",

@@ -312,6 +312,10 @@ async def create_project(
     payload: ProjectCreate, access: CurrentCompanyAccess, db: DbSession
 ) -> Project:
     require_role(access, PROJECT_EDITOR_ROLES)
+    if payload.status == "inactive":
+        raise HTTPException(
+            status_code=422, detail="Cree la obra activa y use el botón Inactivar obra"
+        )
     project = Project(company_id=access.company_id, **payload.model_dump())
     db.add(project)
     await flush_or_conflict(db, "Ya existe una obra con ese código")
@@ -336,6 +340,13 @@ async def update_project(
     require_role(access, PROJECT_EDITOR_ROLES)
     project = await require_project(db, access.company_id, project_id)
     changes = payload.model_dump(exclude_unset=True)
+    if "status" in changes and changes["status"] != project.status:
+        if changes["status"] == "inactive" or project.status == "inactive":
+            require_role(access, {"owner", "admin"})
+            raise HTTPException(
+                status_code=422,
+                detail="Use el botón Inactivar obra o Reactivar obra para cambiar ese estado",
+            )
     final_start = changes.get("start_date", project.start_date)
     final_end = changes.get("planned_end_date", project.planned_end_date)
     if final_start and final_end and final_end < final_start:
@@ -347,6 +358,36 @@ async def update_project(
         setattr(project, field, value)
     add_activity(db, access, "project.updated", "project", project.id, changes)
     await commit_or_conflict(db, "No fue posible actualizar la obra")
+    await db.refresh(project)
+    return project
+
+
+@router.post("/projects/{project_id}/deactivate", response_model=ProjectResponse)
+async def deactivate_project(
+    project_id: str, access: CurrentCompanyAccess, db: DbSession
+) -> Project:
+    require_role(access, {"owner", "admin"})
+    project = await require_project(db, access.company_id, project_id)
+    if project.status != "active":
+        raise HTTPException(status_code=409, detail="Solo se puede inactivar una obra activa")
+    project.status = "inactive"
+    add_activity(db, access, "project.deactivated", "project", project.id)
+    await commit_or_conflict(db, "No fue posible inactivar la obra")
+    await db.refresh(project)
+    return project
+
+
+@router.post("/projects/{project_id}/reactivate", response_model=ProjectResponse)
+async def reactivate_project(
+    project_id: str, access: CurrentCompanyAccess, db: DbSession
+) -> Project:
+    require_role(access, {"owner", "admin"})
+    project = await require_project(db, access.company_id, project_id)
+    if project.status != "inactive":
+        raise HTTPException(status_code=409, detail="La obra no está inactiva")
+    project.status = "active"
+    add_activity(db, access, "project.reactivated", "project", project.id)
+    await commit_or_conflict(db, "No fue posible reactivar la obra")
     await db.refresh(project)
     return project
 

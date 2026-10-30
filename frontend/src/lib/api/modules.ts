@@ -153,7 +153,7 @@ export const membersApi = {
     api.get<CompanyMember[]>(`${companyBase(companyId)}/members`, undefined, signal),
   create: (companyId: string, input: { email: string; full_name?: string; role: Role }) =>
     api.post<CompanyMember>(`${companyBase(companyId)}/members`, input),
-  update: (companyId: string, membershipId: string, input: { role?: Role; status?: string }) =>
+  update: (companyId: string, membershipId: string, input: { role?: Role; status?: string; can_register_inventory_day?: boolean }) =>
     api.patch<CompanyMember>(`${companyBase(companyId)}/members/${membershipId}`, input),
 };
 

@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import func, select
 
 from app.api.dependencies import CurrentCompanyAccess, DbSession
@@ -26,7 +26,12 @@ from app.api.schemas.modules import (
 from app.core.config import get_settings
 from app.db.models import ElongationItem, ElongationJob
 from app.services.document_processing import build_xlsx, extract_text, parse_elongation_rows
-from app.services.file_storage import remove_stored_file, storage_path, store_upload
+from app.services.file_storage import (
+    remove_stored_file,
+    storage_path,
+    store_upload,
+    stored_response,
+)
 
 router = APIRouter()
 
@@ -243,14 +248,13 @@ async def download_document_source(
     job_id: str,
     access: CurrentCompanyAccess,
     db: DbSession,
-) -> FileResponse:
+) -> Response:
     job = await require_job(db, access.company_id, project_id, job_id)
     if not job.source_storage_key or not job.mime_type:
         raise HTTPException(status_code=404, detail="El archivo fuente no está disponible")
-    path = storage_path(job.source_storage_key)
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="El archivo fuente no está disponible")
-    return FileResponse(path, media_type=job.mime_type, filename=job.original_filename)
+    return await stored_response(
+        job.source_storage_key, job.mime_type, job.original_filename or "original"
+    )
 
 
 @router.get("/projects/{project_id}/documents/{job_id}/excel")

@@ -12,6 +12,7 @@ import { PROJECT_STATUS, PROJECT_STATUS_OPTIONS } from '@/lib/labels';
 import { formatDate } from '@/lib/utils';
 import { EmptyState, ErrorState, LoadingState, PageHeader } from '@/components/common/states';
 import { ProjectFormDialog } from '@/pages/projects/ProjectFormDialog';
+import { ProjectStatusAction } from '@/pages/projects/ProjectStatusAction';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -34,6 +35,11 @@ import {
 
 const PAGE_SIZE = 10;
 const ALL = 'all';
+const GROUPS = [
+  { value: 'active', label: 'Activas', description: 'En ejecución' },
+  { value: 'completed', label: 'Completadas', description: 'Consulta rápida' },
+  { value: 'inactive', label: 'Inactivas', description: 'Fuera de operación' },
+] as const;
 
 export function ProjectsListPage() {
   const { activeCompanyId } = useCompany();
@@ -41,7 +47,7 @@ export function ProjectsListPage() {
   const navigate = useNavigate();
 
   const [search, setSearch] = useState('');
-  const [status, setStatus] = useState<ProjectStatus | typeof ALL>(ALL);
+  const [status, setStatus] = useState<ProjectStatus | typeof ALL>('active');
   const [page, setPage] = useState(0);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Project | undefined>(undefined);
@@ -64,6 +70,12 @@ export function ProjectsListPage() {
     enabled: Boolean(activeCompanyId),
     placeholderData: keepPreviousData,
   });
+  const countsQuery = useQuery({
+    queryKey: ['projects', activeCompanyId, 'all'],
+    queryFn: ({ signal }) => projectsApi.listAll(activeCompanyId as string, signal),
+    enabled: Boolean(activeCompanyId),
+  });
+  const allProjects = asItems(countsQuery.data);
 
   const projects = asItems(query.data);
   const total = asTotal(query.data);
@@ -101,6 +113,11 @@ export function ProjectsListPage() {
           ) : undefined
         }
       />
+
+      <div className="grid gap-3 sm:grid-cols-3" role="tablist" aria-label="Estado de las obras">
+        {GROUPS.map((group) => <button key={group.value} type="button" role="tab" aria-selected={status === group.value} className={`rounded-xl border p-4 text-left transition-colors ${status === group.value ? 'border-primary bg-primary/10 ring-1 ring-primary/40' : 'bg-card hover:bg-muted/50'}`} onClick={() => { setStatus(group.value); setPage(0); }}><span className="text-sm font-semibold">{group.label}</span><span className="ml-2 text-xl font-bold">{allProjects.filter((project) => group.value === 'completed' ? project.status === 'completed' : project.status === group.value).length}</span><p className="text-xs text-muted-foreground">{group.description}</p></button>)}
+      </div>
+      {status === 'inactive' || status === 'completed' ? <p className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">Al inactivar una obra se verifica la compresión sin pérdidas de sus archivos. Las obras completadas siguen disponibles para consulta rápida; abrir o descargar siempre recupera el original.</p> : null}
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="relative flex-1">
@@ -198,15 +215,18 @@ export function ProjectsListPage() {
                         {formatDate(project.planned_end_date)}
                       </TableCell>
                       <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                        {canEdit ? (
-                          <Button variant="ghost" size="sm" onClick={() => openEdit(project)}>
-                            <Pencil className="h-4 w-4" /> Editar
-                          </Button>
-                        ) : (
-                          <Button variant="ghost" size="sm" onClick={() => navigate(`/obras/${project.id}`)}>
-                            Ver
-                          </Button>
-                        )}
+                        <div className="flex justify-end gap-1">
+                          <ProjectStatusAction project={project} />
+                          {canEdit ? (
+                            <Button variant="ghost" size="sm" onClick={() => openEdit(project)}>
+                              <Pencil className="h-4 w-4" /> Editar
+                            </Button>
+                          ) : (
+                            <Button variant="ghost" size="sm" onClick={() => navigate(`/obras/${project.id}`)}>
+                              Ver
+                            </Button>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   );

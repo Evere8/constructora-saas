@@ -7,6 +7,9 @@ export function useCan(capability: Capability): boolean {
   const { data: me } = useMe();
   const { activeMembership } = useCompany();
   if (me?.is_platform_admin) return true;
+  if (capability === 'inventory.move') {
+    return activeMembership?.role === 'owner' || activeMembership?.role === 'admin' || Boolean(activeMembership?.can_register_inventory_day);
+  }
   return can(activeMembership?.role, capability);
 }
 

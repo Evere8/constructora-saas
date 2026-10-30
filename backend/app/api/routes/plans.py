@@ -8,7 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from PIL import Image, ImageOps
 from sqlalchemy import func, select
 
@@ -34,7 +34,7 @@ from app.api.schemas.modules import (
 )
 from app.core.config import get_settings
 from app.db.models import Annotation, PlanDocument, PlanVersion, ProjectLevel
-from app.services.file_storage import remove_stored_file, storage_path, store_upload
+from app.services.file_storage import remove_stored_file, store_upload, stored_path, stored_response
 
 router = APIRouter()
 
@@ -168,11 +168,7 @@ def detect_level_labels_in_pdf(
             return []
 
     page = next(
-        (
-            element
-            for element in root.iter()
-            if element.tag.rsplit("}", 1)[-1] == "page"
-        ),
+        (element for element in root.iter() if element.tag.rsplit("}", 1)[-1] == "page"),
         None,
     )
     if page is None:
@@ -414,12 +410,9 @@ async def download_plan_version(
     version_id: str,
     access: CurrentCompanyAccess,
     db: DbSession,
-) -> FileResponse:
+) -> Response:
     version, _ = await require_version(db, access.company_id, project_id, version_id)
-    path = storage_path(version.storage_key)
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="El archivo del plano no está disponible")
-    return FileResponse(path, media_type=version.mime_type, filename=version.original_filename)
+    return await stored_response(version.storage_key, version.mime_type, version.original_filename)
 
 
 @router.get("/projects/{project_id}/plans/versions/{version_id}/preview")
@@ -435,11 +428,9 @@ async def preview_plan_version(
     if page < 1 or page > 100:
         raise HTTPException(status_code=422, detail="La página de vista previa no es válida")
     version, _ = await require_version(db, access.company_id, project_id, version_id)
-    path = storage_path(version.storage_key)
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="El archivo del plano no está disponible")
     try:
-        content = await run_in_threadpool(preview_png, path, version.mime_type, page)
+        async with stored_path(version.storage_key) as path:
+            content = await run_in_threadpool(preview_png, path, version.mime_type, page)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return Response(
@@ -481,11 +472,7 @@ async def detect_plan_levels(
                 "En imágenes, usa Ubicar nivel."
             ),
         )
-    candidates = [
-        level
-        for level in levels
-        if overwrite or not level.plan_geometry_json
-    ]
+    candidates = [level for level in levels if overwrite or not level.plan_geometry_json]
     if not candidates:
         return PlanLevelDetectionResponse(
             message=(
@@ -493,14 +480,12 @@ async def detect_plan_levels(
                 "Usa Ubicar nivel para ajustar cualquier zona."
             ),
         )
-    path = storage_path(version.storage_key)
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="El archivo del plano no está disponible")
-    detections = await run_in_threadpool(
-        detect_level_labels_in_pdf,
-        path,
-        [(level.id, level.name, level.building_name) for level in candidates],
-    )
+    async with stored_path(version.storage_key) as path:
+        detections = await run_in_threadpool(
+            detect_level_labels_in_pdf,
+            path,
+            [(level.id, level.name, level.building_name) for level in candidates],
+        )
     by_level = {level.id: level for level in candidates}
     for detected in detections:
         level = by_level[detected["level_id"]]
@@ -522,8 +507,7 @@ async def detect_plan_levels(
         f"Se sugirieron {len(detections)} ubicaciones. Revisa y ajusta cada zona si es necesario."
         if detections
         else (
-            "No se encontraron etiquetas de niveles en el PDF. "
-            "Ubícalos manualmente sobre el plano."
+            "No se encontraron etiquetas de niveles en el PDF. Ubícalos manualmente sobre el plano."
         )
     )
     return PlanLevelDetectionResponse(

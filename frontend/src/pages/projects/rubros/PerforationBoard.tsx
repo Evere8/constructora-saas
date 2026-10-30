@@ -32,6 +32,9 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useMe } from '@/auth/useMe';
+import { useAnnotationOutbox } from './useAnnotationOutbox';
+import type { PerforationAnnotation } from '@/types/api';
 import { useCan } from '@/auth/useCan';
 import { rubrosApi } from '@/lib/api/rubros';
 import { saveBlob } from '@/lib/api/modules';
@@ -44,11 +47,11 @@ import type {
 } from '@/types/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { annotationAtPoint, canvasPointFromClient, type CanvasPoint } from './perforationGeometry';
+import { annotationAtPoint, canvasPointFromClient, splitStroke, type CanvasPoint } from './perforationGeometry';
 
 type DragState = { pointId: string; pointerId: number; originX: number; originY: number } | null;
 type PerforationTool = 'point' | 'pan' | 'note' | 'draw' | 'highlight' | 'straight' | 'erase';
@@ -95,6 +98,7 @@ function ColorSettingsDialog({
   projectId,
   rubro,
   colors,
+  initialColorId,
 }: {
   open: boolean;
   onOpenChange: (value: boolean) => void;
@@ -102,6 +106,7 @@ function ColorSettingsDialog({
   projectId: string;
   rubro: ProjectRubro;
   colors: PerforationColor[];
+  initialColorId: string | null;
 }) {
   const queryClient = useQueryClient();
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -109,6 +114,10 @@ function ColorSettingsDialog({
   const [colorHex, setColorHex] = useState('#ef4444');
   const [steps, setSteps] = useState('Perforado\nVerificar punto');
   const current = colors.find((color) => color.id === editingId) ?? null;
+
+  useEffect(() => {
+    if (open) setEditingId(initialColorId);
+  }, [open, initialColorId]);
 
   useEffect(() => {
     if (!open) return;
@@ -223,6 +232,7 @@ function PointInspector({
   const [label, setLabel] = useState(point.label ?? '');
   const [checklistOpen, setChecklistOpen] = useState(false);
   const [checklistDraft, setChecklistDraft] = useState('');
+  const [saveAsColorDefault, setSaveAsColorDefault] = useState(false);
   const panelRef = useRef<HTMLElement>(null);
   const panelDrag = useRef<{ pointerId: number; clientX: number; clientY: number; left: number; top: number } | null>(null);
   const [manualPosition, setManualPosition] = useState<{ left: number; top: number } | null>(null);
@@ -238,7 +248,7 @@ function PointInspector({
     onError: (error: Error) => toast.error(error.message),
   });
   const checklist = useMutation({
-    mutationFn: (next: PerforationChecklistEntry[]) => rubrosApi.updatePerforationChecklist(companyId, projectId, rubro.id, point.id, next),
+    mutationFn: ({ next, saveDefault = false }: { next: PerforationChecklistEntry[]; saveDefault?: boolean }) => rubrosApi.updatePerforationChecklist(companyId, projectId, rubro.id, point.id, next, saveDefault),
     onSuccess: refresh,
     onError: (error: Error) => toast.error(error.message),
   });
@@ -255,7 +265,7 @@ function PointInspector({
 
   const complete = point.status === 'completed';
   const toggleCheck = (entry: PerforationChecklistEntry) => {
-    checklist.mutate(point.checklist_json.map((item) => item.id === entry.id ? { ...item, checked: !item.checked } : item));
+    checklist.mutate({ next: point.checklist_json.map((item) => item.id === entry.id ? { ...item, checked: !item.checked } : item) });
   };
   const saveChecklist = () => {
     const entries = checklistDraft
@@ -263,7 +273,7 @@ function PointInspector({
       .map((title) => title.trim())
       .filter(Boolean)
       .map((title, index) => ({ id: `point-step-${index + 1}`, title, checked: false }));
-    checklist.mutate(entries, { onSuccess: () => setChecklistOpen(false) });
+    checklist.mutate({ next: entries, saveDefault: saveAsColorDefault }, { onSuccess: () => { toast.success(saveAsColorDefault ? 'Checklist guardado para los próximos puntos de este color' : 'Checklist del punto guardado'); setChecklistOpen(false); } });
   };
   const downloadAttachment = async () => {
     try {
@@ -274,7 +284,15 @@ function PointInspector({
     }
   };
 
-  const movePanel = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const startPanelDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    event.stopPropagation();
+    if (event.target instanceof Element && event.target.closest('button, input, textarea, select, label, a, [role="dialog"]')) return;
+    if (!event.isPrimary || event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    panelDrag.current = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, left: manualPosition?.left ?? Number(anchorStyle.left ?? 8), top: manualPosition?.top ?? Number(anchorStyle.top ?? 8) };
+  };
+  const movePanel = (event: ReactPointerEvent<HTMLElement>) => {
     const active = panelDrag.current;
     if (!active || active.pointerId !== event.pointerId) return;
     const width = panelRef.current?.offsetWidth ?? 352;
@@ -284,7 +302,7 @@ function PointInspector({
       top: Math.max(8, Math.min(bounds.height - height - 8, active.top + event.clientY - active.clientY)),
     });
   };
-  const endPanelDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const endPanelDrag = (event: ReactPointerEvent<HTMLElement>) => {
     if (panelDrag.current?.pointerId !== event.pointerId) return;
     panelDrag.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
@@ -292,14 +310,10 @@ function PointInspector({
   const panelTop = manualPosition?.top ?? Number(anchorStyle.top ?? 8);
 
   return (
-    <section ref={panelRef} style={{ ...anchorStyle, ...manualPosition, maxHeight: Math.max(80, bounds.height - panelTop - 8) }} className="absolute z-[70] w-[min(22rem,calc(100%-1rem))] touch-pan-y overscroll-contain overflow-y-auto rounded-2xl border border-border bg-card p-3 shadow-2xl" onPointerDown={(event) => event.stopPropagation()}>
-      <div className="sticky top-0 z-10 flex touch-none cursor-grab items-start justify-between gap-3 rounded-lg bg-card/95 py-1 active:cursor-grabbing" onPointerDown={(event) => {
-        if (event.target instanceof Element && event.target.closest('button')) return;
-        event.preventDefault();
-        event.stopPropagation();
-        event.currentTarget.setPointerCapture(event.pointerId);
-        panelDrag.current = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, left: manualPosition?.left ?? Number(anchorStyle.left ?? 8), top: manualPosition?.top ?? Number(anchorStyle.top ?? 8) };
-      }} onPointerMove={movePanel} onPointerUp={endPanelDrag} onPointerCancel={endPanelDrag}>
+    <section ref={panelRef} aria-label="Detalle del punto" style={{ ...anchorStyle, ...manualPosition, maxHeight: Math.max(80, bounds.height - panelTop - 8) }} className="absolute z-[70] w-[min(22rem,calc(100%-1rem))] touch-pan-y overscroll-contain overflow-y-auto rounded-2xl border border-border bg-card p-3 shadow-2xl" onPointerDown={startPanelDrag} onPointerMove={movePanel} onPointerUp={endPanelDrag} onPointerCancel={endPanelDrag}>
+      <div aria-label="Zona para arrastrar detalle" className="absolute inset-0 touch-none cursor-grab active:cursor-grabbing" />
+      <div className="relative pointer-events-none [&_button]:pointer-events-auto [&_input]:pointer-events-auto [&_textarea]:pointer-events-auto [&_select]:pointer-events-auto [&_label]:pointer-events-auto [&_a]:pointer-events-auto">
+      <div className="sticky top-0 z-10 flex items-start justify-between gap-3 rounded-lg bg-card/95 py-1">
         <div className="min-w-0"><p className="flex items-center gap-2 text-sm font-bold"><span className="h-3 w-3 rounded-full" style={{ backgroundColor: pointColor(point) }} /> Punto {complete ? 'completado' : 'en proceso'}</p><p className="text-xs text-muted-foreground">{complete ? 'Checklist completo: ahora se muestra azul.' : 'Completa los pasos para marcarlo como terminado.'}</p></div>
         <button type="button" aria-label="Cerrar detalle del punto" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-muted text-foreground hover:bg-primary hover:text-primary-foreground" onClick={onClose}><X className="h-5 w-5" /></button>
       </div>
@@ -314,23 +328,33 @@ function PointInspector({
         </div>
       </div>
       <div className="mt-3 space-y-1"><Label>Nota</Label><Textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Escribe una observación del punto" className="min-h-20" /></div>
-      <div className="mt-2 flex flex-wrap gap-2"><Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>Guardar nota</Button><Button size="sm" variant="outline" onClick={() => { setChecklistDraft(point.checklist_json.map((entry) => entry.title).join('\n')); setChecklistOpen(true); }}><Settings2 className="h-4 w-4" /> Configurar checklist</Button><Button size="sm" variant={editMode ? 'default' : 'outline'} onClick={onToggleEdit}><Pencil className="h-4 w-4" /> {editMode ? 'Terminar edición' : 'Mover / tamaño'}</Button><Button size="sm" variant="outline" onClick={() => fileInput.current?.click()}><Paperclip className="h-4 w-4" /> Cargar nota</Button><input ref={fileInput} className="sr-only" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachment.mutate(file); event.target.value = ''; }} /></div>
+      <div className="mt-2 flex flex-wrap gap-2"><Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>Guardar nota</Button><Button size="sm" variant="outline" onClick={() => { setChecklistDraft(point.checklist_json.map((entry) => entry.title).join('\n')); setSaveAsColorDefault(false); setChecklistOpen(true); }}><Settings2 className="h-4 w-4" /> Configurar checklist</Button><Button size="sm" variant={editMode ? 'default' : 'outline'} onClick={onToggleEdit}><Pencil className="h-4 w-4" /> {editMode ? 'Terminar edición' : 'Mover / tamaño'}</Button><Button size="sm" variant="outline" onClick={() => fileInput.current?.click()}><Paperclip className="h-4 w-4" /> Cargar nota</Button><input ref={fileInput} className="sr-only" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachment.mutate(file); event.target.value = ''; }} /></div>
       {canEdit ? <Button type="button" size="sm" variant="destructive" className="mt-2" onClick={onDelete}><Trash2 className="h-4 w-4" /> Eliminar punto</Button> : null}
       {point.note_original_filename ? <button type="button" className="mt-2 flex max-w-full items-center gap-1 text-xs text-primary underline" onClick={() => void downloadAttachment()}><FileText className="h-3.5 w-3.5" /><span className="truncate">{point.note_original_filename}</span></button> : null}
       {editMode ? <div className="mt-3 rounded-lg border border-primary/30 bg-primary/5 p-2 text-xs"><div className="flex items-center justify-between gap-2"><span>Arrastra el punto o ajusta su tamaño.</span><span>{Math.round(asNumber(point.diameter) * 100)}%</span></div><input className="mt-2 w-full accent-primary" type="range" min="0.8" max="12" step="0.2" value={asNumber(point.diameter) * 100} onChange={(event) => pointUpdate.mutate({ diameter: Number(event.target.value) / 100 })} /></div> : null}
+      <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-foreground"><span>Arrastra el título o una zona vacía.</span><div className="flex gap-1"><button type="button" aria-label="Subir detalle" className="rounded border px-3 py-2" onClick={() => panelRef.current?.scrollBy({ top: -160, behavior: 'smooth' })}>↑</button><button type="button" aria-label="Bajar detalle" className="rounded border px-3 py-2" onClick={() => panelRef.current?.scrollBy({ top: 160, behavior: 'smooth' })}>↓</button></div></div>
       <Dialog open={checklistOpen} onOpenChange={setChecklistOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>Configurar checklist del punto</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">Un control por línea. Al guardar se reinicia el estado del punto.</p>
+          <DialogDescription>Un control por línea. Al guardar se reinicia el estado del punto.</DialogDescription>
           <Textarea value={checklistDraft} onChange={(event) => setChecklistDraft(event.target.value)} className="min-h-40" placeholder="Perforado\nVerificar punto\nRegistrar evidencia" />
+          <label className="flex items-start gap-2 rounded-lg border p-3 text-sm"><input type="checkbox" className="mt-0.5 h-4 w-4 accent-primary" checked={saveAsColorDefault} disabled={!point.color_id} onChange={(event) => setSaveAsColorDefault(event.target.checked)} /><span><strong>Guardar también como predeterminado de «{colors.find((color) => color.id === point.color_id)?.name ?? 'este color'}»</strong><br /><span className="text-xs text-muted-foreground">Los puntos nuevos de este color recibirán esta lista. Los puntos anteriores no cambian.</span></span></label>
           <DialogFooter><Button type="button" variant="outline" onClick={() => setChecklistOpen(false)}>Cancelar</Button><Button type="button" disabled={checklist.isPending} onClick={saveChecklist}>Guardar checklist</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </section>
   );
 }
 
-export function PerforationBoard({ companyId, projectId, rubro }: { companyId: string; projectId: string; rubro: ProjectRubro }) {
+type BoardProps = { companyId: string; projectId: string; rubro: ProjectRubro };
+export function PerforationBoard(props: BoardProps) {
+  const { data: me } = useMe();
+  if (!me?.id) return <p>Cargando usuario…</p>;
+  return <PerforationCanvas key={`${me.id}:${props.companyId}:${props.projectId}:${props.rubro.id}`} {...props} userId={me.id} />;
+}
+
+function PerforationCanvas({ companyId, projectId, rubro, userId }: BoardProps & { userId: string }) {
   const canEdit = useCan('projects.edit');
   const queryClient = useQueryClient();
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -350,6 +374,7 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
   const [uploadName, setUploadName] = useState('');
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [colorSettingsOpen, setColorSettingsOpen] = useState(false);
+  const [editingColorId, setEditingColorId] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [tool, setTool] = useState<PerforationTool>('pan');
   const [scale, setScale] = useState(1);
@@ -368,6 +393,12 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
     queryFn: ({ signal }) => rubrosApi.perforationWorkspace(companyId, projectId, rubro.id, signal),
     refetchInterval: 3500,
   });
+  const outbox = useAnnotationOutbox(`obrixapy:annotations:v1:${userId}:${companyId}:${projectId}:${rubro.id}`,
+    (input) => rubrosApi.createPerforationAnnotation(companyId, projectId, rubro.id, input),
+    (created) => {
+      queryClient.setQueryData<PerforationWorkspace>(['perforation-workspace', companyId, projectId, rubro.id], (current) => current && ({ ...current, annotations: [...current.annotations.filter((item) => item.id !== created.id), created] }));
+      void queryClient.invalidateQueries({ queryKey: ['perforation-workspace', companyId, projectId, rubro.id] });
+    });
   const data = workspace.data;
   const documents = data?.documents ?? [];
   const colors = useMemo(() => data?.colors ?? [], [data?.colors]);
@@ -375,7 +406,7 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
   const selectedDocument = documents.find((document) => document.id === selectedDocumentId) ?? documents[0] ?? null;
   const selectedPoint = (data?.points ?? []).find((point) => point.id === selectedPointId) ?? null;
   const filteredPoints = useMemo(() => (data?.points ?? []).filter((point) => point.document_id === selectedDocument?.id && point.page_number === page), [data?.points, page, selectedDocument?.id]);
-  const filteredAnnotations = useMemo(() => (data?.annotations ?? []).filter((item) => item.document_id === selectedDocument?.id && item.page_number === page), [data?.annotations, page, selectedDocument?.id]);
+  const filteredAnnotations = useMemo(() => [...(data?.annotations ?? []), ...outbox.pending.filter((input) => !data?.annotations.some((saved) => saved.id === input.client_id)).map((input): PerforationAnnotation => ({ ...input, id: input.client_id, text: input.text ?? null, company_id: companyId, project_id: projectId, rubro_id: rubro.id, created_by_user_id: userId, created_at: '' }))].filter((item) => item.document_id === selectedDocument?.id && item.page_number === page), [data?.annotations, outbox.pending, page, selectedDocument?.id, companyId, projectId, rubro.id, userId]);
   const pointInspectorStyle = useMemo<CSSProperties | undefined>(() => {
     if (!selectedPoint) return undefined;
     const width = viewportSize.width || 650;
@@ -499,7 +530,7 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
   const createDocument = useMutation({
     mutationFn: () => rubrosApi.uploadPerforationDocument(companyId, projectId, rubro.id, uploadName.trim(), uploadFile as File),
     onSuccess: (document) => { toast.success('Plano de perforaciones cargado'); setSelectedDocumentId(document.id); setPage(1); setUploadName(''); setUploadFile(null); refresh(); },
-    onError: (error: Error & { status?: number }) => toast.error(error.status === 413 ? 'El PDF supera el tamaño permitido por el servidor (50 MB).' : error.message),
+    onError: (error: Error & { status?: number }) => toast.error(error.status === 413 ? 'El PDF supera el tamaño permitido por el servidor (10 MB).' : error.message),
   });
   const createPoint = useMutation({
     mutationFn: ({ x, y }: { x: number; y: number }) => rubrosApi.createPerforationPoint(companyId, projectId, rubro.id, {
@@ -528,16 +559,11 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const createAnnotation = useMutation({
-    mutationFn: (input: Parameters<typeof rubrosApi.createPerforationAnnotation>[3]) => rubrosApi.createPerforationAnnotation(companyId, projectId, rubro.id, input),
-    onSuccess: (created) => {
-      queryClient.setQueryData<PerforationWorkspace>(['perforation-workspace', companyId, projectId, rubro.id], (current) => current && ({ ...current, annotations: [...current.annotations, created] }));
-      refresh();
-    },
-    onError: (error: Error) => toast.error(`No se guardó la marca: ${error.message}`),
-  });
   const deleteAnnotation = useMutation({
-    mutationFn: (annotationId: string) => rubrosApi.removePerforationAnnotation(companyId, projectId, rubro.id, annotationId),
+    mutationFn: (annotationId: string) => {
+      if (outbox.pending.some((input) => input.client_id === annotationId)) throw new Error('Esta marca está pendiente de envío. Reintenta guardarla antes de borrarla.');
+      return rubrosApi.removePerforationAnnotation(companyId, projectId, rubro.id, annotationId);
+    },
     onSuccess: (_, annotationId) => {
       queryClient.setQueryData<PerforationWorkspace>(['perforation-workspace', companyId, projectId, rubro.id], (current) => current && ({ ...current, annotations: current.annotations.filter((item) => item.id !== annotationId) }));
       refresh();
@@ -556,7 +582,8 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
   });
   const saveAnnotation = (kind: 'line' | 'note', points: CanvasPoint[], style: ReturnType<typeof annotationStyle>, text?: string) => {
     if (!selectedDocument) return;
-    createAnnotation.mutate({ document_id: selectedDocument.id, page_number: page, kind, points, text, ...style });
+    const chunks = kind === 'line' ? splitStroke(points) : [points];
+    outbox.enqueue(chunks.map((chunk) => ({ document_id: selectedDocument.id, page_number: page, kind, points: chunk, text, ...style })));
   };
   const startPinch = () => {
     const touches = [...activeTouches.current.values()];
@@ -769,7 +796,7 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
       <Card className={isFullscreen ? 'surface-glass h-full overflow-hidden rounded-none border-0 shadow-none' : 'surface-glass overflow-hidden'}>
         <CardHeader className={isFullscreen ? 'hidden' : 'flex-row items-start justify-between gap-3 space-y-0'}>
           <div><CardTitle className="text-lg">Plano interactivo de perforaciones</CardTitle><p className="mt-1 text-sm text-muted-foreground">Selecciona un color y toca el PDF para crear un punto. Toca un punto para abrir su checklist; doble toque para moverlo o cambiar su tamaño.</p></div>
-          <div className="flex shrink-0 gap-2"><Button size="sm" variant="outline" onClick={() => setColorSettingsOpen(true)}><Settings2 className="h-4 w-4" /> Colores</Button></div>
+          <div className="flex shrink-0 gap-2"><Button size="sm" variant="outline" onClick={() => { setEditingColorId(null); setColorSettingsOpen(true); }}><Settings2 className="h-4 w-4" /> Colores</Button></div>
         </CardHeader>
         <CardContent className={isFullscreen ? 'relative h-full p-0' : 'space-y-4'}>
           {!isFullscreen && canEdit ? <div className="grid gap-3 rounded-xl border bg-card/90 p-3 lg:grid-cols-[1fr_1.3fr_auto]"><div className="space-y-1"><Label htmlFor="perforation-file">PDF o imagen</Label><Input id="perforation-file" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0] ?? null; setUploadFile(file); if (file && !uploadName) setUploadName(file.name.replace(/\.[^.]+$/, '')); }} /></div><div className="space-y-1"><Label htmlFor="perforation-title">Nombre del plano</Label><Input id="perforation-title" value={uploadName} onChange={(event) => setUploadName(event.target.value)} placeholder="Ej. Planta nivel 6" /></div><Button className="self-end" disabled={!uploadFile || uploadName.trim().length < 2 || createDocument.isPending} onClick={() => createDocument.mutate()}><Upload className="h-4 w-4" /> Cargar PDF</Button></div> : null}
@@ -780,7 +807,7 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
               <div className="flex flex-wrap items-center gap-2">{canEdit && selectedDocument ? <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => { if (window.confirm(`¿Eliminar ${selectedDocument.title} y todos sus puntos?`)) deleteDocument.mutate(selectedDocument.id); }}><Trash2 className="h-4 w-4" /> Eliminar plano</Button> : null}<Button size="sm" variant="outline" onClick={() => setIsFullscreen((value) => !value)}>{isFullscreen ? <X className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}{isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}</Button></div>
             </div>
             <div className={isFullscreen ? 'absolute left-2 right-20 top-2 z-50 max-h-[min(45vh,20rem)] space-y-2 overflow-y-auto rounded-xl border bg-card/95 p-2 shadow-xl backdrop-blur-sm' : 'space-y-4'}>
-            <div className={isFullscreen ? 'flex items-center gap-2 overflow-x-auto whitespace-nowrap rounded-lg bg-card/90 p-1.5' : 'flex flex-wrap items-center gap-2 rounded-xl border bg-card/85 p-3'}><span className="shrink-0 text-sm font-semibold">Nuevo punto:</span>{colors.filter((color) => color.is_active).map((color) => <button key={color.id} type="button" disabled={!canEdit} onClick={() => { setSelectedColorId(color.id); setTool('point'); }} className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-medium transition ${selectedColorId === color.id ? 'border-foreground ring-2 ring-primary/30' : 'hover:border-primary/50'}`}><span className="h-3 w-3 rounded-full" style={{ backgroundColor: color.color_hex }} />{color.name}</button>)}{!colors.length ? <span className="text-sm text-muted-foreground">Configura al menos un color.</span> : null}</div>
+            <div className={isFullscreen ? 'flex items-center gap-2 overflow-x-auto whitespace-nowrap rounded-lg bg-card/90 p-1.5' : 'flex flex-wrap items-center gap-2 rounded-xl border bg-card/85 p-3'}><span className="shrink-0 text-sm font-semibold">Nuevo punto:</span>{colors.filter((color) => color.is_active).map((color) => <span key={color.id} className="inline-flex shrink-0 items-center rounded-full border bg-card"><button type="button" disabled={!canEdit} onClick={() => { setSelectedColorId(color.id); setTool('point'); }} className={`inline-flex items-center gap-2 rounded-l-full px-3 py-1.5 text-sm font-medium transition ${selectedColorId === color.id ? 'ring-2 ring-primary/30' : 'hover:bg-muted'}`}><span className="h-3 w-3 rounded-full" style={{ backgroundColor: color.color_hex }} />{color.name}</button>{canEdit ? <button type="button" aria-label={`Editar ${color.name}`} title={`Cambiar nombre y checklist de ${color.name}`} className="rounded-r-full border-l px-2 py-1.5 hover:bg-muted" onClick={() => { setEditingColorId(color.id); setColorSettingsOpen(true); }}><Pencil className="h-3.5 w-3.5" /></button> : null}</span>)}{!colors.length ? <span className="text-sm text-muted-foreground">Configura al menos un color.</span> : null}</div>
             <div className={isFullscreen ? 'flex flex-wrap items-center justify-between gap-1 rounded-lg bg-card/90 p-1.5' : 'flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-card/85 p-2 shadow-sm'}>
               <div className={isFullscreen ? 'flex min-w-0 flex-wrap gap-1' : 'flex flex-wrap gap-1.5'}>
                 <Button size="sm" variant="outline" className={tool === 'point' ? 'border-orange-500 bg-orange-500 text-white hover:bg-orange-600 hover:text-white' : ''} onClick={() => setTool('point')} disabled={!canEdit}><MapPin className="h-4 w-4" /> Punto</Button>
@@ -803,7 +830,8 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
             </div>
             {canEdit && (tool === 'draw' || tool === 'highlight' || tool === 'straight') ? <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card/85 px-3 py-2 text-xs"><span className="font-semibold">Color</span>{PENCIL_COLORS.map((color) => <button key={color} type="button" aria-label={`Usar color ${color}`} className={`h-6 w-6 rounded-full border-2 ${pencilColor === color ? 'scale-110 border-slate-900' : 'border-white'}`} style={{ backgroundColor: color }} onClick={() => setPencilColor(color)} />)}<input aria-label="Color personalizado" className="h-7 w-8 cursor-pointer rounded border p-0.5" type="color" value={pencilColor} onChange={(event) => setPencilColor(event.target.value)} /><span className="ml-1 font-semibold">Grosor</span><select aria-label="Grosor del trazo" className="h-8 rounded-md border bg-background px-2 text-xs" value={strokeWidth} onChange={(event) => setStrokeWidth(Number(event.target.value))}>{STROKE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div> : null}
             {selectedDocument && (selectedDocument.page_count ?? 1) > 1 ? <div className="flex items-center justify-between rounded-lg border bg-card p-2 text-sm"><Button size="sm" variant="ghost" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft className="h-4 w-4" /> Anterior</Button><span>Página {page} de {selectedDocument.page_count}</span><Button size="sm" variant="ghost" disabled={page >= (selectedDocument.page_count ?? 1)} onClick={() => setPage((value) => value + 1)}>Siguiente <ChevronRight className="h-4 w-4" /></Button></div> : null}
-            {!isFullscreen ? <p className="text-xs text-muted-foreground">“Mover” desplaza el PDF y permite pellizcar para ampliar. Con “Punto”, “Lápiz” u otra herramienta, el dedo y el lápiz actúan sobre el plano sin desplazarlo. {createAnnotation.isPending ? 'Guardando marca…' : 'Las marcas guardadas aparecen en otros dispositivos.'}</p> : null}
+            {outbox.pending.length > 0 ? <div role="status" className="rounded border border-amber-400 bg-amber-50 p-2 text-sm text-amber-950">{outbox.pending.length} marcas pendientes de guardar. {outbox.error}{!outbox.durable ? ' No hay espacio local: no cierres esta página.' : ' Se conserva una copia local hasta confirmar el envío.'}<Button size="sm" variant="outline" disabled={outbox.busy} onClick={outbox.retry}>Reintentar envío</Button></div> : <p className="text-xs text-green-700">Todas las marcas guardadas</p>}
+            {!isFullscreen ? <p className="text-xs text-muted-foreground">“Mover” desplaza el PDF y permite pellizcar para ampliar. Con “Punto”, “Lápiz” u otra herramienta, el dedo y el lápiz actúan sobre el plano sin desplazarlo. {outbox.busy ? 'Guardando marca…' : 'Las marcas guardadas aparecen en otros dispositivos.'}</p> : null}
             </div>
             <div className={`relative overflow-hidden bg-slate-100 ${isFullscreen ? 'h-full w-full' : 'h-[650px] rounded-2xl shadow-inner'}`}>
               {isFullscreen ? <Button type="button" size="sm" className="absolute right-4 top-4 z-[60] shadow-lg" onClick={() => setIsFullscreen(false)}><X className="h-4 w-4" /> Salir</Button> : null}
@@ -829,7 +857,7 @@ export function PerforationBoard({ companyId, projectId, rubro }: { companyId: s
           </>}
         </CardContent>
       </Card>
-      <ColorSettingsDialog open={colorSettingsOpen} onOpenChange={setColorSettingsOpen} companyId={companyId} projectId={projectId} rubro={rubro} colors={colors} />
+      <ColorSettingsDialog open={colorSettingsOpen} onOpenChange={setColorSettingsOpen} companyId={companyId} projectId={projectId} rubro={rubro} colors={colors} initialColorId={editingColorId} />
     </div>
   );
 }

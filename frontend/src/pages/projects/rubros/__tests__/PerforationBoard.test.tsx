@@ -3,13 +3,15 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PerforationWorkspace, ProjectRubro } from '@/types/api';
 
-const { workspace, preview, createAnnotation, createPoint } = vi.hoisted(() => ({
+const { workspace, preview, createAnnotation, createPoint, updateChecklist } = vi.hoisted(() => ({
   workspace: vi.fn(),
   preview: vi.fn(),
   createAnnotation: vi.fn(),
   createPoint: vi.fn(),
+  updateChecklist: vi.fn(),
 }));
 
+vi.mock('@/auth/useMe', () => ({ useMe: () => ({ data: { id: 'test-user' } }) }));
 vi.mock('@/auth/useCan', () => ({ useCan: () => true }));
 vi.mock('@/lib/api/rubros', () => ({
   rubrosApi: {
@@ -17,6 +19,7 @@ vi.mock('@/lib/api/rubros', () => ({
     previewPerforationDocument: preview,
     createPerforationAnnotation: createAnnotation,
     createPerforationPoint: createPoint,
+    updatePerforationChecklist: updateChecklist,
   },
 }));
 
@@ -60,10 +63,12 @@ describe('PerforationBoard on a tablet', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     workspace.mockResolvedValue(board);
     preview.mockResolvedValue(new Blob(['preview'], { type: 'image/png' }));
     createAnnotation.mockResolvedValue({ id: 'mark-1', kind: 'line', points: [], document_id: 'document-1', page_number: 1 });
     createPoint.mockResolvedValue({ id: 'point-new' });
+    updateChecklist.mockResolvedValue({ id: 'point-1' });
     vi.stubGlobal('ResizeObserver', class {
       observe() {}
       disconnect() {}
@@ -165,5 +170,24 @@ describe('PerforationBoard on a tablet', () => {
     await waitFor(() => expect(note).toHaveValue('Sin terminar todavía'));
     fireEvent.click(screen.getByRole('button', { name: 'Cerrar detalle del punto' }));
     expect(screen.queryByPlaceholderText('Escribe una observación del punto')).not.toBeInTheDocument();
+  });
+
+  it('lets a checklist become the future default for its color', async () => {
+    workspace.mockResolvedValue({ ...board, points: [{
+      id: 'point-1', company_id: 'company-1', project_id: 'project-1', rubro_id: rubro.id,
+      document_id: 'document-1', color_id: 'color-1', page_number: 1, created_by_user_id: 'user-1',
+      x: '0.5', y: '0.5', diameter: '0.026', color_hex: '#ef4444', status: 'pending',
+      checklist_json: [{ id: 'step-1', title: 'Perforado', checked: false }], label: null, note_text: null,
+    }] });
+    await renderBoard();
+    expect(screen.getByRole('button', { name: 'Editar Perforado' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Punto point-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Configurar checklist' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /Guardar también como predeterminado/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar checklist' }));
+    await waitFor(() => expect(updateChecklist).toHaveBeenCalledWith(
+      'company-1', 'project-1', 'rubro-1', 'point-1',
+      [{ id: 'point-step-1', title: 'Perforado', checked: false }], true,
+    ));
   });
 });

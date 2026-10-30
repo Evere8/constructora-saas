@@ -23,6 +23,8 @@ export interface ProjectFilters {
   offset?: number;
 }
 
+export interface ArchiveStatus { pending: number; total: number; complete: boolean; saved_bytes: number }
+
 export interface ProjectInput {
   name: string;
   code?: string | null;
@@ -45,6 +47,21 @@ export interface TaskFilters {
 }
 
 export const projectsApi = {
+  archiveStatus: (companyId: string, projectId: string, signal?: AbortSignal) =>
+    api.get<ArchiveStatus>(`${base(companyId)}/${projectId}/archive-status`, undefined, signal),
+  archiveStep: (companyId: string, projectId: string) =>
+    api.post<ArchiveStatus>(`${base(companyId)}/${projectId}/archive-step`, {}),
+  listAll: async (companyId: string, signal?: AbortSignal) => {
+    const items: Project[] = [];
+    let total = 0;
+    do {
+      const page = await api.get<Paginated<Project>>(base(companyId), { limit: 100, offset: items.length }, signal);
+      items.push(...page.items);
+      total = page.total;
+      if (!page.items.length) break;
+    } while (items.length < total);
+    return { items, total, limit: items.length, offset: 0 };
+  },
   list: (companyId: string, filters: ProjectFilters = {}, signal?: AbortSignal) =>
     api.get<Paginated<Project>>(base(companyId), { ...filters }, signal),
   get: (companyId: string, projectId: string, signal?: AbortSignal) =>
@@ -53,6 +70,10 @@ export const projectsApi = {
     api.post<Project>(base(companyId), input),
   update: (companyId: string, projectId: string, input: Partial<ProjectInput>) =>
     api.patch<Project>(`${base(companyId)}/${projectId}`, input),
+  deactivate: (companyId: string, projectId: string) =>
+    api.post<Project>(`${base(companyId)}/${projectId}/deactivate`, {}),
+  reactivate: (companyId: string, projectId: string) =>
+    api.post<Project>(`${base(companyId)}/${projectId}/reactivate`, {}),
 
   listLevels: (companyId: string, projectId: string, signal?: AbortSignal) =>
     api.get<Paginated<Level> | Level[]>(`${base(companyId)}/${projectId}/levels`, undefined, signal),

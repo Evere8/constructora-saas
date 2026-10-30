@@ -9,6 +9,7 @@ RUN groupadd --system --gid 10001 app \
     && apt-get update \
     && apt-get install --no-install-recommends -y \
         ca-certificates \
+        rclone \
         poppler-utils \
         tesseract-ocr \
         tesseract-ocr-eng \
