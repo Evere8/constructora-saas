@@ -59,7 +59,7 @@ seis omitidas requieren un MySQL 8.4 aislado.
 El workflow MySQL migration recovery usa MySQL 8.4 aislado y ejecuta las seis
 pruebas adicionales que se omiten cuando no existe un servidor de pruebas.
 
-Migración destino: **0018_push_subscriptions**. Comprueba además todas las
+Migración destino: **0019_inventory_relocation_warehouse**. Comprueba además todas las
 columnas mapeadas con `python -m app.db.verify_schema`. No cambie manualmente
 `alembic_version` ni use `stamp` para saltar migraciones.
 
@@ -142,7 +142,7 @@ No cierre SSH. El script:
 5. Verifica gzip, listado del tar y sumas; ejecuta migración y verifica esquema.
 6. Recrea solo `api frontend`, espera salud y comprueba endpoints locales.
 
-Resultado esperado: `RESPALDO_OK`, `0018_push_subscriptions (head)`,
+Resultado esperado: `RESPALDO_OK`, `0019_inventory_relocation_warehouse (head)`,
 `SCHEMA_OK` y `ACTUALIZACION_OK`. Conserve la ruta
 `/opt/constructora/operations-release.XXXXXXXX` que realmente imprima el script;
 no escriba literalmente las X. Los archivos quedan privados y no se eliminan.
@@ -158,7 +158,7 @@ sudo grep -n "client_max_body_size" /etc/nginx/sites-available/obrixapy-app
 ```
 
 Debe devolver `ok`, `{"status":"ready","database":"mysql"}`,
-`0018_push_subscriptions (head)` y `client_max_body_size 0`.
+`0019_inventory_relocation_warehouse (head)` y `client_max_body_size 0`.
 En Windows recargue con Ctrl+F5. En la tablet cierre y vuelva a abrir la pestaña.
 
 ### 9. Aceptación funcional en su instalación
