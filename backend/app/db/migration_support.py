@@ -52,6 +52,25 @@ class ResumableDDL:
         if column.name not in {item["name"] for item in self.inspector().get_columns(table)}:
             self.op.add_column(table, column)
 
+    def set_nullable(self, table, column, nullable):
+        """Change nullability only when a previous migration attempt did not."""
+
+        existing = next(
+            (item for item in self.inspector().get_columns(table) if item["name"] == column),
+            None,
+        )
+        if existing is None:
+            raise RuntimeError(f"La tabla {table} tiene una estructura inesperada: falta {column}")
+        if bool(existing["nullable"]) == nullable:
+            return
+        self.op.alter_column(
+            table,
+            column,
+            existing_type=existing["type"],
+            existing_nullable=bool(existing["nullable"]),
+            nullable=nullable,
+        )
+
     def create_foreign_key(self, name, source, target, columns, target_columns, **kwargs):
         for fk in self.inspector().get_foreign_keys(source):
             same = (

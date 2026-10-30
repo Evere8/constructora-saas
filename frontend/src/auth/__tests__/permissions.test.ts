@@ -6,6 +6,13 @@ describe('permisos por rol', () => {
     expect(can('owner', 'projects.edit')).toBe(true);
   });
 
+  it('solo propietario e ingeniero pueden eliminar una tarea completa', () => {
+    expect(can('owner', 'tasks.delete')).toBe(true);
+    expect(can('engineer', 'tasks.delete')).toBe(true);
+    expect(can('admin', 'tasks.delete')).toBe(false);
+    expect(can('supervisor', 'tasks.delete')).toBe(false);
+  });
+
   it('supervisor no edita obras pero si tareas y checklist', () => {
     expect(can('supervisor', 'projects.edit')).toBe(false);
     expect(can('supervisor', 'tasks.edit')).toBe(true);

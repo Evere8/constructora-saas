@@ -96,4 +96,22 @@ describe('InventoryLocationBoard', () => {
     expect(container.querySelector('[data-inventory-destination="project-a"]')).toHaveTextContent('Taladro');
     expect(screen.queryByRole('button', { name: /Arrastrar Taladro/ })).not.toBeInTheDocument();
   });
+
+  it('offers the warehouse as a destination for equipment located at a worksite', () => {
+    const requestMove = vi.fn();
+    render(
+      <InventoryLocationBoard
+        items={[item]}
+        projects={projects}
+        relocations={[]}
+        canMove
+        onRequestMove={requestMove}
+      />,
+    );
+
+    const selector = screen.getByLabelText('Solicitar destino de Taladro HERR-001');
+    expect(screen.getByRole('option', { name: 'Depósito' })).toBeInTheDocument();
+    fireEvent.change(selector, { target: { value: 'warehouse' } });
+    expect(requestMove).toHaveBeenCalledWith('tool-1', null);
+  });
 });

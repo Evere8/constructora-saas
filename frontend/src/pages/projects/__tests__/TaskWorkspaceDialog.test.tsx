@@ -2,9 +2,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { list, progress } = vi.hoisted(() => ({
+const { list, progress, deleteTask } = vi.hoisted(() => ({
   list: vi.fn(),
   progress: vi.fn(),
+  deleteTask: vi.fn(),
 }));
 
 vi.mock('@/auth/useCan', () => ({
@@ -17,6 +18,9 @@ vi.mock('@/lib/api/checklist', () => ({
     progress,
     update: vi.fn(),
   },
+}));
+vi.mock('@/lib/api/projects', () => ({
+  projectsApi: { deleteTask },
 }));
 vi.mock('@/pages/projects/ChecklistFormDialog', () => ({
   ChecklistFormDialog: () => <div>Formulario de control</div>,
@@ -41,7 +45,7 @@ const task: Task = {
   priority: 'high',
 };
 
-function renderWorkspace() {
+function renderWorkspace(onOpenChange = vi.fn()) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -53,7 +57,7 @@ function renderWorkspace() {
         task={task}
         levelName="Fundaciones"
         open
-        onOpenChange={vi.fn()}
+        onOpenChange={onOpenChange}
       />
     </QueryClientProvider>,
   );
@@ -83,6 +87,7 @@ describe('TaskWorkspaceDialog', () => {
       completed: 1,
       completion_percent: 100,
     });
+    deleteTask.mockResolvedValue(undefined);
   });
 
   it('muestra el checklist y las evidencias dentro de la tarea', async () => {
@@ -104,5 +109,18 @@ describe('TaskWorkspaceDialog', () => {
       { task_id: 'task-1', limit: 200 },
       expect.any(AbortSignal),
     );
+  });
+
+  it('permite al propietario o ingeniero eliminar la tarea desde su espacio de trabajo', async () => {
+    const onOpenChange = vi.fn();
+    const confirmation = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    renderWorkspace(onOpenChange);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Eliminar tarea' }));
+    await waitFor(() => {
+      expect(deleteTask).toHaveBeenCalledWith('company-1', 'project-1', 'task-1');
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+    confirmation.mockRestore();
   });
 });

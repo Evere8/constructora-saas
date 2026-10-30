@@ -18,7 +18,7 @@ const STATUS = {
 
 function requestDescription(request: InventoryRelocationRequest): string {
   const origin = request.from_project_name || 'Depósito';
-  const destination = request.to_project_name || 'Obra destino';
+  const destination = request.to_project_name || 'Depósito';
   return `${origin} → ${destination}`;
 }
 

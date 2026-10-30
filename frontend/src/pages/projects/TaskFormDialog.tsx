@@ -50,6 +50,7 @@ const schema = z.object({
   due_at: z.string().optional(),
   location_text: z.string().max(300).optional(),
   assigned_user_id: z.string().optional(),
+  relocation_assignee_id: z.string().optional(),
   template_id: z.string().optional(),
   inventory_item_ids: z.array(z.string()).default([]),
 }).refine(
@@ -116,6 +117,7 @@ export function TaskFormDialog({
       due_at: task?.due_at?.slice(0, 16) ?? '',
       location_text: task?.location_text ?? '',
       assigned_user_id: task?.assigned_user_id ?? NONE,
+      relocation_assignee_id: NONE,
       template_id: task?.template_id ?? NONE,
       inventory_item_ids: [],
     },
@@ -153,6 +155,7 @@ export function TaskFormDialog({
   const levelId = watch('level_id');
   const rubroId = watch('rubro_id');
   const assigneeId = watch('assigned_user_id');
+  const relocationAssigneeId = watch('relocation_assignee_id');
   const templateId = watch('template_id');
   const inventoryItemIds = watch('inventory_item_ids');
   const selectedTemplate = (templatesQuery.data ?? []).find((item) => item.id === templateId);
@@ -227,6 +230,10 @@ export function TaskFormDialog({
         ...(isEdit ? {} : {
           template_id: values.template_id && values.template_id !== NONE ? values.template_id : null,
           inventory_item_ids: values.inventory_item_ids,
+          relocation_assignee_id:
+            values.relocation_assignee_id && values.relocation_assignee_id !== NONE
+              ? values.relocation_assignee_id
+              : null,
         }),
       };
       return isEdit && task
@@ -265,9 +272,9 @@ export function TaskFormDialog({
     if (
       !isEdit
       && requiresRelocation
-      && (!values.assigned_user_id || values.assigned_user_id === NONE)
+      && (!values.relocation_assignee_id || values.relocation_assignee_id === NONE)
     ) {
-      setError('assigned_user_id', {
+      setError('relocation_assignee_id', {
         message: 'Selecciona al responsable que realizará el traslado',
       });
       return;
@@ -472,7 +479,7 @@ export function TaskFormDialog({
             <Input id="task-location" placeholder="Ej.: Losa 3, sector norte" {...register('location_text')} />
           </div>
           <div className="space-y-2">
-            <Label>{requiresRelocation ? 'Responsable del traslado' : 'Responsable'}</Label>
+            <Label>Responsable de la tarea</Label>
             <Select value={assigneeId} onValueChange={(value) => setValue('assigned_user_id', value, { shouldValidate: true })}>
               <SelectTrigger><SelectValue placeholder="Sin responsable" /></SelectTrigger>
               <SelectContent>
@@ -484,9 +491,23 @@ export function TaskFormDialog({
                 ))}
               </SelectContent>
             </Select>
-            {requiresRelocation ? <p className="text-xs text-muted-foreground">Esta persona podrá iniciar el traslado y confirmar la llegada de cada equipo.</p> : null}
             {errors.assigned_user_id ? <p className="text-sm text-destructive">{errors.assigned_user_id.message}</p> : null}
           </div>
+          {!isEdit && requiresRelocation ? <div className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
+            <div><Label>Responsable del traslado</Label><p className="mt-1 text-xs text-amber-900">Elige a la persona que moverá el equipo. Puede ser distinta del responsable de la tarea.</p></div>
+            <Select value={relocationAssigneeId || NONE} onValueChange={(value) => setValue('relocation_assignee_id', value, { shouldValidate: true })}>
+              <SelectTrigger aria-label="Seleccionar responsable del traslado"><SelectValue placeholder="Seleccionar personal" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NONE}>Seleccionar personal</SelectItem>
+                {(membersQuery.data ?? []).filter((member) => member.status === 'active').map((member) => (
+                  <SelectItem key={member.user_id} value={member.user_id}>
+                    {member.full_name || member.email} · {roleLabel(member.role)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {errors.relocation_assignee_id ? <p className="text-sm text-destructive">{errors.relocation_assignee_id.message}</p> : null}
+          </div> : null}
           <div className="space-y-2">
             <Label htmlFor="task-desc">Descripción</Label>
             <Textarea id="task-desc" rows={2} {...register('description')} />

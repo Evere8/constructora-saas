@@ -133,6 +133,10 @@ export const inventoryApi = {
     api.get<InventoryItem[]>(`${companyBase(companyId)}/inventory`, undefined, signal),
   create: (companyId: string, input: InventoryInput) =>
     api.post<InventoryItem>(`${companyBase(companyId)}/inventory`, input),
+  update: (companyId: string, itemId: string, input: Partial<InventoryInput>) =>
+    api.patch<InventoryItem>(`${companyBase(companyId)}/inventory/${itemId}`, input),
+  remove: (companyId: string, itemId: string) =>
+    api.del<void>(`${companyBase(companyId)}/inventory/${itemId}`),
   move: (companyId: string, input: { item_id: string; to_project_id?: string | null; quantity: number; notes?: string }) =>
     api.post<InventoryMovement>(`${companyBase(companyId)}/inventory/movements`, input),
   listRelocations: (
@@ -142,7 +146,7 @@ export const inventoryApi = {
   ) => api.get<InventoryRelocationRequest[]>(`${companyBase(companyId)}/inventory/relocations`, filters, signal),
   requestRelocation: (
     companyId: string,
-    input: { inventory_item_id: string; to_project_id: string; assigned_user_id: string; notes?: string | null },
+    input: { inventory_item_id: string; to_project_id: string | null; assigned_user_id: string; notes?: string | null },
   ) => api.post<InventoryRelocationRequest>(`${companyBase(companyId)}/inventory/relocations`, input),
   startRelocation: (companyId: string, relocationId: string) =>
     api.post<InventoryRelocationRequest>(`${companyBase(companyId)}/inventory/relocations/${relocationId}/start`, {}),

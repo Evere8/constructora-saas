@@ -322,6 +322,168 @@ async def test_relocation_task_preserves_origin_until_assignee_completes_it(flow
 
 
 @pytest.mark.asyncio
+async def test_relocation_can_return_an_equipment_from_a_project_to_the_warehouse(flow):
+    f = flow
+    item = InventoryItem(
+        company_id=f.company.id,
+        code="HERR-DEPOSITO",
+        name="Amoladora para depósito",
+        item_type="tool",
+        unit="unidad",
+        quantity=1,
+        current_project_id=f.project.id,
+        status="assigned",
+    )
+    f.session.add(item)
+    f.session.commit()
+
+    requested = await f.client.post(
+        f.base + "/inventory/relocations",
+        json={
+            "inventory_item_id": item.id,
+            "to_project_id": None,
+            "assigned_user_id": f.user.id,
+        },
+    )
+    assert requested.status_code == 201, requested.text
+    relocation = requested.json()
+    assert relocation["from_project_id"] == f.project.id
+    assert relocation["to_project_id"] is None
+    assert relocation["to_project_name"] is None
+
+    assert (
+        await f.client.post(f.base + f"/inventory/relocations/{relocation['id']}/start")
+    ).status_code == 200
+    completed = await f.client.post(
+        f.base + f"/inventory/relocations/{relocation['id']}/complete"
+    )
+    assert completed.status_code == 200, completed.text
+    f.session.refresh(item)
+    assert item.current_project_id is None
+    assert item.status == "available"
+    movement = f.session.query(InventoryMovement).filter_by(item_id=item.id).one()
+    assert movement.from_project_id == f.project.id
+    assert movement.to_project_id is None
+
+
+@pytest.mark.asyncio
+async def test_task_can_assign_a_different_person_to_relocate_its_equipment(flow):
+    f = flow
+    transport_user = AppUser(
+        supabase_user_id=str(uuid4()),
+        email="transporte@example.invalid",
+    )
+    source = Project(company_id=f.company.id, name="Obra de origen")
+    f.session.add_all([transport_user, source])
+    f.session.flush()
+    f.session.add(
+        CompanyMembership(
+            company_id=f.company.id,
+            user_id=transport_user.id,
+            role="transport",
+        )
+    )
+    item = InventoryItem(
+        company_id=f.company.id,
+        code="HERR-RESPONSABLE",
+        name="Taladro con transportista",
+        item_type="tool",
+        unit="unidad",
+        quantity=1,
+        current_project_id=source.id,
+        status="assigned",
+    )
+    f.session.add(item)
+    f.session.commit()
+
+    response = await f.client.post(
+        f.base + f"/projects/{f.project.id}/tasks",
+        json={
+            "title": "Perforación con taladro",
+            "assigned_user_id": f.user.id,
+            "relocation_assignee_id": transport_user.id,
+            "inventory_item_ids": [item.id],
+        },
+    )
+    assert response.status_code == 201, response.text
+    task = response.json()
+    assert task["assigned_user_id"] == f.user.id
+    relocations = await f.client.get(
+        f.base + "/inventory/relocations", params={"task_id": task["id"]}
+    )
+    assert relocations.status_code == 200, relocations.text
+    assert relocations.json()[0]["assigned_user_id"] == transport_user.id
+
+
+@pytest.mark.asyncio
+async def test_inventory_delete_retires_item_and_keeps_it_out_of_operational_catalog(flow):
+    f = flow
+    item = InventoryItem(
+        company_id=f.company.id,
+        code="HERR-RETIRAR",
+        name="Herramienta de prueba",
+        item_type="tool",
+        unit="unidad",
+        quantity=1,
+    )
+    f.session.add(item)
+    f.session.commit()
+
+    deleted = await f.client.delete(f.base + f"/inventory/{item.id}")
+    assert deleted.status_code == 204, deleted.text
+    assert item.status == "retired"
+    assert (await f.client.get(f.base + "/inventory")).json() == []
+    archived = await f.client.get(f.base + "/inventory", params={"include_retired": "true"})
+    assert archived.status_code == 200
+    assert archived.json()[0]["id"] == item.id
+
+
+@pytest.mark.asyncio
+async def test_task_delete_is_available_to_owner_and_engineer_only(flow):
+    f = flow
+
+    owner_task = Task(
+        company_id=f.company.id,
+        project_id=f.project.id,
+        title="Tarea del propietario",
+        task_type="work",
+        created_by_user_id=f.user.id,
+    )
+    f.session.add(owner_task)
+    f.session.commit()
+    assert (
+        await f.client.delete(f.base + f"/projects/{f.project.id}/tasks/{owner_task.id}")
+    ).status_code == 204
+
+    engineer_task = Task(
+        company_id=f.company.id,
+        project_id=f.project.id,
+        title="Tarea del ingeniero",
+        task_type="work",
+        created_by_user_id=f.user.id,
+    )
+    f.session.add(engineer_task)
+    f.session.commit()
+    f.actor.role = "engineer"
+    assert (
+        await f.client.delete(f.base + f"/projects/{f.project.id}/tasks/{engineer_task.id}")
+    ).status_code == 204
+
+    admin_task = Task(
+        company_id=f.company.id,
+        project_id=f.project.id,
+        title="Tarea protegida",
+        task_type="work",
+        created_by_user_id=f.user.id,
+    )
+    f.session.add(admin_task)
+    f.session.commit()
+    f.actor.role = "admin"
+    denied = await f.client.delete(f.base + f"/projects/{f.project.id}/tasks/{admin_task.id}")
+    assert denied.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_relocation_rejects_an_inactive_destination(flow):
     f = flow
     destination = Project(company_id=f.company.id, name="Obra inactiva", status="inactive")

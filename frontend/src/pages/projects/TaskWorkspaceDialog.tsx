@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Camera, ClipboardCheck, Pencil, Plus } from 'lucide-react';
+import { Camera, ClipboardCheck, Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useCan, useCanAssigned } from '@/auth/useCan';
 import { EmptyState, ErrorState, LoadingState } from '@/components/common/states';
@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { checklistApi } from '@/lib/api/checklist';
+import { projectsApi } from '@/lib/api/projects';
 import {
   CHECKLIST_STATUS,
   CHECKLIST_STATUS_OPTIONS,
@@ -53,6 +54,7 @@ export function TaskWorkspaceDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const canEdit = useCan('checklist.edit');
+  const canDeleteTask = useCan('tasks.delete');
   const canChangeStatus = useCanAssigned('checklist.status');
   const queryClient = useQueryClient();
   const [formOpen, setFormOpen] = useState(false);
@@ -82,6 +84,24 @@ export function TaskWorkspaceDialog({
       void queryClient.invalidateQueries({ queryKey: ['reports-advanced', companyId] });
     },
     onError: () => toast.error('No se pudo actualizar el estado'),
+  });
+  const deleteTaskMutation = useMutation({
+    mutationFn: () => projectsApi.deleteTask(companyId, projectId, task.id),
+    onSuccess: () => {
+      toast.success('Tarea eliminada por completo');
+      void queryClient.invalidateQueries({ queryKey: ['tasks', companyId] });
+      void queryClient.invalidateQueries({ queryKey: ['my-work-tasks', companyId] });
+      void queryClient.invalidateQueries({ queryKey: ['my-tasks-summary', companyId] });
+      void queryClient.invalidateQueries({ queryKey: ['checklist', companyId, projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['checklist-progress', companyId, projectId] });
+      void queryClient.invalidateQueries({ queryKey: ['task-requirements', companyId, projectId, task.id] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory-relocations', companyId] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory', companyId] });
+      void queryClient.invalidateQueries({ queryKey: ['notifications', companyId] });
+      void queryClient.invalidateQueries({ queryKey: ['reports-advanced', companyId] });
+      onOpenChange(false);
+    },
+    onError: (error: Error) => toast.error(error.message || 'No se pudo eliminar la tarea'),
   });
 
   const items = useMemo(() => query.data?.items ?? [], [query.data?.items]);
@@ -126,6 +146,7 @@ export function TaskWorkspaceDialog({
             {task.location_text ? <Badge variant="outline">{task.location_text}</Badge> : null}
           </div>
           {task.description ? <p className="text-sm text-muted-foreground">{task.description}</p> : null}
+          {canDeleteTask ? <div className="flex justify-end"><Button type="button" variant="outline" size="sm" className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={deleteTaskMutation.isPending} onClick={() => { if (window.confirm(`¿Eliminar la tarea "${task.title}"? También se eliminarán sus controles, recursos y evidencias.`)) deleteTaskMutation.mutate(); }}><Trash2 className="h-4 w-4" /> Eliminar tarea</Button></div> : null}
 
           <Card>
             <CardContent className="space-y-2 p-4">

@@ -249,7 +249,7 @@ async def collect_alert_candidates(
     for relocation, item, task, from_name, to_name in relocation_rows:
         is_pending = relocation.status == "pending"
         origin = from_name or "Depósito"
-        destination = to_name or "Obra destino"
+        destination = to_name or "Depósito"
         candidates.append(
             AlertCandidate(
                 dedupe_key=f"inventory_relocation:{relocation.id}",
@@ -259,7 +259,7 @@ async def collect_alert_candidates(
                 message=(
                     f"{item.code} · {item.name} · {origin} → {destination} · {task.title}"
                 ),
-                project_id=relocation.to_project_id,
+                project_id=relocation.to_project_id or relocation.from_project_id,
                 task_id=relocation.task_id,
                 assigned_user_id=relocation.assigned_user_id,
                 due_at=task.planned_start_at or task.due_at,

@@ -57,6 +57,9 @@ router = APIRouter()
 
 PROJECT_EDITOR_ROLES = {"platform_admin", "owner", "admin", "engineer"}
 WORK_EDITOR_ROLES = PROJECT_EDITOR_ROLES | {"supervisor"}
+# Deleting a task also removes its controls/evidence and can cancel a pending
+# relocation.  Keep that irreversible action with the owner or engineer.
+TASK_DELETE_ROLES = {"platform_admin", "owner", "engineer"}
 SELF_TASK_STATUSES = {
     "received",
     "in_progress",
@@ -803,7 +806,9 @@ async def create_task(
     await require_rubro(db, project_id, payload.rubro_id)
     await require_assignee(db, access.company_id, payload.assigned_user_id)
     template = await require_task_template(db, access.company_id, payload.template_id)
-    values = payload.model_dump(exclude={"template_id", "inventory_item_ids"})
+    values = payload.model_dump(
+        exclude={"template_id", "inventory_item_ids", "relocation_assignee_id"}
+    )
     task = Task(
         company_id=access.company_id,
         project_id=project_id,
@@ -879,9 +884,15 @@ async def create_task(
         resolved_resources.append((item, description, quantity, unit))
         relocation_required = relocation_required or needs_relocation(item, project_id)
     if relocation_required:
-        await require_assignee(db, access.company_id, task.assigned_user_id)
+        await require_assignee(db, access.company_id, payload.relocation_assignee_id)
+        if payload.relocation_assignee_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Seleccione el responsable que realizará la reubicación del equipo",
+            )
 
     requirements: list[TaskMaterialRequirement] = []
+    relocations: list[tuple[InventoryRelocationRequest, InventoryItem]] = []
     for item, description, quantity, unit in resolved_resources:
         requirement = TaskMaterialRequirement(
             task_id=task.id,
@@ -895,15 +906,18 @@ async def create_task(
         )
         db.add(requirement)
         requirements.append(requirement)
-        await create_relocation_if_needed(
+        relocation = await create_relocation_if_needed(
             db,
             company_id=access.company_id,
             project_id=project_id,
             task_id=task.id,
             item=item,
-            assignee_id=task.assigned_user_id,
+            assignee_id=payload.relocation_assignee_id,
             requested_by_user_id=access.user.id,
         )
+        if relocation is not None:
+            assert item is not None
+            relocations.append((relocation, item))
 
     for item in template_checklist:
         db.add(
@@ -942,6 +956,21 @@ async def create_task(
             "actions": ["received", "in_progress"],
         },
     )
+    for relocation, item in relocations:
+        if relocation.assigned_user_id == task.assigned_user_id:
+            continue
+        await send_push_to_user(
+            db,
+            access.company_id,
+            relocation.assigned_user_id,
+            {
+                "title": "Traslado requerido",
+                "body": f"{task.title}: trasladar {item.name}",
+                "url": "/tareas",
+                "task_id": task.id,
+                "project_id": task.project_id,
+            },
+        )
     await db.refresh(task)
     return task
 
@@ -1059,7 +1088,7 @@ async def delete_task(
 ) -> Response:
     """Delete a task and its dependent controls, keeping no uploaded evidence behind."""
 
-    require_role(access, WORK_EDITOR_ROLES)
+    require_role(access, TASK_DELETE_ROLES)
     await require_project(db, access.company_id, project_id)
     task = await require_task(db, access.company_id, project_id, task_id)
     active_relocations = (

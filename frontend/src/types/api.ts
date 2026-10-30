@@ -574,7 +574,7 @@ export interface InventoryRelocationRequest {
   task_id: string;
   inventory_item_id: string;
   from_project_id?: string | null;
-  to_project_id: string;
+  to_project_id?: string | null;
   assigned_user_id?: string | null;
   requested_by_user_id: string;
   status: InventoryRelocationStatus;

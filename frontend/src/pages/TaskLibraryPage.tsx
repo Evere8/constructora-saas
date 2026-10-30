@@ -14,6 +14,7 @@ import { TaskFormDialog } from '@/pages/projects/TaskFormDialog';
 import { DailyActivitiesBoard } from '@/pages/DailyActivitiesBoard';
 import { AssignedTasks } from '@/pages/AssignedTasks';
 import { TaskOverview } from '@/pages/TaskOverview';
+import { RelocationRequestsCard } from '@/components/inventory/RelocationRequestsCard';
 
 const NONE = 'none';
 
@@ -47,6 +48,7 @@ export function TaskLibraryPage() {
   return <div className="space-y-6">
     <div><h1 className="text-2xl font-semibold">Tareas / actividades</h1><p className="text-sm text-muted-foreground">Cada responsable encuentra aquí lo asignado, actualiza su estado y recibe los avisos correspondientes.</p></div>
     <AssignedTasks key={`assigned-${companyId}`} companyId={companyId} />
+    <RelocationRequestsCard companyId={companyId} title="Traslados de equipos asignados" />
     {canPlanActivities ? <><TaskOverview companyId={companyId} /><DailyActivitiesBoard key={companyId} /></> : null}
 
     {canEditTasks ? <Card className="surface-glass border-primary/25"><CardHeader><CardTitle className="text-base">Nueva tarea de obra</CardTitle><p className="text-sm text-muted-foreground">Selecciona la obra y luego el sector; los niveles disponibles aparecerán dentro del formulario.</p></CardHeader><CardContent className="flex flex-col gap-3 sm:flex-row sm:items-end"><div className="min-w-0 flex-1 space-y-1.5"><Label>Obra</Label><Select value={selectedProjectId} onValueChange={setSelectedProjectId}><SelectTrigger><SelectValue placeholder="Seleccionar obra" /></SelectTrigger><SelectContent><SelectItem value={NONE}>Seleccionar obra</SelectItem>{projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}{project.code ? ` · ${project.code}` : ''}</SelectItem>)}</SelectContent></Select></div><Button disabled={!selectedProject || selectedProjectLevelsQuery.isLoading || selectedProjectRubrosQuery.isLoading} onClick={() => setTaskDialogOpen(true)}><Plus className="h-4 w-4" /> Abrir tarea</Button></CardContent></Card> : null}

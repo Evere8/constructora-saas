@@ -51,6 +51,7 @@ export function TareasTab({
   rubroId?: string | null;
 }) {
   const canEdit = useCan('tasks.edit');
+  const canDelete = useCan('tasks.delete');
   const canChangeStatus = useCanAssigned('tasks.status');
   const queryClient = useQueryClient();
 
@@ -264,7 +265,7 @@ export function TareasTab({
                               <Button variant="ghost" size="sm" onClick={() => openEdit(task)}>
                                 <Pencil className="h-4 w-4" /> Editar
                               </Button>
-                              <Button
+                              {canDelete ? <Button
                                 variant="ghost"
                                 size="sm"
                                 disabled={deleteMutation.isPending}
@@ -275,7 +276,7 @@ export function TareasTab({
                                 }}
                               >
                                 <Trash2 className="h-4 w-4" /> Eliminar
-                              </Button>
+                              </Button> : null}
                             </>
                           ) : null}
                         </div>

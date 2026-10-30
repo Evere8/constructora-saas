@@ -124,6 +124,7 @@ export interface SectorInput {
 export interface TaskInput {
   template_id?: string | null;
   inventory_item_ids?: string[];
+  relocation_assignee_id?: string | null;
   title: string;
   description?: string | null;
   task_type: TaskType;

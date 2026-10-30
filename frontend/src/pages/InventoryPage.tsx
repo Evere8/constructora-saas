@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
-import { History, PackagePlus, Send, Wrench } from 'lucide-react';
+import { History, PackagePlus, Pencil, Send, Trash2, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { useCan } from '@/auth/useCan';
@@ -20,6 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import type { InventoryItem, Project } from '@/types/api';
 
 const schema = z.object({
   code: z.string().min(1, 'Ingrese un código').max(80),
@@ -31,6 +32,89 @@ const schema = z.object({
 });
 type FormValues = z.infer<typeof schema>;
 
+function InventoryEditDialog({
+  item,
+  open,
+  pending,
+  onOpenChange,
+  onSave,
+}: {
+  item: InventoryItem;
+  open: boolean;
+  pending: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSave: (values: FormValues) => void;
+}) {
+  const form = useForm<FormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: {
+      code: item.code,
+      name: item.name,
+      item_type: item.item_type,
+      unit: item.unit,
+      serial_number: item.serial_number ?? '',
+      quantity: Number(item.quantity),
+    },
+  });
+  const itemType = form.watch('item_type');
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (!pending) onOpenChange(nextOpen); }}>
+      <DialogContent className="max-h-[92vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Editar herramienta o material</DialogTitle>
+          <DialogDescription>La ubicación se cambia únicamente desde el tablero de traslados para conservar el historial.</DialogDescription>
+        </DialogHeader>
+        <form className="space-y-3" onSubmit={form.handleSubmit(onSave)} noValidate>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1"><Label htmlFor="edit-inventory-code">Código</Label><Input id="edit-inventory-code" {...form.register('code')} />{form.formState.errors.code ? <p className="text-xs text-destructive">{form.formState.errors.code.message}</p> : null}</div>
+            <div className="space-y-1"><Label htmlFor="edit-inventory-name">Nombre</Label><Input id="edit-inventory-name" {...form.register('name')} />{form.formState.errors.name ? <p className="text-xs text-destructive">{form.formState.errors.name.message}</p> : null}</div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1"><Label>Tipo</Label><Select value={itemType} onValueChange={(value) => form.setValue('item_type', value as FormValues['item_type'])}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="tool">Herramienta</SelectItem><SelectItem value="machine">Máquina</SelectItem><SelectItem value="material">Material</SelectItem></SelectContent></Select></div>
+            <div className="space-y-1"><Label htmlFor="edit-inventory-unit">Unidad</Label><Input id="edit-inventory-unit" {...form.register('unit')} /></div>
+            <div className="space-y-1"><Label htmlFor="edit-inventory-serial">Serie</Label><Input id="edit-inventory-serial" {...form.register('serial_number')} /></div>
+            <div className="space-y-1"><Label htmlFor="edit-inventory-quantity">Cantidad</Label><Input id="edit-inventory-quantity" type="number" min="0.001" step="0.001" {...form.register('quantity')} /></div>
+          </div>
+          <DialogFooter><Button type="button" variant="outline" disabled={pending} onClick={() => onOpenChange(false)}>Cancelar</Button><Button type="submit" disabled={pending}>{pending ? 'Guardando…' : 'Guardar cambios'}</Button></DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function InventoryCatalog({
+  items,
+  projects,
+  canEdit,
+  removingId,
+  onEdit,
+  onRemove,
+}: {
+  items: InventoryItem[];
+  projects: Project[];
+  canEdit: boolean;
+  removingId: string | null;
+  onEdit: (item: InventoryItem) => void;
+  onRemove: (item: InventoryItem) => void;
+}) {
+  const projectNames = useMemo(() => new Map(projects.map((project) => [project.id, project.name])), [projects]);
+  if (!items.length) return null;
+
+  return (
+    <Card>
+      <CardContent className="space-y-3 p-4">
+        <div><h2 className="font-semibold">Herramientas y materiales disponibles</h2><p className="text-xs text-muted-foreground">Edita los datos o elimina un elemento del inventario operativo. El historial de movimientos se conserva para auditoría.</p></div>
+        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+          {items.map((item) => <div key={item.id} className="flex min-w-0 items-center justify-between gap-3 rounded-lg border p-3">
+            <div className="min-w-0"><p className="truncate text-sm font-semibold">{item.name}</p><p className="text-xs text-muted-foreground">{item.code} · {item.quantity} {item.unit}{item.serial_number ? ` · ${item.serial_number}` : ''}</p><p className="mt-1 text-xs text-muted-foreground">{item.current_project_id ? projectNames.get(item.current_project_id) ?? 'Obra no disponible' : 'Depósito'} · {item.item_type === 'tool' ? 'Herramienta' : item.item_type === 'machine' ? 'Máquina' : 'Material'}</p></div>
+            {canEdit ? <div className="flex shrink-0 gap-1"><Button type="button" variant="ghost" size="icon" aria-label={`Editar ${item.name} ${item.code}`} onClick={() => onEdit(item)}><Pencil className="h-4 w-4" /></Button><Button type="button" variant="ghost" size="icon" aria-label={`Eliminar ${item.name} ${item.code}`} disabled={removingId === item.id} onClick={() => onRemove(item)}><Trash2 className="h-4 w-4 text-destructive" /></Button></div> : null}
+          </div>)}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 
 export function InventoryPage() {
@@ -39,7 +123,7 @@ export function InventoryPage() {
   const canEdit = useCan('inventory.edit');
   const canMove = useCan('inventory.move');
   const queryClient = useQueryClient();
-  const [relocationDraft, setRelocationDraft] = useState<{ itemId: string; toProjectId: string } | null>(null);
+  const [relocationDraft, setRelocationDraft] = useState<{ itemId: string; toProjectId: string | null } | null>(null);
   const [relocationAssignee, setRelocationAssignee] = useState('');
   const [relocationNote, setRelocationNote] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -50,6 +134,7 @@ export function InventoryPage() {
   const [requestProject, setRequestProject] = useState('warehouse');
   const [requestQuantity, setRequestQuantity] = useState(1);
   const [requestNote, setRequestNote] = useState('');
+  const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const form = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: { item_type: 'tool', unit: 'unidad', quantity: 1 } });
   const query = useQuery({ queryKey: ['inventory', companyId], queryFn: ({ signal }) => inventoryApi.list(companyId, signal), enabled: Boolean(companyId) });
   const projectsQuery = useQuery({ queryKey: ['projects', companyId, 'all'], queryFn: ({ signal }) => projectsApi.listAll(companyId, signal), enabled: Boolean(companyId) });
@@ -58,6 +143,36 @@ export function InventoryPage() {
   const createMutation = useMutation({
     mutationFn: (values: FormValues) => inventoryApi.create(companyId, values),
     onSuccess: () => { toast.success('Elemento registrado'); form.reset({ item_type: 'tool', unit: 'unidad', quantity: 1, code: '', name: '', serial_number: '' }); void queryClient.invalidateQueries({ queryKey: ['inventory', companyId] }); },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  const updateMutation = useMutation({
+    mutationFn: (values: FormValues) => {
+      if (!editingItem) throw new Error('Selecciona el elemento a editar');
+      return inventoryApi.update(companyId, editingItem.id, {
+        code: values.code.trim(),
+        name: values.name.trim(),
+        item_type: values.item_type,
+        unit: values.unit.trim(),
+        serial_number: values.serial_number?.trim() || null,
+        quantity: values.quantity,
+      });
+    },
+    onSuccess: () => {
+      toast.success('Elemento actualizado');
+      setEditingItem(null);
+      void queryClient.invalidateQueries({ queryKey: ['inventory', companyId] });
+      void queryClient.invalidateQueries({ queryKey: ['task-requirements', companyId] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  const deleteMutation = useMutation({
+    mutationFn: (itemId: string) => inventoryApi.remove(companyId, itemId),
+    onSuccess: () => {
+      toast.success('Elemento eliminado del inventario operativo');
+      void queryClient.invalidateQueries({ queryKey: ['inventory', companyId] });
+      void queryClient.invalidateQueries({ queryKey: ['task-requirements', companyId] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory-relocations', companyId] });
+    },
     onError: (error: Error) => toast.error(error.message),
   });
   const latestDayQuery = useQuery({ queryKey: ['inventory-days', companyId, 0], queryFn: ({ signal }) => dailyOperationsApi.inventoryDays(companyId, signal, 0), enabled: Boolean(companyId) });
@@ -114,7 +229,9 @@ export function InventoryPage() {
   const movable = (query.data ?? []);
   const latest = latestDayQuery.data?.find((day) => day.snapshot_date === operationalToday());
   const relocationItem = movable.find((item) => item.id === relocationDraft?.itemId);
-  const relocationProject = allProjects.find((project) => project.id === relocationDraft?.toProjectId);
+  const relocationProject = relocationDraft?.toProjectId
+    ? allProjects.find((project) => project.id === relocationDraft.toProjectId)
+    : null;
   const members = (membersQuery.data ?? []).filter((member) => member.status === 'active' && member.role !== 'viewer');
 
   return <div className="space-y-6">
@@ -123,6 +240,7 @@ export function InventoryPage() {
     {query.isLoading || projectsQuery.isLoading || relocationsQuery.isLoading ? <LoadingState label="Cargando inventario..." /> : query.isError ? <ErrorState error={query.error} onRetry={() => void query.refetch()} /> : movable.length ? <InventoryLocationBoard items={movable} projects={allProjects} relocations={relocationsQuery.data ?? []} canMove={canMove && !registerMutation.isPending} onRequestMove={(itemId, toProjectId) => { setRelocationDraft({ itemId, toProjectId }); setRelocationAssignee(''); setRelocationNote(''); }} /> : <EmptyState title="Sin herramientas" description="Registra la primera herramienta o máquina." icon={<Wrench className="h-6 w-6" />} />}
     </section>
     <RelocationRequestsCard companyId={companyId} />
+    <InventoryCatalog items={movable} projects={allProjects} canEdit={canEdit} removingId={deleteMutation.isPending ? deleteMutation.variables ?? null : null} onEdit={setEditingItem} onRemove={(item) => { if (window.confirm(`¿Eliminar "${item.name}" del inventario operativo? El historial registrado se conserva.`)) deleteMutation.mutate(item.id); }} />
     {canEdit ? <Card><CardContent className="p-4"><div className="mb-3"><h2 className="font-semibold">Agregar nueva herramienta o material</h2><p className="text-xs text-muted-foreground">El alta queda debajo del tablero de ubicaciones para mantener primero la operación diaria.</p></div><form className="grid gap-3 sm:grid-cols-2 lg:grid-cols-8 lg:items-end" onSubmit={form.handleSubmit((values) => createMutation.mutate(values))}>
       <div className="space-y-1"><Label htmlFor="inventory-code">Código</Label><Input id="inventory-code" {...form.register('code')} />{form.formState.errors.code ? <p className="text-xs text-destructive">{form.formState.errors.code.message}</p> : null}</div>
       <div className="space-y-1 lg:col-span-2"><Label htmlFor="inventory-name">Nombre</Label><Input id="inventory-name" {...form.register('name')} /></div>
@@ -138,10 +256,11 @@ export function InventoryPage() {
     {historyOpen ? <Card><CardContent className="space-y-3 p-4"><h3 className="font-semibold">Historial de movimientos por fecha</h3>{daysQuery.isError ? <ErrorState error={daysQuery.error} onRetry={() => void daysQuery.refetch()} /> : null}<div className="flex gap-2"><Button variant="outline" disabled={!historyOffset || daysQuery.isFetching} onClick={() => setHistoryOffset(Math.max(0, historyOffset - 30))}>Más recientes</Button><Button variant="outline" disabled={daysQuery.isFetching || (daysQuery.data?.length ?? 0) < 30} onClick={() => setHistoryOffset(historyOffset + 30)}>Más antiguos</Button></div>{daysQuery.data?.length ? daysQuery.data.map((day) => <details key={day.id} className="rounded-lg border p-3"><summary className="cursor-pointer text-sm font-medium">{day.snapshot_date} · {day.items.length} herramientas · {new Date(day.registered_at).toLocaleTimeString('es-PY')}</summary><div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{day.items.map((item) => <p key={item.item_id} className="text-sm">{item.name} ({item.code}) → {allProjects.find((project) => project.id === item.project_id)?.name ?? (item.project_id ? 'Obra no disponible' : 'Depósito')}</p>)}</div></details>) : <p className="text-sm text-muted-foreground">No hay registros diarios todavía.</p>}</CardContent></Card> : null}
     <Dialog open={Boolean(relocationDraft)} onOpenChange={(open) => { if (!open && !relocationMutation.isPending) setRelocationDraft(null); }}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Asignar traslado</DialogTitle><DialogDescription>{relocationItem?.name ?? 'Herramienta'} seguirá en su ubicación actual hasta que el responsable confirme la llegada a {relocationProject?.name ?? 'la obra'}.</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>Asignar traslado</DialogTitle><DialogDescription>{relocationItem?.name ?? 'Herramienta'} seguirá en su ubicación actual hasta que el responsable confirme la llegada a {relocationProject?.name ?? 'el Depósito'}.</DialogDescription></DialogHeader>
         <div className="space-y-3"><div><Label>Responsable</Label><Select value={relocationAssignee} onValueChange={setRelocationAssignee}><SelectTrigger><SelectValue placeholder="Seleccionar personal" /></SelectTrigger><SelectContent>{members.map((member) => <SelectItem key={member.user_id} value={member.user_id}>{member.full_name || member.email} · {member.role}</SelectItem>)}</SelectContent></Select></div><div><Label htmlFor="relocation-note">Indicaciones</Label><Input id="relocation-note" value={relocationNote} onChange={(event) => setRelocationNote(event.target.value)} placeholder="Opcional" /></div></div>
         <DialogFooter><Button variant="outline" disabled={relocationMutation.isPending} onClick={() => setRelocationDraft(null)}>Cancelar</Button><Button disabled={!relocationAssignee || relocationMutation.isPending} onClick={() => relocationMutation.mutate()}>Crear tarea de traslado</Button></DialogFooter>
       </DialogContent>
     </Dialog>
+    {editingItem ? <InventoryEditDialog key={editingItem.id} item={editingItem} open={Boolean(editingItem)} pending={updateMutation.isPending} onOpenChange={(open) => { if (!open) setEditingItem(null); }} onSave={(values) => updateMutation.mutate(values)} /> : null}
   </div>;
 }

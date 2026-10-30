@@ -682,8 +682,11 @@ class InventoryRelocationRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     from_project_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True
     )
-    to_project_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    # ``None`` denotes the warehouse.  A relocation may legitimately return a
+    # tool from a project to the warehouse, so the destination cannot be
+    # mandatory here.
+    to_project_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True
     )
     assigned_user_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("app_users.id", ondelete="SET NULL"), nullable=True

@@ -60,6 +60,22 @@ def test_retry_does_not_silently_accept_an_unexpected_table():
             ddl.create_table("example", sa.Column("id", sa.Integer), sa.Column("missing", sa.Text))
 
 
+def test_nullable_change_is_safe_to_retry_for_warehouse_relocations():
+    output = StringIO()
+    context = MigrationContext.configure(
+        dialect_name="mysql",
+        opts={"as_sql": True, "output_buffer": output},
+    )
+    ddl = ResumableDDL(Operations(context))
+    ddl.inspector = lambda: SimpleNamespace(
+        get_columns=lambda _: [
+            {"name": "to_project_id", "type": sa.String(36), "nullable": False},
+        ]
+    )
+    ddl.set_nullable("inventory_relocation_requests", "to_project_id", True)
+    assert "MODIFY to_project_id VARCHAR(36) NULL" in output.getvalue()
+
+
 def test_task_status_check_is_replaced_once_and_supports_assignee_workflow():
     output = StringIO()
     context = MigrationContext.configure(

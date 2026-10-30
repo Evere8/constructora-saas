@@ -159,7 +159,14 @@ async def fetch_relocation_rows(
     if relocation_id:
         filters.append(InventoryRelocationRequest.id == relocation_id)
     if project_id:
-        filters.append(InventoryRelocationRequest.to_project_id == project_id)
+        # Both the origin and destination project need to see an active move.
+        # This also keeps a return-to-warehouse visible in its origin project.
+        filters.append(
+            or_(
+                InventoryRelocationRequest.to_project_id == project_id,
+                InventoryRelocationRequest.from_project_id == project_id,
+            )
+        )
     if task_id:
         filters.append(InventoryRelocationRequest.task_id == task_id)
     if active_only:
@@ -250,12 +257,21 @@ async def request_inventory_relocation(
         payload.inventory_item_id,
         for_update=True,
     )
-    destination = await require_project(db, access.company_id, payload.to_project_id)
-    if destination.status != "active":
+    destination = (
+        await require_project(db, access.company_id, payload.to_project_id)
+        if payload.to_project_id
+        else None
+    )
+    if destination is not None and destination.status != "active":
         raise HTTPException(status_code=422, detail="El destino debe ser una obra activa")
     await require_assignee(db, access.company_id, payload.assigned_user_id)
-    if item.current_project_id == destination.id:
-        raise HTTPException(status_code=422, detail="La herramienta ya está en esa obra")
+    if item.current_project_id == (destination.id if destination else None):
+        raise HTTPException(
+            status_code=422,
+            detail="La herramienta ya se encuentra en el Depósito"
+            if destination is None
+            else "La herramienta ya está en esa obra",
+        )
     if item.status in {"maintenance", "retired", "relocation_pending", "in_transit"}:
         raise HTTPException(
             status_code=409,
@@ -270,19 +286,29 @@ async def request_inventory_relocation(
     )
     if existing:
         raise HTTPException(status_code=409, detail="La herramienta ya tiene un traslado activo")
+    # Tasks always belong to a project.  For a return to the warehouse, retain
+    # the origin project as the task context while the actual destination is
+    # represented by a null relocation destination.
+    task_project_id = destination.id if destination is not None else item.current_project_id
+    if task_project_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail="La herramienta ya se encuentra en el Depósito",
+        )
+    destination_name = destination.name if destination is not None else "Depósito"
     task = Task(
         company_id=access.company_id,
-        project_id=destination.id,
+        project_id=task_project_id,
         task_type="transport",
-        title=f"Reubicar {item.name} a {destination.name}",
+        title=f"Reubicar {item.name} a {destination_name}",
         description=(
             f"Trasladar {item.code} · {item.name} desde su ubicación actual a "
-            f"{destination.name}. La ubicación cambia al marcar la tarea como terminada."
+            f"{destination_name}. La ubicación cambia al marcar la tarea como terminada."
         ),
         status="pending",
         priority="normal",
         assigned_user_id=payload.assigned_user_id,
-        location_text=destination.name,
+        location_text=destination_name,
         created_by_user_id=access.user.id,
     )
     db.add(task)
@@ -292,7 +318,7 @@ async def request_inventory_relocation(
         task_id=task.id,
         inventory_item_id=item.id,
         from_project_id=item.current_project_id,
-        to_project_id=destination.id,
+        to_project_id=destination.id if destination is not None else None,
         assigned_user_id=payload.assigned_user_id,
         requested_by_user_id=access.user.id,
         status="pending",
@@ -308,7 +334,11 @@ async def request_inventory_relocation(
         "inventory.relocation.requested",
         "inventory_relocation_request",
         relocation.id,
-        {"item_id": item.id, "task_id": task.id, "to_project_id": destination.id},
+        {
+            "item_id": item.id,
+            "task_id": task.id,
+            "to_project_id": destination.id if destination is not None else None,
+        },
     )
     await commit_or_conflict(db, "No se pudo solicitar la reubicación")
     await send_push_to_user(
@@ -335,12 +365,17 @@ async def list_inventory(
     item_status: str | None = Query(default=None, alias="status"),
     project_id: str | None = Query(default=None),
     search: str | None = Query(default=None, max_length=120),
+    include_retired: bool = Query(default=False),
 ) -> list[InventoryItem]:
     filters = [InventoryItem.company_id == access.company_id]
     if item_type:
         filters.append(InventoryItem.item_type == item_type)
     if item_status:
         filters.append(InventoryItem.status == item_status)
+    elif not include_retired:
+        # A deleted item is retired instead of destroying movement and task
+        # history.  Normal operational views must not keep showing it.
+        filters.append(InventoryItem.status != "retired")
     if project_id:
         filters.append(InventoryItem.current_project_id == project_id)
     if search and search.strip():
@@ -415,10 +450,49 @@ async def update_inventory_item(
             )
     for field, value in changes.items():
         setattr(item, field, value)
+    await refresh_linked_requirement_availability(db, access.company_id)
     add_activity(db, access, "inventory.updated", "inventory_item", item.id, changes)
     await commit_or_conflict(db, "No fue posible actualizar el elemento")
     await db.refresh(item)
     return item
+
+
+@router.delete("/inventory/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def retire_inventory_item(
+    item_id: str,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+):
+    """Remove an item from available inventory without erasing audit history."""
+
+    require_role(access, INVENTORY_EDITOR_ROLES)
+    item = await require_item(db, access.company_id, item_id, for_update=True)
+    active_relocation = await db.scalar(
+        select(InventoryRelocationRequest.id).where(
+            InventoryRelocationRequest.company_id == access.company_id,
+            InventoryRelocationRequest.inventory_item_id == item.id,
+            InventoryRelocationRequest.status.in_(ACTIVE_RELOCATION_STATUSES),
+        )
+    )
+    if active_relocation:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No se puede eliminar una herramienta con un traslado activo",
+        )
+    previous_project_id = item.current_project_id
+    item.status = "retired"
+    item.current_project_id = None
+    await refresh_linked_requirement_availability(db, access.company_id)
+    add_activity(
+        db,
+        access,
+        "inventory.retired",
+        "inventory_item",
+        item.id,
+        {"code": item.code, "name": item.name, "previous_project_id": previous_project_id},
+    )
+    await commit_or_conflict(db, "No fue posible eliminar el elemento")
+    return None
 
 
 @router.get("/inventory/movements", response_model=list[InventoryMovementResponse])

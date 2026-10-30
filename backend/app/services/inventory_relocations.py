@@ -82,7 +82,7 @@ async def complete_relocation(
     relocation.status = "completed"
     relocation.completed_at = current
     item.current_project_id = relocation.to_project_id
-    item.status = "assigned"
+    item.status = "assigned" if relocation.to_project_id else "available"
     if task.task_type == "transport":
         task.status = "completed"
         task.custom_status_label = None

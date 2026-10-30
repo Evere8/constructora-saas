@@ -117,7 +117,9 @@ class InventoryItemCreate(BaseModel):
 
 
 class InventoryItemPatch(BaseModel):
+    code: str | None = Field(default=None, min_length=1, max_length=80)
     name: str | None = Field(default=None, min_length=2, max_length=180)
+    item_type: ItemType | None = None
     unit: str | None = Field(default=None, min_length=1, max_length=30)
     serial_number: str | None = Field(default=None, max_length=120)
     status: InventoryStatus | None = None
@@ -176,7 +178,7 @@ class InventoryRelocationRequestResponse(BaseModel):
     task_id: str
     inventory_item_id: str
     from_project_id: str | None
-    to_project_id: str
+    to_project_id: str | None
     assigned_user_id: str | None
     requested_by_user_id: str
     status: RelocationStatus
@@ -196,7 +198,8 @@ class InventoryRelocationRequestResponse(BaseModel):
 
 class InventoryRelocationCreate(BaseModel):
     inventory_item_id: str = Field(min_length=36, max_length=36)
-    to_project_id: str = Field(min_length=36, max_length=36)
+    # A null destination is the company warehouse (Depósito).
+    to_project_id: str | None = Field(default=None, min_length=36, max_length=36)
     assigned_user_id: str = Field(min_length=36, max_length=36)
     notes: str | None = Field(default=None, max_length=3000)
 

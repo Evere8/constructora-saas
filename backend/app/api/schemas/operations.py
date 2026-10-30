@@ -180,6 +180,10 @@ class SectorResponse(BaseModel):
 class TaskCreate(BaseModel):
     template_id: str | None = Field(default=None, min_length=36, max_length=36)
     inventory_item_ids: list[str] = Field(default_factory=list, max_length=60)
+    # This only applies to automatic equipment relocations created together
+    # with the task.  It is intentionally not the task assignee: the person
+    # doing the work and the person moving the equipment may be different.
+    relocation_assignee_id: str | None = Field(default=None, min_length=36, max_length=36)
     level_id: str | None = Field(default=None, min_length=36, max_length=36)
     rubro_id: str | None = Field(default=None, min_length=36, max_length=36)
     task_type: TaskType = "work"
