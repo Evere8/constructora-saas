@@ -13,6 +13,7 @@ import type {
 const base = (companyId: string) => `/v1/companies/${companyId}`;
 
 export type AssignedTask = Task & { project_name: string; level_name: string | null; sector_name: string | null };
+export type TaskOverviewItem = Task & { project_name: string; assigned_user_name: string | null };
 
 export interface TemplateResourceInput {
   inventory_item_id?: string | null;
@@ -56,6 +57,8 @@ export const taskLibraryApi = {
     api.get<{ work_pending: number; daily_pending: number; total_pending: number }>(
       `${base(companyId)}/my-tasks/summary`, undefined, signal,
     ),
+  overview: (companyId: string, offset: number, signal?: AbortSignal) =>
+    api.get<Paginated<TaskOverviewItem>>(`${base(companyId)}/task-overview`, { offset, limit: 100 }, signal),
   listTemplates: (companyId: string, activeOnly = true, signal?: AbortSignal) =>
     api.get<TaskTemplate[]>(`${base(companyId)}/task-templates`, { active_only: activeOnly }, signal),
   createTemplate: (companyId: string, input: TaskTemplateInput) =>

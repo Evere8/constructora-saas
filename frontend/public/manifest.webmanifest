@@ -1,0 +1,31 @@
+{
+  "name": "Obrixapy - Gestión de obras",
+  "short_name": "Obrixapy",
+  "description": "Tareas, actividades, planos e inventario de obra",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#fffaf7",
+  "theme_color": "#f97316",
+  "lang": "es",
+  "icons": [
+    {
+      "src": "/icons/obrixapy-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/obrixapy-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/obrixapy.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

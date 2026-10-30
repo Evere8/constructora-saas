@@ -21,6 +21,11 @@ release_commit=$("${git_task[@]}" rev-parse HEAD)
 cd /opt/constructora
 compose_task=(docker compose --project-name constructora --env-file frontend.env
   -f compose.yaml -f app/deploy/compose.backend.yaml -f app/deploy/compose.frontend.yaml)
+if [[ -f /etc/constructora/push/vapid-private.pem && -f /etc/constructora/push/vapid-public.txt ]]; then
+  compose_task+=(-f app/deploy/compose.push.yaml)
+else
+  echo 'Notificaciones push pendientes: ejecuta sudo bash /opt/constructora/app/deploy/configure-push.sh antes de actualizar.'
+fi
 drive_enabled=0
 if [[ -f /etc/constructora/project-docs/rclone.conf ]]; then
   compose_task+=(-f app/deploy/compose.drive-documents.yaml)

@@ -50,8 +50,10 @@ Solo disponible cuando `is_platform_admin` es verdadero.
 
 Estados de obra: `active`, `inactive`, `completed`, `archived`.
 
-Tipos de tarea: `work`, `transport`. Estados: `pending`, `in_progress`, `review`,
-`completed`, `cancelled`. Prioridades: `low`, `normal`, `high`, `urgent`.
+Tipos de tarea: `work`, `transport`. Estados: `pending`, `received`,
+`in_progress`, `missing_tool`, `review`, `custom`, `completed`, `cancelled`.
+El estado `custom` requiere `custom_status_label`. Prioridades: `low`, `normal`,
+`high`, `urgent`.
 Las tareas aceptan `planned_start_at`, `due_at` y `location_text`; la fecha límite
 no puede ser anterior al inicio planificado.
 

@@ -128,6 +128,7 @@ export interface TaskInput {
   description?: string | null;
   task_type: TaskType;
   status?: TaskStatus;
+  custom_status_label?: string | null;
   priority?: TaskPriority;
   level_id?: string | null;
   rubro_id?: string | null;

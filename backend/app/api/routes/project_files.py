@@ -1,13 +1,16 @@
-import hashlib
 import mimetypes
-from pathlib import PurePath
+import shutil
+import tempfile
+from pathlib import Path, PurePath
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
-from fastapi.responses import Response
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse as StreamingFileResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
+from starlette.background import BackgroundTask
 
 from app.api.dependencies import CurrentCompanyAccess, DbSession
 from app.api.routes.operations import (
@@ -17,7 +20,6 @@ from app.api.routes.operations import (
     require_project,
     require_role,
 )
-from app.core.config import get_settings
 from app.db.models import Project, ProjectFile, ProjectFolder
 from app.services import project_archive, project_drive, project_file_codec
 
@@ -195,50 +197,81 @@ async def upload_file(
     await require_project(db, access.company_id, project_id)
     if folder_id:
         await require_folder(db, access.company_id, project_id, folder_id)
-    # Reject before buffering: no quota-sized attachment is retained on the VPS.
     key = f"{access.company_id.replace('-', '')}/{project_id.replace('-', '')}/{uuid4().hex}"
     project_drive.drive_location(key)
-    limit = min(get_settings().evidence_max_bytes, 10 * 1024 * 1024)
-    content = await file.read(limit + 1)
-    if len(content) > limit:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="El archivo supera el máximo de 10 MB",
-        )
-    if not content:
-        raise HTTPException(status_code=422, detail="El archivo está vacío")
     original = PurePath((file.filename or "archivo").replace("\\", "/")).name[:255]
     mime = (mimetypes.guess_type(original)[0] or "application/octet-stream")[:120]
-    stored, encoding = project_file_codec.encode(content)
-    await project_drive.upload(key, stored)
-    verified = await project_drive.download(key)
-    if verified != stored:
-        raise HTTPException(
-            status_code=502, detail="Drive no confirmó el archivo íntegro. No se registró."
+    temp_dir = Path(tempfile.mkdtemp(prefix="obrixapy-project-upload-"))
+    uploaded = False
+    committed = False
+    try:
+        source = temp_dir / "original"
+        with source.open("wb") as writer:
+            while chunk := await file.read(1024 * 1024):
+                writer.write(chunk)
+        if source.stat().st_size == 0:
+            raise HTTPException(status_code=422, detail="El archivo está vacío")
+        stored_path, encoding, size_bytes, stored_size_bytes, sha256 = await run_in_threadpool(
+            project_file_codec.encode_path,
+            source,
+            temp_dir / "compressed.gz",
         )
-    record = ProjectFile(
-        company_id=access.company_id,
-        project_id=project_id,
-        folder_id=folder_id,
-        original_filename=original,
-        mime_type=mime,
-        size_bytes=len(content),
-        stored_size_bytes=len(stored),
-        storage_encoding=encoding,
-        compression_checked=True,
-        sha256=hashlib.sha256(content).hexdigest(),
-        drive_key=key,
-        uploaded_by_user_id=access.user.id,
-    )
-    db.add(record)
-    await flush_or_conflict(
-        db, "El archivo subió a Drive pero falló el índice; avise al administrador"
-    )
-    add_activity(db, access, "project.file.uploaded", "project_file", record.id)
-    await commit_or_conflict(
-        db, "El archivo se subió a Drive pero no se pudo registrar; contacte al administrador"
-    )
-    return record
+        await project_drive.upload_path(key, stored_path)
+        uploaded = True
+        remote_copy = temp_dir / "drive-copy"
+        await project_drive.download_to_path(key, remote_copy)
+        if remote_copy.stat().st_size != stored_size_bytes:
+            raise HTTPException(
+                status_code=502,
+                detail="Drive confirmó un tamaño distinto. El archivo no se registró.",
+            )
+        try:
+            await run_in_threadpool(
+                project_file_codec.verify_path,
+                remote_copy,
+                encoding,
+                size_bytes,
+                sha256,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail="Drive no confirmó el archivo íntegro. El archivo no se registró.",
+            ) from exc
+        record = ProjectFile(
+            company_id=access.company_id,
+            project_id=project_id,
+            folder_id=folder_id,
+            original_filename=original,
+            mime_type=mime,
+            size_bytes=size_bytes,
+            stored_size_bytes=stored_size_bytes,
+            storage_encoding=encoding,
+            compression_checked=True,
+            sha256=sha256,
+            drive_key=key,
+            uploaded_by_user_id=access.user.id,
+        )
+        db.add(record)
+        await flush_or_conflict(
+            db, "El archivo subió a Drive pero falló el índice; avise al administrador"
+        )
+        add_activity(db, access, "project.file.uploaded", "project_file", record.id)
+        await commit_or_conflict(
+            db, "El archivo se subió a Drive pero no se pudo registrar; contacte al administrador"
+        )
+        committed = True
+        return record
+    except Exception:
+        if uploaded and not committed:
+            try:
+                await project_drive.delete(key)
+            except HTTPException:
+                pass
+        raise
+    finally:
+        await file.close()
+        await run_in_threadpool(shutil.rmtree, temp_dir, True)
 
 
 @router.get("/projects/{project_id}/files/{file_id}/download")
@@ -252,24 +285,32 @@ async def download_file(project_id: str, file_id: str, access: CurrentCompanyAcc
     )
     if record is None:
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
-    stored = await project_drive.download(record.drive_key)
-    if len(stored) != record.stored_size_bytes:
-        raise HTTPException(status_code=502, detail="Tamaño en Drive distinto al registrado")
+    temp_dir = Path(tempfile.mkdtemp(prefix="obrixapy-project-download-"))
+    stored = temp_dir / "stored"
+    output = temp_dir / "download"
     try:
-        content = project_file_codec.decode(stored, record.storage_encoding, record.size_bytes)
-    except ValueError as exc:
-        raise HTTPException(status_code=502, detail="El archivo almacenado está dañado") from exc
-    if hashlib.sha256(content).hexdigest() != record.sha256:
-        raise HTTPException(
-            status_code=502,
-            detail="La integridad del archivo en Drive no coincide con la registrada",
+        await project_drive.download_to_path(record.drive_key, stored)
+        if stored.stat().st_size != record.stored_size_bytes:
+            raise HTTPException(status_code=502, detail="Tamaño en Drive distinto al registrado")
+        await run_in_threadpool(
+            project_file_codec.decode_path,
+            stored,
+            output,
+            record.storage_encoding,
+            record.size_bytes,
+            record.sha256,
         )
-    # Content-Disposition attachment and octet-stream prevent HTML/script execution.
+    except ValueError as exc:
+        await run_in_threadpool(shutil.rmtree, temp_dir, True)
+        raise HTTPException(status_code=502, detail="El archivo almacenado está dañado") from exc
+    except Exception:
+        await run_in_threadpool(shutil.rmtree, temp_dir, True)
+        raise
     from urllib.parse import quote
 
     name = record.original_filename.replace('"', "").replace("\r", "").replace("\n", "")
-    return Response(
-        content,
+    return StreamingFileResponse(
+        output,
         media_type="application/octet-stream",
         headers={
             "Content-Disposition": (
@@ -277,4 +318,5 @@ async def download_file(project_id: str, file_id: str, access: CurrentCompanyAcc
             ),
             "X-Content-Type-Options": "nosniff",
         },
+        background=BackgroundTask(shutil.rmtree, temp_dir, True),
     )

@@ -6,6 +6,7 @@ never untrusted filenames or folder labels in the remote path.
 
 import asyncio
 import re
+from pathlib import Path
 
 from fastapi import HTTPException
 
@@ -66,3 +67,39 @@ async def download(key: str) -> bytes:
 async def delete(key: str) -> None:
     """Only an exact opaque object key; never a directory or backup remote."""
     await _rclone("deletefile", key)
+
+
+async def _copyto(source: str, destination: str) -> None:
+    settings = get_settings()
+    proc = await asyncio.create_subprocess_exec(
+        "rclone",
+        "--config",
+        str(settings.drive_document_config),
+        "copyto",
+        source,
+        destination,
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=settings.drive_transfer_timeout_seconds)
+    except TimeoutError as exc:
+        proc.kill()
+        await proc.wait()
+        raise HTTPException(status_code=504, detail="Drive no respondió a tiempo") from exc
+    if proc.returncode:
+        raise HTTPException(
+            status_code=502,
+            detail="Drive rechazó la transferencia; compruebe el remoto operativo",
+        )
+
+
+async def upload_path(key: str, local_path: Path) -> None:
+    _, remote_path = drive_location(key)
+    await _copyto(str(local_path), remote_path)
+
+
+async def download_to_path(key: str, local_path: Path) -> None:
+    _, remote_path = drive_location(key)
+    await _copyto(remote_path, str(local_path))

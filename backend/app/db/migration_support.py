@@ -1,4 +1,4 @@
-"""Narrow recovery helpers for the non-transactional MySQL migrations 0009/0010.
+"""Narrow recovery helpers for non-transactional MySQL migrations.
 
 Only missing DDL is executed. Existing rows are never removed and unexpected
 table definitions fail explicitly instead of being silently stamped as migrated.
@@ -78,3 +78,27 @@ class ResumableDDL:
     def drop_unique_if_present(self, name, table):
         if name in {item["name"] for item in self.inspector().get_unique_constraints(table)}:
             self.op.drop_constraint(name, table, type_="unique")
+
+    def replace_check_constraint(self, name, table, condition):
+        """Install a check constraint and remain safe after a partial MySQL retry."""
+
+        def normalized(value: str) -> str:
+            return "".join(
+                character
+                for character in value.casefold()
+                if not character.isspace() and character not in "()`\""
+            )
+
+        existing = next(
+            (
+                item
+                for item in self.inspector().get_check_constraints(table)
+                if item["name"] == name
+            ),
+            None,
+        )
+        if existing and normalized(existing.get("sqltext", "")) == normalized(condition):
+            return
+        if existing:
+            self.op.drop_constraint(name, table, type_="check")
+        self.op.create_check_constraint(name, table, condition)

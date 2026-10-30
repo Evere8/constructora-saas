@@ -1,0 +1,13 @@
+services:
+  api:
+    environment:
+      VAPID_PRIVATE_KEY_PATH: "/etc/constructora/push/vapid-private.pem"
+      VAPID_PUBLIC_KEY_PATH: "/etc/constructora/push/vapid-public.txt"
+      VAPID_SUBJECT: "mailto:administracion@obrixapy.online"
+    volumes:
+      - type: bind
+        source: /etc/constructora/push
+        target: /etc/constructora/push
+        read_only: true
+        bind:
+          create_host_path: false

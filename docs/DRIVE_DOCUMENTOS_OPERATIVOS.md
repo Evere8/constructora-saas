@@ -5,10 +5,13 @@ no permanentemente en el volumen del VPS. MySQL conserva carpetas, nombres,
 permisos, tamaños y hash. Los archivos se transmiten por la API; puede haber
 buffer temporal durante la transferencia, pero no un segundo almacén permanente.
 
-Límite por archivo: **10 MiB**. Se admiten PDF, imágenes, DWG/AutoCAD, planillas
-y otras extensiones. La descarga es un adjunto: nunca ejecuta HTML o scripts.
-La carga lee nuevamente el objeto desde Drive antes de confirmar su registro;
-la descarga verifica tamaño y SHA-256 del original.
+No hay un límite fijo de tamaño impuesto por la aplicación para esta sección.
+Se admiten PDF, imágenes, DWG/AutoCAD, planillas y otras extensiones. El máximo
+práctico depende del espacio temporal libre, la conexión y la cuota del Drive.
+Los temporales se eliminan al terminar y no constituyen un almacén permanente.
+La descarga es un adjunto: nunca ejecuta HTML o scripts. La carga lee nuevamente
+el objeto desde Drive antes de confirmar su registro; la descarga verifica tamaño
+y SHA-256 del original sin cargar el archivo entero en memoria.
 
 ## Separación de los respaldos
 

@@ -31,6 +31,11 @@ export interface DailyActivityEntry {
   project_name: string;
   activity_definition_id: string | null;
   activity_title: string | null;
+  assigned_user_id: string | null;
+  assigned_user_name: string | null;
+  task_id: string | null;
+  task_status: string | null;
+  custom_status_label: string | null;
   people_count: number;
   note: string | null;
   verification: 'ready' | 'missing' | 'incomplete';
@@ -64,7 +69,7 @@ export const dailyOperationsApi = {
     api.patch<ActivityDefinition>(`${base(companyId)}/activity-definitions/${id}`, { title, requirements }),
   plan: (companyId: string, date: string, signal?: AbortSignal) => api.get<DailyActivityPlan>(`${base(companyId)}/daily-activity-plans/${date}`, undefined, signal),
   plans: (companyId: string, signal?: AbortSignal, offset = 0) => api.get<DailyActivityPlan[]>(`${base(companyId)}/daily-activity-plans`, { offset, limit: 30 }, signal),
-  savePlan: (companyId: string, date: string, entries: { project_id: string; activity_definition_id: string | null; people_count: number; note: string | null }[], expected_revision: string | null) =>
+  savePlan: (companyId: string, date: string, entries: { project_id: string; activity_definition_id: string | null; assigned_user_id: string | null; task_id: string | null; people_count: number; note: string | null }[], expected_revision: string | null) =>
     api.put<DailyActivityPlan>(`${base(companyId)}/daily-activity-plans/${date}`, { plan_date: date, entries, expected_revision }),
   registerPlan: (companyId: string, date: string, expected_revision: string) => api.post<DailyActivityPlan>(`${base(companyId)}/daily-activity-plans/${date}/register`, { expected_revision }),
 };

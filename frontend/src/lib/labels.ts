@@ -24,9 +24,12 @@ export const PROJECT_STATUS: Record<ProjectStatus, LabelInfo> = {
 
 export const TASK_STATUS: Record<TaskStatus, LabelInfo> = {
   pending: { label: 'Pendiente', variant: 'muted' },
-  in_progress: { label: 'En progreso', variant: 'warning' },
-  review: { label: 'En revision', variant: 'info' },
-  completed: { label: 'Completada', variant: 'success' },
+  received: { label: 'Recibido', variant: 'info' },
+  in_progress: { label: 'En proceso', variant: 'warning' },
+  missing_tool: { label: 'Falta herramienta', variant: 'destructive' },
+  review: { label: 'En revisión', variant: 'info' },
+  custom: { label: 'Estado personalizado', variant: 'secondary' },
+  completed: { label: 'Terminado', variant: 'success' },
   cancelled: { label: 'Cancelada', variant: 'destructive' },
 };
 

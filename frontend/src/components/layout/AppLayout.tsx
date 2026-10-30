@@ -17,6 +17,8 @@ import { UserMenu } from '@/components/layout/UserMenu';
 import { NotificationCenter } from '@/components/notifications/NotificationCenter';
 import { cn } from '@/lib/utils';
 import { taskLibraryApi } from '@/lib/api/taskLibrary';
+import { PwaControls } from '@/components/pwa/PwaControls';
+import { TaskNotificationAction } from '@/components/pwa/TaskNotificationAction';
 
 function usePendingTasks() {
   const { activeCompanyId } = useCompany();
@@ -131,6 +133,7 @@ function BottomNav() {
 export function AppLayout() {
   return (
     <div className="flex min-h-screen bg-background">
+      <TaskNotificationAction />
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b bg-card/95 px-4 py-3 backdrop-blur sm:px-6">
@@ -141,6 +144,7 @@ export function AppLayout() {
             <CompanySelector />
           </div>
           <div className="flex items-center gap-2">
+            <PwaControls />
             <NotificationCenter />
             <UserMenu />
           </div>

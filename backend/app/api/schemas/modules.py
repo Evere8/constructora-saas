@@ -194,6 +194,13 @@ class InventoryRelocationRequestResponse(BaseModel):
     assigned_user_name: str | None = None
 
 
+class InventoryRelocationCreate(BaseModel):
+    inventory_item_id: str = Field(min_length=36, max_length=36)
+    to_project_id: str = Field(min_length=36, max_length=36)
+    assigned_user_id: str = Field(min_length=36, max_length=36)
+    notes: str | None = Field(default=None, max_length=3000)
+
+
 class ElongationItemCreate(BaseModel):
     label: str = Field(min_length=1, max_length=50)
     classification: Literal["band", "distributed"]

@@ -11,7 +11,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from app.api.dependencies import CurrentCompanyAccess, DbSession
 from app.api.routes.operations import (
@@ -34,7 +34,9 @@ from app.api.schemas.daily_operations import (
 )
 from app.db.models import (
     ActivityDefinition,
+    AppUser,
     Company,
+    CompanyMembership,
     DailyActivityPlan,
     InventoryDaySnapshot,
     InventoryItem,
@@ -42,12 +44,15 @@ from app.db.models import (
     InventoryRelocationRequest,
     InventoryRestockRequest,
     Project,
+    Task,
+    TaskMaterialRequirement,
 )
 from app.services.operational_alerts import refresh_linked_requirement_availability
+from app.services.push_notifications import send_push_to_user
 
 router = APIRouter()
 LOCAL_ZONE = ZoneInfo("America/Asuncion")
-EDIT_ROLES = {"owner", "admin", "engineer", "supervisor"}
+PLANNER_ROLES = {"owner", "engineer"}
 
 
 def today() -> date:
@@ -55,7 +60,10 @@ def today() -> date:
 
 
 def require_day_registrar(access: CurrentCompanyAccess) -> None:
-    if access.role not in {"owner", "admin"} and not access.can_register_inventory_day:
+    if (
+        access.role not in {"platform_admin", "owner", "admin"}
+        and not access.can_register_inventory_day
+    ):
         raise HTTPException(
             status_code=403,
             detail="El administrador debe habilitarle Registrar movimientos diarios",
@@ -338,7 +346,7 @@ async def list_definitions(access: CurrentCompanyAccess, db: DbSession):
 async def create_definition(
     payload: ActivityDefinitionInput, access: CurrentCompanyAccess, db: DbSession
 ):
-    require_role(access, EDIT_ROLES)
+    require_role(access, PLANNER_ROLES)
     names = [r.name.strip().casefold() for r in payload.requirements]
     if len(names) != len(set(names)):
         raise HTTPException(status_code=422, detail="Una herramienta se repite en la actividad")
@@ -363,7 +371,7 @@ async def update_definition(
     access: CurrentCompanyAccess,
     db: DbSession,
 ):
-    require_role(access, EDIT_ROLES)
+    require_role(access, PLANNER_ROLES)
     definition = await db.scalar(
         select(ActivityDefinition).where(
             ActivityDefinition.id == definition_id,
@@ -402,8 +410,18 @@ async def present_plan(
                 continue
             key = (item["project_id"], item["name"].strip().casefold())
             available[key] = available.get(key, Decimal(0)) + Decimal(item["quantity"])
+    stored_entries = plan.entries_json if plan else []
+    task_ids = {entry.get("task_id") for entry in stored_entries if entry.get("task_id")}
+    task_rows = (
+        await db.execute(
+            select(Task, AppUser.full_name, AppUser.email)
+            .outerjoin(AppUser, AppUser.id == Task.assigned_user_id)
+            .where(Task.company_id == company_id, Task.id.in_(task_ids))
+        )
+    ).all() if task_ids else []
+    tasks = {task.id: (task, full_name or email) for task, full_name, email in task_rows}
     entries = []
-    for entry in plan.entries_json if plan else []:
+    for entry in stored_entries:
         missing = (
             [
                 r["name"]
@@ -414,6 +432,8 @@ async def present_plan(
             if snapshot
             else []
         )
+        task_info = tasks.get(entry.get("task_id"))
+        task = task_info[0] if task_info else None
         entries.append(
             {
                 **{
@@ -427,6 +447,13 @@ async def present_plan(
                         "note",
                     )
                 },
+                "assigned_user_id": entry.get("assigned_user_id"),
+                "assigned_user_name": (
+                    task_info[1] if task_info else entry.get("assigned_user_name")
+                ),
+                "task_id": entry.get("task_id"),
+                "task_status": task.status if task else None,
+                "custom_status_label": task.custom_status_label if task else None,
                 "verification": "incomplete" if not snapshot else "missing" if missing else "ready",
                 "missing_tools": missing,
             }
@@ -451,6 +478,7 @@ async def list_plans(
     limit: int = Query(default=30, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ):
+    require_role(access, PLANNER_ROLES)
     plans = (
         (
             await db.execute(
@@ -469,6 +497,7 @@ async def list_plans(
 
 @router.get("/daily-activity-plans/{plan_date}", response_model=DailyActivityResponse)
 async def get_plan(plan_date: date, access: CurrentCompanyAccess, db: DbSession):
+    require_role(access, PLANNER_ROLES)
     plan = await db.scalar(
         select(DailyActivityPlan).where(
             DailyActivityPlan.company_id == access.company_id,
@@ -482,7 +511,7 @@ async def get_plan(plan_date: date, access: CurrentCompanyAccess, db: DbSession)
 async def save_plan(
     plan_date: date, payload: DailyActivityInput, access: CurrentCompanyAccess, db: DbSession
 ):
-    require_role(access, EDIT_ROLES)
+    require_role(access, PLANNER_ROLES)
     if plan_date != payload.plan_date:
         raise HTTPException(status_code=422, detail="La fecha no coincide")
     # Also serializes creation of a previously absent day (a row lock cannot
@@ -544,22 +573,129 @@ async def save_plan(
         raise HTTPException(
             status_code=422, detail="Seleccione una actividad definida para la constructora"
         )
-    entries = [
-        {
-            "project_id": entry.project_id,
-            "project_name": projects[entry.project_id].name,
-            "activity_definition_id": entry.activity_definition_id,
-            "activity_title": definitions[entry.activity_definition_id].title
-            if entry.activity_definition_id
-            else None,
-            "requirements": definitions[entry.activity_definition_id].requirements_json
-            if entry.activity_definition_id
-            else [],
-            "people_count": entry.people_count,
-            "note": entry.note,
-        }
-        for entry in payload.entries
-    ]
+    assignee_ids = {entry.assigned_user_id for entry in payload.entries if entry.assigned_user_id}
+    assignee_rows = (
+        await db.execute(
+            select(AppUser, CompanyMembership)
+            .join(CompanyMembership, CompanyMembership.user_id == AppUser.id)
+            .where(
+                CompanyMembership.company_id == access.company_id,
+                CompanyMembership.status == "active",
+                AppUser.status == "active",
+                AppUser.id.in_(assignee_ids),
+            )
+        )
+    ).all() if assignee_ids else []
+    assignees = {user.id: user for user, _ in assignee_rows}
+    if assignee_ids != set(assignees):
+        raise HTTPException(status_code=422, detail="El responsable no pertenece a la constructora")
+
+    previous_task_ids = {
+        entry.get("task_id")
+        for entry in (plan.entries_json if plan else [])
+        if entry.get("task_id")
+    }
+    requested_task_id_list = [entry.task_id for entry in payload.entries if entry.task_id]
+    requested_task_ids = set(requested_task_id_list)
+    if len(requested_task_ids) != len(requested_task_id_list):
+        raise HTTPException(status_code=422, detail="Una tarea no puede repetirse en el plan")
+    if not requested_task_ids.issubset(previous_task_ids):
+        raise HTTPException(status_code=422, detail="Una actividad contiene una tarea no válida")
+    existing_tasks = {
+        task.id: task
+        for task in (
+            await db.execute(
+                select(Task).where(
+                    Task.company_id == access.company_id,
+                    Task.id.in_(previous_task_ids),
+                )
+            )
+        ).scalars()
+    } if previous_task_ids else {}
+    if requested_task_ids - set(existing_tasks):
+        raise HTTPException(status_code=409, detail="Una tarea vinculada ya no existe")
+
+    entries = []
+    newly_assigned: list[Task] = []
+    retained_task_ids: set[str] = set()
+    planned_start = datetime.combine(plan_date, datetime.min.time())
+    due_at = datetime.combine(plan_date, datetime.max.time()).replace(microsecond=0)
+    for entry in payload.entries:
+        definition = definitions.get(entry.activity_definition_id)
+        task = existing_tasks.get(entry.task_id) if entry.task_id else None
+        if definition and entry.assigned_user_id:
+            if task is None:
+                task = Task(
+                    company_id=access.company_id,
+                    project_id=entry.project_id,
+                    task_type="work",
+                    title=definition.title,
+                    status="pending",
+                    priority="normal",
+                    assigned_user_id=entry.assigned_user_id,
+                    planned_start_at=planned_start,
+                    due_at=due_at,
+                    location_text=projects[entry.project_id].name,
+                    created_by_user_id=access.user.id,
+                )
+                db.add(task)
+                await flush_or_conflict(db, "No fue posible crear la tarea de actividad")
+                newly_assigned.append(task)
+            else:
+                previous_assignee_id = task.assigned_user_id
+                task.project_id = entry.project_id
+                task.title = definition.title
+                task.assigned_user_id = entry.assigned_user_id
+                task.planned_start_at = planned_start
+                task.due_at = due_at
+                task.location_text = projects[entry.project_id].name
+                if previous_assignee_id != entry.assigned_user_id:
+                    newly_assigned.append(task)
+            task.description = (
+                f"Actividad diaria para {entry.people_count} persona(s)."
+                + (f" {entry.note.strip()}" if entry.note and entry.note.strip() else "")
+            )
+            await db.execute(
+                delete(TaskMaterialRequirement).where(TaskMaterialRequirement.task_id == task.id)
+            )
+            for requirement in definition.requirements_json:
+                db.add(
+                    TaskMaterialRequirement(
+                        task_id=task.id,
+                        description=requirement["name"],
+                        required_quantity=Decimal(requirement["quantity"]),
+                        unit="unidad",
+                        availability_status="unchecked",
+                    )
+                )
+            retained_task_ids.add(task.id)
+        elif task and task.status not in {"completed", "cancelled"}:
+            task.status = "cancelled"
+            task.completed_at = None
+            task = None
+
+        assigned_user = assignees.get(entry.assigned_user_id)
+        entries.append(
+            {
+                "project_id": entry.project_id,
+                "project_name": projects[entry.project_id].name,
+                "activity_definition_id": entry.activity_definition_id,
+                "activity_title": definition.title if definition else None,
+                "requirements": definition.requirements_json if definition else [],
+                "people_count": entry.people_count,
+                "note": entry.note,
+                "assigned_user_id": entry.assigned_user_id,
+                "assigned_user_name": (
+                    assigned_user.full_name or assigned_user.email if assigned_user else None
+                ),
+                "task_id": task.id if task else None,
+            }
+        )
+    for task_id in previous_task_ids - retained_task_ids:
+        old_task = existing_tasks.get(task_id)
+        if old_task and old_task.status not in {"completed", "cancelled"}:
+            old_task.status = "cancelled"
+            old_task.completed_at = None
     if plan is None:
         plan = DailyActivityPlan(
             company_id=access.company_id, plan_date=plan_date, entries_json=entries
@@ -570,6 +706,20 @@ async def save_plan(
     await flush_or_conflict(db, "No fue posible guardar la lista")
     add_activity(db, access, "activity.plan.saved", "daily_activity_plan", plan.id)
     await commit_or_conflict(db, "No fue posible guardar el borrador")
+    for assigned_task in newly_assigned:
+        await send_push_to_user(
+            db,
+            access.company_id,
+            assigned_task.assigned_user_id,
+            {
+                "title": "Nueva actividad asignada",
+                "body": assigned_task.title,
+                "url": "/tareas",
+                "task_id": assigned_task.id,
+                "project_id": assigned_task.project_id,
+                "actions": ["received", "in_progress"],
+            },
+        )
     return await present_plan(db, access.company_id, plan_date, plan)
 
 
@@ -580,7 +730,7 @@ async def register_plan(
     access: CurrentCompanyAccess,
     db: DbSession,
 ):
-    require_role(access, EDIT_ROLES)
+    require_role(access, PLANNER_ROLES)
     plan = await db.scalar(
         select(DailyActivityPlan)
         .where(

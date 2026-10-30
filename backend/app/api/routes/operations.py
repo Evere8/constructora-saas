@@ -46,13 +46,25 @@ from app.db.models import (
     TaskTemplateRequirement,
 )
 from app.services.file_storage import remove_stored_file
+from app.services.inventory_relocations import (
+    cancel_relocation,
+    complete_relocation,
+    start_relocation,
+)
+from app.services.push_notifications import send_push_to_user
 
 router = APIRouter()
 
 PROJECT_EDITOR_ROLES = {"platform_admin", "owner", "admin", "engineer"}
 WORK_EDITOR_ROLES = PROJECT_EDITOR_ROLES | {"supervisor"}
-SELF_TASK_ROLES = {"worker", "transport"}
-SELF_TASK_STATUSES = {"in_progress", "review", "completed"}
+SELF_TASK_STATUSES = {
+    "received",
+    "in_progress",
+    "missing_tool",
+    "review",
+    "custom",
+    "completed",
+}
 
 # The editable field checklist illustrated in the operational plan workflow.
 # These records are created independently for every project level.
@@ -917,6 +929,19 @@ async def create_task(
         },
     )
     await commit_or_conflict(db, "No fue posible crear la tarea")
+    await send_push_to_user(
+        db,
+        access.company_id,
+        task.assigned_user_id,
+        {
+            "title": "Nueva tarea asignada",
+            "body": task.title,
+            "url": "/tareas",
+            "task_id": task.id,
+            "project_id": task.project_id,
+            "actions": ["received", "in_progress"],
+        },
+    )
     await db.refresh(task)
     return task
 
@@ -931,14 +956,15 @@ async def update_task(
 ) -> Task:
     await require_project(db, access.company_id, project_id)
     task = await require_task(db, access.company_id, project_id, task_id)
+    previous_assignee_id = task.assigned_user_id
 
     changes = payload.model_dump(exclude_unset=True)
     if access.role not in WORK_EDITOR_ROLES:
         is_assignee = task.assigned_user_id == access.user.id
         allowed_self_update = (
-            access.role in SELF_TASK_ROLES
-            and is_assignee
-            and set(changes) == {"status"}
+            is_assignee
+            and set(changes).issubset({"status", "custom_status_label"})
+            and "status" in changes
             and changes["status"] in SELF_TASK_STATUSES
         )
         if not allowed_self_update:
@@ -960,6 +986,37 @@ async def update_task(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="La fecha límite no puede ser anterior al inicio planificado",
         )
+    final_status = changes.get("status", task.status)
+    final_custom_label = changes.get("custom_status_label", task.custom_status_label)
+    if final_status == "custom" and not final_custom_label:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Indique el nombre del estado personalizado",
+        )
+    if "status" in changes and final_status != "custom":
+        changes["custom_status_label"] = None
+
+    active_relocation = None
+    if task.task_type == "transport" and "status" in changes:
+        active_relocation = await db.scalar(
+            select(InventoryRelocationRequest).where(
+                InventoryRelocationRequest.company_id == access.company_id,
+                InventoryRelocationRequest.task_id == task.id,
+                InventoryRelocationRequest.status.in_(("pending", "in_transit")),
+            ).with_for_update()
+        )
+        if active_relocation and changes["status"] == "in_progress":
+            if active_relocation.status == "pending":
+                await start_relocation(db, access.company_id, active_relocation)
+        elif active_relocation and changes["status"] == "completed":
+            await complete_relocation(
+                db,
+                access.company_id,
+                active_relocation,
+                actor_user_id=access.user.id,
+            )
+        elif active_relocation and changes["status"] == "cancelled":
+            await cancel_relocation(db, access.company_id, active_relocation)
     if changes.get("status") == "completed" and task.status != "completed":
         task.completed_at = datetime.now(UTC).replace(tzinfo=None)
     elif "status" in changes and changes["status"] != "completed":
@@ -968,6 +1025,24 @@ async def update_task(
         setattr(task, field, value)
     add_activity(db, access, "task.updated", "task", task.id, changes)
     await commit_or_conflict(db, "No fue posible actualizar la tarea")
+    if (
+        "assigned_user_id" in changes
+        and task.assigned_user_id
+        and task.assigned_user_id != previous_assignee_id
+    ):
+        await send_push_to_user(
+            db,
+            access.company_id,
+            task.assigned_user_id,
+            {
+                "title": "Tarea asignada",
+                "body": task.title,
+                "url": "/tareas",
+                "task_id": task.id,
+                "project_id": task.project_id,
+                "actions": ["received", "in_progress"],
+            },
+        )
     await db.refresh(task)
     return task
 

@@ -1,6 +1,14 @@
 export type ProjectStatus = 'active' | 'inactive' | 'completed' | 'archived';
 export type TaskType = 'work' | 'transport';
-export type TaskStatus = 'pending' | 'in_progress' | 'review' | 'completed' | 'cancelled';
+export type TaskStatus =
+  | 'pending'
+  | 'received'
+  | 'in_progress'
+  | 'missing_tool'
+  | 'review'
+  | 'custom'
+  | 'completed'
+  | 'cancelled';
 export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 export type ChecklistStatus =
   | 'pending'
@@ -234,6 +242,7 @@ export interface Task {
   description?: string | null;
   task_type: TaskType;
   status: TaskStatus;
+  custom_status_label?: string | null;
   priority: TaskPriority;
   assigned_user_id?: string | null;
   planned_start_at?: string | null;

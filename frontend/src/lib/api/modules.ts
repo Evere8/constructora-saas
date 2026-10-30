@@ -140,6 +140,10 @@ export const inventoryApi = {
     filters: { project_id?: string; task_id?: string; active_only?: boolean } = {},
     signal?: AbortSignal,
   ) => api.get<InventoryRelocationRequest[]>(`${companyBase(companyId)}/inventory/relocations`, filters, signal),
+  requestRelocation: (
+    companyId: string,
+    input: { inventory_item_id: string; to_project_id: string; assigned_user_id: string; notes?: string | null },
+  ) => api.post<InventoryRelocationRequest>(`${companyBase(companyId)}/inventory/relocations`, input),
   startRelocation: (companyId: string, relocationId: string) =>
     api.post<InventoryRelocationRequest>(`${companyBase(companyId)}/inventory/relocations/${relocationId}/start`, {}),
   completeRelocation: (companyId: string, relocationId: string) =>

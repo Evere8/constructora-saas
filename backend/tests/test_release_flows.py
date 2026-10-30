@@ -3,6 +3,7 @@
 import hashlib
 import os
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -21,6 +22,7 @@ from app.db.models import (
     Company,
     CompanyMembership,
     InventoryItem,
+    InventoryMovement,
     PerforationColor,
     PerforationDocument,
     PlanDocument,
@@ -29,7 +31,9 @@ from app.db.models import (
     ProjectFile,
     ProjectRubro,
     ProjectRubroFeature,
+    PushSubscription,
     Task,
+    TaskMaterialRequirement,
 )
 from app.db.session import get_db
 from app.main import app
@@ -117,12 +121,20 @@ async def flow(tmp_path, monkeypatch):
     async def download(key):
         return remote[key]
 
+    async def upload_path(key, path):
+        remote[key] = Path(path).read_bytes()
+
+    async def download_to_path(key, path):
+        Path(path).write_bytes(remote[key])
+
     async def delete(key):
         remote.pop(key, None)
 
     monkeypatch.setattr(project_drive, "drive_location", lambda key: ("test", key))
     monkeypatch.setattr(project_drive, "upload", upload)
     monkeypatch.setattr(project_drive, "download", download)
+    monkeypatch.setattr(project_drive, "upload_path", upload_path)
+    monkeypatch.setattr(project_drive, "download_to_path", download_to_path)
     monkeypatch.setattr(project_drive, "delete", delete)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -194,7 +206,9 @@ async def test_daily_materials_conflicts_same_day_registration_and_permissions(f
     f.actor.can_register_inventory_day = True
     response = await c.post(f.base + "/inventory/days", json=day)
     assert response.status_code == 201, response.text
+    f.actor.role = "owner"
     assert (await c.get(plan_url)).json()["entries"][0]["verification"] == "ready"
+    f.actor.role = "worker"
     assert (await c.post(f.base + "/inventory/days", json=day)).status_code == 409
     f.actor.role = "owner"
     registered = await c.post(
@@ -251,6 +265,214 @@ async def test_assigned_tasks_match_badge_and_exclude_other_user(flow):
 
 
 @pytest.mark.asyncio
+async def test_relocation_task_preserves_origin_until_assignee_completes_it(flow):
+    f = flow
+    destination = Project(company_id=f.company.id, name="Obra destino")
+    item = InventoryItem(
+        company_id=f.company.id,
+        code="HERR-TRASLADO",
+        name="Taladro de traslado",
+        item_type="tool",
+        unit="unidad",
+        quantity=1,
+        current_project_id=f.project.id,
+        status="assigned",
+    )
+    f.session.add_all([destination, item])
+    f.session.commit()
+    response = await f.client.post(
+        f.base + "/inventory/relocations",
+        json={
+            "inventory_item_id": item.id,
+            "to_project_id": destination.id,
+            "assigned_user_id": f.user.id,
+            "notes": "Entregar por la mañana",
+        },
+    )
+    assert response.status_code == 201, response.text
+    relocation = response.json()
+    f.session.refresh(item)
+    assert item.current_project_id == f.project.id
+    assert item.status == "relocation_pending"
+    assert relocation["from_project_id"] == f.project.id
+    assert relocation["to_project_id"] == destination.id
+    assert relocation["assigned_user_name"] == f.user.email
+    assert (await f.client.get(f.base + "/my-tasks/summary")).json()["work_pending"] == 1
+
+    task_url = f.base + f"/projects/{destination.id}/tasks/{relocation['task_id']}"
+    received = await f.client.patch(task_url, json={"status": "received"})
+    assert received.status_code == 200, received.text
+    assert received.json()["status"] == "received"
+    f.session.refresh(item)
+    assert item.current_project_id == f.project.id
+
+    completed = await f.client.patch(task_url, json={"status": "completed"})
+    assert completed.status_code == 200, completed.text
+    f.session.refresh(item)
+    assert item.current_project_id == destination.id
+    assert item.status == "assigned"
+    movement = f.session.query(InventoryMovement).filter_by(item_id=item.id).one()
+    assert movement.from_project_id == f.project.id
+    assert movement.to_project_id == destination.id
+    all_relocations = await f.client.get(
+        f.base + "/inventory/relocations", params={"active_only": "false"}
+    )
+    assert all_relocations.json()[0]["status"] == "completed"
+    assert (await f.client.get(f.base + "/my-tasks/summary")).json()["work_pending"] == 0
+
+
+@pytest.mark.asyncio
+async def test_relocation_rejects_an_inactive_destination(flow):
+    f = flow
+    destination = Project(company_id=f.company.id, name="Obra inactiva", status="inactive")
+    item = InventoryItem(
+        company_id=f.company.id,
+        code="HERR-INACTIVA",
+        name="Amoladora",
+        item_type="tool",
+        unit="unidad",
+        quantity=1,
+    )
+    f.session.add_all([destination, item])
+    f.session.commit()
+    response = await f.client.post(
+        f.base + "/inventory/relocations",
+        json={
+            "inventory_item_id": item.id,
+            "to_project_id": destination.id,
+            "assigned_user_id": f.user.id,
+        },
+    )
+    assert response.status_code == 422
+    f.session.refresh(item)
+    assert item.status == "available" and item.current_project_id is None
+
+
+@pytest.mark.asyncio
+async def test_relocation_creation_uses_delegated_permission_and_assignee_scope(flow):
+    f = flow
+    destination = Project(company_id=f.company.id, name="Obra delegada")
+    item = InventoryItem(
+        company_id=f.company.id,
+        code="HERR-DELEGADA",
+        name="Gato hidráulico",
+        item_type="tool",
+        unit="unidad",
+        quantity=1,
+    )
+    f.session.add_all([destination, item])
+    f.session.commit()
+    payload = {
+        "inventory_item_id": item.id,
+        "to_project_id": destination.id,
+        "assigned_user_id": f.user.id,
+    }
+    f.actor.role = "engineer"
+    denied = await f.client.post(f.base + "/inventory/relocations", json=payload)
+    assert denied.status_code == 403
+
+    f.actor.can_register_inventory_day = True
+    created = await f.client.post(f.base + "/inventory/relocations", json=payload)
+    assert created.status_code == 201, created.text
+    f.actor.can_register_inventory_day = False
+    f.actor.role = "worker"
+    started = await f.client.post(
+        f.base + f"/inventory/relocations/{created.json()['id']}/start"
+    )
+    assert started.status_code == 200, started.text
+    completed = await f.client.post(
+        f.base + f"/inventory/relocations/{created.json()['id']}/complete"
+    )
+    assert completed.status_code == 200, completed.text
+    f.session.refresh(item)
+    assert item.current_project_id == destination.id
+
+
+@pytest.mark.asyncio
+async def test_assigned_activity_creates_task_tools_and_live_custom_status(flow):
+    f = flow
+    definition = await f.client.post(
+        f.base + "/activity-definitions",
+        json={
+            "title": "Colocación de cabos",
+            "requirements": [{"name": "Taladro", "quantity": 2}],
+        },
+    )
+    assert definition.status_code == 201, definition.text
+    day = daily_operations.today().isoformat()
+    saved = await f.client.put(
+        f.base + "/daily-activity-plans/" + day,
+        json={
+            "plan_date": day,
+            "expected_revision": None,
+            "entries": [
+                {
+                    "project_id": f.project.id,
+                    "activity_definition_id": definition.json()["id"],
+                    "assigned_user_id": f.user.id,
+                    "people_count": 4,
+                    "note": "Iniciar en nivel 2",
+                }
+            ],
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    entry = saved.json()["entries"][0]
+    assert entry["task_id"] and entry["task_status"] == "pending"
+    task = f.session.get(Task, entry["task_id"])
+    assert task.title == "Colocación de cabos"
+    assert task.assigned_user_id == f.user.id
+    requirement = f.session.query(TaskMaterialRequirement).filter_by(task_id=task.id).one()
+    assert requirement.description == "Taladro"
+    assert requirement.required_quantity == 2
+
+    task_url = f.base + f"/projects/{f.project.id}/tasks/{task.id}"
+    custom = await f.client.patch(
+        task_url,
+        json={"status": "custom", "custom_status_label": "Esperando hormigón"},
+    )
+    assert custom.status_code == 200, custom.text
+    assert custom.json()["custom_status_label"] == "Esperando hormigón"
+    refreshed = await f.client.get(f.base + "/daily-activity-plans/" + day)
+    assert refreshed.json()["entries"][0]["task_status"] == "custom"
+    assert refreshed.json()["entries"][0]["custom_status_label"] == "Esperando hormigón"
+
+    assert (await f.client.get(f.base + "/task-overview")).status_code == 200
+    f.actor.role = "admin"
+    assert (await f.client.get(f.base + "/task-overview")).status_code == 403
+    assert (await f.client.get(f.base + "/daily-activity-plans/" + day)).status_code == 403
+    f.actor.role = "engineer"
+    assert (await f.client.get(f.base + "/task-overview")).status_code == 200
+    f.actor.role = "worker"
+    assert (await f.client.get(f.base + "/task-overview")).status_code == 403
+    f.actor.role = "owner"
+
+
+@pytest.mark.asyncio
+async def test_push_subscription_can_be_refreshed_and_disabled(flow):
+    f = flow
+    endpoint = "https://push.example.test/subscription/abc"
+    first = await f.client.post(
+        f.base + "/push/subscriptions",
+        json={"endpoint": endpoint, "keys": {"p256dh": "p" * 80, "auth": "a" * 24}},
+    )
+    assert first.status_code == 204, first.text
+    second = await f.client.post(
+        f.base + "/push/subscriptions",
+        json={"endpoint": endpoint, "keys": {"p256dh": "q" * 80, "auth": "b" * 24}},
+    )
+    assert second.status_code == 204, second.text
+    rows = f.session.query(PushSubscription).all()
+    assert len(rows) == 1 and rows[0].is_active and rows[0].p256dh == "q" * 80
+    removed = await f.client.request(
+        "DELETE", f.base + "/push/subscriptions", json={"endpoint": endpoint}
+    )
+    assert removed.status_code == 204, removed.text
+    f.session.refresh(rows[0])
+    assert not rows[0].is_active
+
+
+@pytest.mark.asyncio
 async def test_folders_pagination_and_lossless_drive_download(flow):
     f = flow
     url = f.base + "/projects/" + f.project.id
@@ -293,6 +515,24 @@ async def test_folders_pagination_and_lossless_drive_download(flow):
     assert (
         await f.client.get(url + "/files", params={"folder_id": str(uuid4())})
     ).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_operational_drive_upload_has_no_legacy_ten_megabyte_cap(flow):
+    f = flow
+    content = (b"Documento grande de obra\n" * 480_000) + b"fin"
+    assert len(content) > 10 * 1024 * 1024
+    url = f.base + "/projects/" + f.project.id
+    uploaded = await f.client.post(
+        url + "/files",
+        files={"file": ("modelo-grande.dwg", content, "application/octet-stream")},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    record = uploaded.json()
+    assert record["size_bytes"] == len(content)
+    downloaded = await f.client.get(url + "/files/" + record["id"] + "/download")
+    assert downloaded.status_code == 200
+    assert hashlib.sha256(downloaded.content).digest() == hashlib.sha256(content).digest()
 
 
 @pytest.mark.asyncio

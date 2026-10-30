@@ -5,7 +5,16 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ProjectStatus = Literal["active", "inactive", "completed", "archived"]
 TaskType = Literal["work", "transport"]
-TaskStatus = Literal["pending", "in_progress", "review", "completed", "cancelled"]
+TaskStatus = Literal[
+    "pending",
+    "received",
+    "in_progress",
+    "missing_tool",
+    "review",
+    "custom",
+    "completed",
+    "cancelled",
+]
 TaskPriority = Literal["low", "normal", "high", "urgent"]
 LevelWorkStatus = Literal["pending", "in_progress", "concreted"]
 
@@ -177,6 +186,7 @@ class TaskCreate(BaseModel):
     title: str = Field(min_length=2, max_length=220)
     description: str | None = Field(default=None, max_length=5000)
     status: TaskStatus = "pending"
+    custom_status_label: str | None = Field(default=None, min_length=2, max_length=80)
     priority: TaskPriority = "normal"
     assigned_user_id: str | None = Field(default=None, min_length=36, max_length=36)
     planned_start_at: datetime | None = None
@@ -187,6 +197,8 @@ class TaskCreate(BaseModel):
     def validate_schedule(self) -> "TaskCreate":
         if self.planned_start_at and self.due_at and self.due_at < self.planned_start_at:
             raise ValueError("La fecha límite no puede ser anterior al inicio planificado")
+        if self.status == "custom" and not self.custom_status_label:
+            raise ValueError("Indique el nombre del estado personalizado")
         return self
 
 
@@ -197,6 +209,7 @@ class TaskPatch(BaseModel):
     title: str | None = Field(default=None, min_length=2, max_length=220)
     description: str | None = Field(default=None, max_length=5000)
     status: TaskStatus | None = None
+    custom_status_label: str | None = Field(default=None, min_length=2, max_length=80)
     priority: TaskPriority | None = None
     assigned_user_id: str | None = Field(default=None, min_length=36, max_length=36)
     planned_start_at: datetime | None = None
@@ -225,6 +238,7 @@ class TaskResponse(BaseModel):
     title: str
     description: str | None
     status: str
+    custom_status_label: str | None
     priority: str
     assigned_user_id: str | None
     planned_start_at: datetime | None

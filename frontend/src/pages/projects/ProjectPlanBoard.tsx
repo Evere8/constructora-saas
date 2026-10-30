@@ -9,6 +9,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Check,
   ChevronDown,
+  Eraser,
   GripVertical,
   Hand,
   Highlighter,
@@ -46,7 +47,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 
 type Point = { x: number; y: number };
-type Tool = 'pan' | 'note' | 'draw' | 'highlight' | 'straight' | 'map-level';
+type Tool = 'pan' | 'note' | 'draw' | 'highlight' | 'straight' | 'eraser' | 'map-level';
 type DrawMode = 'draw' | 'highlight';
 
 // The board has several independent requests (levels, sectors, annotations and
@@ -439,9 +440,10 @@ function FloatingLevelChecklist({
   const dragRef = useRef<{ pointerId: number; clientX: number; clientY: number; origin: Point } | null>(null);
 
   useEffect(() => {
-    setOverlayPosition(position);
-    overlayPositionRef.current = position;
-  }, [level.id]);
+    const nextPosition = { x: position.x, y: position.y };
+    setOverlayPosition(nextPosition);
+    overlayPositionRef.current = nextPosition;
+  }, [level.id, position.x, position.y]);
 
   const checklistQuery = useQuery({
     queryKey: ['checklist', companyId, projectId, { level_id: level.id, limit: 200 }],
@@ -585,7 +587,7 @@ function FloatingLevelChecklist({
   );
 }
 
-function PlanCanvas({
+export function PlanCanvas({
   companyId,
   projectId,
   planUrl,
@@ -658,7 +660,9 @@ function PlanCanvas({
 
   useEffect(() => {
     const configuredThickness = selectedGeometry?.band_thickness ?? selectedGeometry?.height;
-    if (selectedGeometry && configuredThickness && selectedGeometry.width >= selectedGeometry.height * 2) {
+    const geometryWidth = selectedGeometry?.width;
+    const geometryHeight = selectedGeometry?.height;
+    if (configuredThickness && geometryWidth && geometryHeight && geometryWidth >= geometryHeight * 2) {
       setBandThickness(clampRange(configuredThickness, 0.012, 0.08));
     }
   }, [selectedLevelId, selectedGeometry?.band_thickness, selectedGeometry?.height, selectedGeometry?.width]);
@@ -839,6 +843,7 @@ function PlanCanvas({
                 <Button size="sm" variant="outline" className={tool === 'draw' ? 'border-orange-500 bg-orange-500 text-white hover:bg-orange-600 hover:text-white' : ''} onClick={() => setTool('draw')}><PencilLine className="h-4 w-4" /> Lápiz</Button>
                 <Button size="sm" variant="outline" className={tool === 'highlight' ? 'border-orange-500 bg-orange-500 text-white hover:bg-orange-600 hover:text-white' : ''} onClick={() => setTool('highlight')}><Highlighter className="h-4 w-4" /> Iluminador</Button>
                 <Button size="sm" variant="outline" className={tool === 'straight' ? 'border-orange-500 bg-orange-500 text-white hover:bg-orange-600 hover:text-white' : ''} onClick={() => setTool('straight')}><Ruler className="h-4 w-4" /> Trazo recto</Button>
+                <Button size="sm" variant="outline" className={tool === 'eraser' ? 'border-orange-500 bg-orange-500 text-white hover:bg-orange-600 hover:text-white' : ''} onClick={() => setTool('eraser')}><Eraser className="h-4 w-4" /> Borrador</Button>
                 <Button size="sm" variant="outline" disabled={!selectedLevelId} className={tool === 'map-level' ? 'border-orange-500 bg-orange-500 text-white hover:bg-orange-600 hover:text-white' : ''} onClick={() => setTool('map-level')}><MapPin className="h-4 w-4" /> Ubicar nivel</Button>
               </>
             ) : null}
@@ -947,12 +952,13 @@ function PlanCanvas({
                 if (annotation.annotation_type === 'line') {
                   const points = annotationPoints(annotation);
                   if (points.length < 2) return null;
-                  return <polyline key={annotation.id} fill="none" stroke={color} strokeWidth={lineWidth} strokeOpacity={opacity} strokeLinecap="round" strokeLinejoin="round" points={points.map((point) => String(point.x * 1000) + ',' + String(point.y * 1000)).join(' ')} />;
+                  const serialized = points.map((point) => String(point.x * 1000) + ',' + String(point.y * 1000)).join(' ');
+                  return <g key={annotation.id} className={tool === 'eraser' ? 'cursor-crosshair' : ''} onPointerDown={(event) => { if (tool !== 'eraser' || !canEdit) return; event.stopPropagation(); onDeleteAnnotation(annotation.id); }}><polyline fill="none" stroke={color} strokeWidth={lineWidth} strokeOpacity={opacity} strokeLinecap="round" strokeLinejoin="round" points={serialized} /><polyline fill="none" stroke="transparent" strokeWidth={Math.max(24, lineWidth + 16)} strokeLinecap="round" strokeLinejoin="round" pointerEvents={tool === 'eraser' ? 'stroke' : 'none'} points={serialized} /></g>;
                 }
                 if (annotation.annotation_type === 'note') {
                   const point = annotationPoint(annotation);
                   if (!point) return null;
-                  return <g key={annotation.id}><rect x={point.x * 1000} y={point.y * 1000} width="210" height="38" rx="8" fill="#ffedd5" stroke="#f97316" /><text x={point.x * 1000 + 8} y={point.y * 1000 + 24} fill="#7c2d12" fontSize="18" pointerEvents="none">{(annotation.comment || 'Nota').slice(0, 24)}</text></g>;
+                  return <g key={annotation.id} className={tool === 'eraser' ? 'cursor-crosshair' : ''} onPointerDown={(event) => { if (tool !== 'eraser' || !canEdit) return; event.stopPropagation(); onDeleteAnnotation(annotation.id); }}><rect x={point.x * 1000} y={point.y * 1000} width="210" height="38" rx="8" fill="#ffedd5" stroke="#f97316" pointerEvents={tool === 'eraser' ? 'all' : 'none'} /><text x={point.x * 1000 + 8} y={point.y * 1000 + 24} fill="#7c2d12" fontSize="18" pointerEvents="none">{(annotation.comment || 'Nota').slice(0, 24)}</text></g>;
                 }
                 return null;
               })}
@@ -1019,7 +1025,6 @@ export function ProjectPlanBoard({ companyId, project }: { companyId: string; pr
     refetchInterval: BOARD_REFRESH_MS,
     refetchIntervalInBackground: false,
   });
-  const plans = plansQuery.data ?? [];
   const levels = useMemo(
     () => [...asItems(levelsQuery.data)].sort((left, right) => sectorName(left).localeCompare(sectorName(right)) || left.sort_order - right.sort_order || left.name.localeCompare(right.name)),
     [levelsQuery.data],
@@ -1028,7 +1033,7 @@ export function ProjectPlanBoard({ companyId, project }: { companyId: string; pr
     () => [...(sectorsQuery.data ?? [])].sort((left, right) => left.sort_order - right.sort_order || left.name.localeCompare(right.name)),
     [sectorsQuery.data],
   );
-  const versions = useMemo(() => latestVersions(plans), [plans]);
+  const versions = useMemo(() => latestVersions(plansQuery.data ?? []), [plansQuery.data]);
   const version = useMemo(
     () => versions.find((item) => item.id === project.overview_plan_version_id) ?? versions[0] ?? null,
     [project.overview_plan_version_id, versions],

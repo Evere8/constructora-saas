@@ -41,7 +41,8 @@ const schema = z.object({
   title: z.string().min(2, 'El título es obligatorio'),
   description: z.string().optional(),
   task_type: z.enum(['work', 'transport']),
-  status: z.enum(['pending', 'in_progress', 'review', 'completed', 'cancelled']),
+  status: z.enum(['pending', 'received', 'in_progress', 'missing_tool', 'review', 'custom', 'completed', 'cancelled']),
+  custom_status_label: z.string().max(80).optional(),
   priority: z.enum(['low', 'normal', 'high', 'urgent']),
   level_id: z.string().optional(),
   rubro_id: z.string().optional(),
@@ -54,6 +55,9 @@ const schema = z.object({
 }).refine(
   (values) => !values.planned_start_at || !values.due_at || values.due_at >= values.planned_start_at,
   { message: 'La fecha límite debe ser posterior al inicio', path: ['due_at'] },
+).refine(
+  (values) => values.status !== 'custom' || Boolean(values.custom_status_label?.trim()),
+  { message: 'Indica el estado personalizado', path: ['custom_status_label'] },
 );
 
 type FormValues = z.infer<typeof schema>;
@@ -104,6 +108,7 @@ export function TaskFormDialog({
       description: task?.description ?? '',
       task_type: (task?.task_type ?? 'work') as TaskType,
       status: (task?.status ?? 'pending') as TaskStatus,
+      custom_status_label: task?.custom_status_label ?? '',
       priority: (task?.priority ?? 'normal') as TaskPriority,
       level_id: task?.level_id ?? NONE,
       rubro_id: task?.rubro_id ?? defaultRubroId ?? NONE,
@@ -208,6 +213,7 @@ export function TaskFormDialog({
         description: values.description || null,
         task_type: values.task_type,
         status: values.status,
+        custom_status_label: values.status === 'custom' ? values.custom_status_label?.trim() || null : null,
         priority: values.priority,
         level_id: values.level_id && values.level_id !== NONE ? values.level_id : null,
         rubro_id: values.rubro_id && values.rubro_id !== NONE ? values.rubro_id : null,
@@ -432,6 +438,7 @@ export function TaskFormDialog({
                   ))}
                 </SelectContent>
               </Select>
+              {status === 'custom' ? <div className="space-y-1"><Label htmlFor="task-custom-status">Nombre del estado</Label><Input id="task-custom-status" {...register('custom_status_label')} placeholder="Ej.: Esperando aprobación" />{errors.custom_status_label ? <p className="text-xs text-destructive">{errors.custom_status_label.message}</p> : null}</div> : null}
             </div>
           </div>
           {(rubros ?? []).length > 0 ? (

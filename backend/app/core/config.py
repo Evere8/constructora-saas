@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     upload_root: Path = Path("/data/uploads")
     drive_document_remote: str | None = None
     drive_document_config: Path = Path("/etc/constructora/drive-rclone.conf")
+    drive_transfer_timeout_seconds: int = Field(default=21600, ge=60, le=86400)
+    vapid_private_key_path: Path = Path("/etc/constructora/push/vapid-private.pem")
+    vapid_public_key_path: Path = Path("/etc/constructora/push/vapid-public.txt")
+    vapid_subject: str = "mailto:administracion@obrixapy.online"
     evidence_max_bytes: int = 10 * 1024 * 1024
     document_max_bytes: int = 10 * 1024 * 1024
     ocr_max_pdf_pages: int = 25
@@ -73,6 +77,13 @@ class Settings(BaseSettings):
             None,
         )
         return f"{origin.rstrip('/')}/restablecer" if origin else None
+
+    @property
+    def vapid_public_key(self) -> str | None:
+        if not self.vapid_private_key_path.is_file() or not self.vapid_public_key_path.is_file():
+            return None
+        value = self.vapid_public_key_path.read_text().strip()
+        return value or None
 
 
 @lru_cache

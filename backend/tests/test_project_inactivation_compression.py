@@ -171,6 +171,12 @@ async def test_project_file_api_restores_original_after_conditional_drive_upload
     async def download(key):
         return objects[key]
 
+    async def upload_path(key, path):
+        objects[key] = Path(path).read_bytes()
+
+    async def download_to_path(key, path):
+        Path(path).write_bytes(objects[key])
+
     monkeypatch.setattr(project_files, "require_project", require_project)
     monkeypatch.setattr(project_files, "flush_or_conflict", no_op)
     monkeypatch.setattr(project_files, "commit_or_conflict", no_op)
@@ -178,6 +184,8 @@ async def test_project_file_api_restores_original_after_conditional_drive_upload
     monkeypatch.setattr(project_files.project_drive, "drive_location", lambda key: ("config", key))
     monkeypatch.setattr(project_files.project_drive, "upload", upload)
     monkeypatch.setattr(project_files.project_drive, "download", download)
+    monkeypatch.setattr(project_files.project_drive, "upload_path", upload_path)
+    monkeypatch.setattr(project_files.project_drive, "download_to_path", download_to_path)
 
     response = await project_files.upload_file(
         "f43f11c9-898a-489a-8acd-923858b23418",
@@ -190,7 +198,8 @@ async def test_project_file_api_restores_original_after_conditional_drive_upload
     assert response.size_bytes == len(original)
     assert response.stored_size_bytes < len(original)
     restored = await project_files.download_file(response.project_id, response.id, access, Db())
-    assert restored.body == original
+    assert Path(restored.path).read_bytes() == original
+    await restored.background()
 
     objects[response.drive_key] = objects[response.drive_key][:-3]
     with pytest.raises(HTTPException) as damaged:

@@ -7,6 +7,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
@@ -246,6 +247,11 @@ class Task(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "tasks"
     __table_args__ = (
         Index("ix_tasks_company_project_status", "company_id", "project_id", "status"),
+        CheckConstraint(
+            "status in ('pending','received','in_progress','missing_tool','review',"
+            "'custom','completed','cancelled')",
+            name="ck_tasks_status",
+        ),
     )
 
     company_id: Mapped[str] = mapped_column(
@@ -267,6 +273,7 @@ class Task(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     title: Mapped[str] = mapped_column(String(220), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(25), nullable=False, default="pending")
+    custom_status_label: Mapped[str | None] = mapped_column(String(80), nullable=True)
     priority: Mapped[str] = mapped_column(String(15), nullable=False, default="normal")
     assigned_user_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("app_users.id", ondelete="SET NULL"), nullable=True
@@ -1214,6 +1221,32 @@ class NotificationReceipt(UUIDPrimaryKeyMixin, Base):
     read_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class PushSubscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "push_subscriptions"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id", "user_id", "endpoint_hash", name="uq_push_company_user_endpoint"
+        ),
+        Index("ix_push_company_user_active", "company_id", "user_id", "is_active"),
+        Index("ix_push_company_endpoint", "company_id", "endpoint_hash"),
+    )
+
+    company_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("app_users.id", ondelete="CASCADE"), nullable=False
+    )
+    endpoint_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    endpoint: Mapped[str] = mapped_column(Text, nullable=False)
+    p256dh: Mapped[str] = mapped_column(Text, nullable=False)
+    auth: Mapped[str] = mapped_column(Text, nullable=False)
+    user_agent: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
     )
 
 

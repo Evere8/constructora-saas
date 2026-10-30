@@ -29,6 +29,7 @@ from app.api.schemas.task_library import (
     TaskTemplateResponse,
 )
 from app.db.models import (
+    AppUser,
     DailyTask,
     DailyTaskChecklistItem,
     DailyTaskTemplate,
@@ -46,6 +47,42 @@ from app.db.models import (
 router = APIRouter()
 
 
+@router.get("/task-overview")
+async def task_overview(
+    access: CurrentCompanyAccess,
+    db: DbSession,
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    """Company-wide task oversight is intentionally limited to owner and engineer."""
+    require_role(access, {"owner", "engineer"})
+    filters = (Task.company_id == access.company_id,)
+    rows = (
+        await db.execute(
+            select(Task, Project.name, AppUser.full_name, AppUser.email)
+            .join(Project, Project.id == Task.project_id)
+            .outerjoin(AppUser, AppUser.id == Task.assigned_user_id)
+            .where(*filters)
+            .order_by(Task.created_at.desc(), Task.id)
+            .limit(limit)
+            .offset(offset)
+        )
+    ).all()
+    return {
+        "items": [
+            {
+                **TaskResponse.model_validate(task).model_dump(),
+                "project_name": project_name,
+                "assigned_user_name": full_name or email,
+            }
+            for task, project_name, full_name, email in rows
+        ],
+        "total": await db.scalar(select(func.count(Task.id)).where(*filters)) or 0,
+        "offset": offset,
+        "limit": limit,
+    }
+
+
 @router.get("/my-tasks")
 async def my_work_tasks(
     access: CurrentCompanyAccess,
@@ -56,7 +93,7 @@ async def my_work_tasks(
     filters = (
         Task.company_id == access.company_id,
         Task.assigned_user_id == access.user.id,
-        Task.status.in_(("pending", "in_progress", "review")),
+        Task.status.not_in(("completed", "cancelled")),
     )
     rows = (
         await db.execute(
@@ -100,7 +137,7 @@ async def my_tasks_summary(access: CurrentCompanyAccess, db: DbSession) -> dict[
             select(func.count(Task.id)).where(
                 Task.company_id == access.company_id,
                 Task.assigned_user_id == access.user.id,
-                Task.status.in_(("pending", "in_progress", "review")),
+                Task.status.not_in(("completed", "cancelled")),
             )
         )
         or 0

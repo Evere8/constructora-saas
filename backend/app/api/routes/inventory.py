@@ -1,5 +1,3 @@
-from datetime import UTC, datetime
-
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import aliased
@@ -9,6 +7,7 @@ from app.api.routes.operations import (
     add_activity,
     commit_or_conflict,
     flush_or_conflict,
+    require_assignee,
     require_project,
     require_role,
 )
@@ -18,6 +17,7 @@ from app.api.schemas.modules import (
     InventoryItemResponse,
     InventoryMovementCreate,
     InventoryMovementResponse,
+    InventoryRelocationCreate,
     InventoryRelocationRequestResponse,
 )
 from app.db.models import (
@@ -28,22 +28,37 @@ from app.db.models import (
     Project,
     Task,
 )
-from app.services.operational_alerts import refresh_linked_requirement_availability
+from app.services.inventory_relocations import (
+    cancel_relocation,
+    complete_relocation,
+    start_relocation,
+)
+from app.services.operational_alerts import (
+    refresh_linked_requirement_availability,
+    sync_company_alerts,
+)
+from app.services.push_notifications import send_push_to_user
 
 router = APIRouter()
 
 INVENTORY_EDITOR_ROLES = {"platform_admin", "owner", "admin", "warehouse"}
-MOVEMENT_EDITOR_ROLES = INVENTORY_EDITOR_ROLES | {"engineer", "supervisor"}
-RELOCATION_SELF_ROLES = {"worker", "transport"}
+MOVEMENT_MANAGER_ROLES = {"platform_admin", "owner", "admin"}
 ACTIVE_RELOCATION_STATUSES = ("pending", "in_transit")
 
 
-async def require_item(db: DbSession, company_id: str, item_id: str) -> InventoryItem:
-    item = await db.scalar(
-        select(InventoryItem).where(
-            InventoryItem.id == item_id, InventoryItem.company_id == company_id
-        )
+async def require_item(
+    db: DbSession,
+    company_id: str,
+    item_id: str,
+    *,
+    for_update: bool = False,
+) -> InventoryItem:
+    statement = select(InventoryItem).where(
+        InventoryItem.id == item_id, InventoryItem.company_id == company_id
     )
+    if for_update:
+        statement = statement.with_for_update()
+    item = await db.scalar(statement)
     if item is None:
         raise HTTPException(status_code=404, detail="Herramienta o material no encontrado")
     return item
@@ -53,13 +68,16 @@ async def require_relocation(
     db: DbSession,
     company_id: str,
     relocation_id: str,
+    *,
+    for_update: bool = False,
 ) -> InventoryRelocationRequest:
-    relocation = await db.scalar(
-        select(InventoryRelocationRequest).where(
-            InventoryRelocationRequest.id == relocation_id,
-            InventoryRelocationRequest.company_id == company_id,
-        )
+    statement = select(InventoryRelocationRequest).where(
+        InventoryRelocationRequest.id == relocation_id,
+        InventoryRelocationRequest.company_id == company_id,
     )
+    if for_update:
+        statement = statement.with_for_update()
+    relocation = await db.scalar(statement)
     if relocation is None:
         raise HTTPException(status_code=404, detail="Solicitud de reubicación no encontrada")
     return relocation
@@ -71,16 +89,22 @@ def require_relocation_actor(
 ) -> None:
     # Task-linked relocation has its own workflow and assignee checks; it is
     # independent of the permission to close the company's daily inventory.
-    if access.role in MOVEMENT_EDITOR_ROLES or access.can_register_inventory_day:
+    if access.role in MOVEMENT_MANAGER_ROLES or access.can_register_inventory_day:
         return
-    if (
-        access.role in RELOCATION_SELF_ROLES
-        and relocation.assigned_user_id == access.user.id
-    ):
+    if relocation.assigned_user_id == access.user.id:
         return
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Solo el responsable asignado puede actualizar esta reubicación",
+    )
+
+
+def require_movement_manager(access: CurrentCompanyAccess) -> None:
+    if access.role in MOVEMENT_MANAGER_ROLES or access.can_register_inventory_day:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="El administrador debe habilitarle Registrar movimientos diarios",
     )
 
 
@@ -193,7 +217,11 @@ async def list_inventory_relocations(
     task_id: str | None = Query(default=None),
     active_only: bool = Query(default=True),
 ) -> list[InventoryRelocationRequestResponse]:
-    assigned_user_id = access.user.id if access.role in RELOCATION_SELF_ROLES else None
+    assigned_user_id = (
+        None
+        if access.role in MOVEMENT_MANAGER_ROLES or access.can_register_inventory_day
+        else access.user.id
+    )
     rows = await fetch_relocation_rows(
         db,
         access.company_id,
@@ -203,6 +231,100 @@ async def list_inventory_relocations(
         assigned_user_id=assigned_user_id,
     )
     return [relocation_response(*row) for row in rows]
+
+
+@router.post(
+    "/inventory/relocations",
+    response_model=InventoryRelocationRequestResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def request_inventory_relocation(
+    payload: InventoryRelocationCreate,
+    access: CurrentCompanyAccess,
+    db: DbSession,
+) -> InventoryRelocationRequestResponse:
+    require_movement_manager(access)
+    item = await require_item(
+        db,
+        access.company_id,
+        payload.inventory_item_id,
+        for_update=True,
+    )
+    destination = await require_project(db, access.company_id, payload.to_project_id)
+    if destination.status != "active":
+        raise HTTPException(status_code=422, detail="El destino debe ser una obra activa")
+    await require_assignee(db, access.company_id, payload.assigned_user_id)
+    if item.current_project_id == destination.id:
+        raise HTTPException(status_code=422, detail="La herramienta ya está en esa obra")
+    if item.status in {"maintenance", "retired", "relocation_pending", "in_transit"}:
+        raise HTTPException(
+            status_code=409,
+            detail="La herramienta no está disponible para una nueva reubicación",
+        )
+    existing = await db.scalar(
+        select(InventoryRelocationRequest.id).where(
+            InventoryRelocationRequest.company_id == access.company_id,
+            InventoryRelocationRequest.inventory_item_id == item.id,
+            InventoryRelocationRequest.status.in_(ACTIVE_RELOCATION_STATUSES),
+        )
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="La herramienta ya tiene un traslado activo")
+    task = Task(
+        company_id=access.company_id,
+        project_id=destination.id,
+        task_type="transport",
+        title=f"Reubicar {item.name} a {destination.name}",
+        description=(
+            f"Trasladar {item.code} · {item.name} desde su ubicación actual a "
+            f"{destination.name}. La ubicación cambia al marcar la tarea como terminada."
+        ),
+        status="pending",
+        priority="normal",
+        assigned_user_id=payload.assigned_user_id,
+        location_text=destination.name,
+        created_by_user_id=access.user.id,
+    )
+    db.add(task)
+    await flush_or_conflict(db, "No se pudo crear la tarea de reubicación")
+    relocation = InventoryRelocationRequest(
+        company_id=access.company_id,
+        task_id=task.id,
+        inventory_item_id=item.id,
+        from_project_id=item.current_project_id,
+        to_project_id=destination.id,
+        assigned_user_id=payload.assigned_user_id,
+        requested_by_user_id=access.user.id,
+        status="pending",
+        notes=payload.notes,
+    )
+    db.add(relocation)
+    item.status = "relocation_pending"
+    await flush_or_conflict(db, "No se pudo solicitar la reubicación")
+    await sync_company_alerts(db, access.company_id)
+    add_activity(
+        db,
+        access,
+        "inventory.relocation.requested",
+        "inventory_relocation_request",
+        relocation.id,
+        {"item_id": item.id, "task_id": task.id, "to_project_id": destination.id},
+    )
+    await commit_or_conflict(db, "No se pudo solicitar la reubicación")
+    await send_push_to_user(
+        db,
+        access.company_id,
+        task.assigned_user_id,
+        {
+            "title": "Traslado asignado",
+            "body": task.title,
+            "url": "/tareas",
+            "task_id": task.id,
+            "project_id": task.project_id,
+            "actions": ["received", "in_progress"],
+        },
+    )
+    return await fetch_relocation_response(db, access.company_id, relocation.id)
 
 
 @router.get("/inventory", response_model=list[InventoryItemResponse])
@@ -266,7 +388,7 @@ async def update_inventory_item(
     db: DbSession,
 ) -> InventoryItem:
     require_role(access, INVENTORY_EDITOR_ROLES)
-    item = await require_item(db, access.company_id, item_id)
+    item = await require_item(db, access.company_id, item_id, for_update=True)
     changes = payload.model_dump(exclude_unset=True)
     if changes.get("status") in {"relocation_pending", "in_transit"}:
         raise HTTPException(
@@ -331,9 +453,8 @@ async def create_inventory_movement(
     access: CurrentCompanyAccess,
     db: DbSession,
 ) -> InventoryMovement:
-    if access.role not in {"owner", "admin"} and not access.can_register_inventory_day:
-        raise HTTPException(status_code=403, detail="No tiene permiso para registrar movimientos")
-    item = await require_item(db, access.company_id, payload.item_id)
+    require_movement_manager(access)
+    item = await require_item(db, access.company_id, payload.item_id, for_update=True)
     if item.status in {"relocation_pending", "in_transit"}:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -380,17 +501,11 @@ async def start_inventory_relocation(
     access: CurrentCompanyAccess,
     db: DbSession,
 ) -> InventoryRelocationRequestResponse:
-    relocation = await require_relocation(db, access.company_id, relocation_id)
+    relocation = await require_relocation(
+        db, access.company_id, relocation_id, for_update=True
+    )
     require_relocation_actor(access, relocation)
-    if relocation.status != "pending":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="La reubicación ya fue iniciada, completada o cancelada",
-        )
-    item = await require_item(db, access.company_id, relocation.inventory_item_id)
-    relocation.status = "in_transit"
-    relocation.started_at = datetime.now(UTC).replace(tzinfo=None)
-    item.status = "in_transit"
+    item, _ = await start_relocation(db, access.company_id, relocation)
     add_activity(
         db,
         access,
@@ -412,34 +527,13 @@ async def complete_inventory_relocation(
     access: CurrentCompanyAccess,
     db: DbSession,
 ) -> InventoryRelocationRequestResponse:
-    relocation = await require_relocation(db, access.company_id, relocation_id)
-    require_relocation_actor(access, relocation)
-    if relocation.status not in ACTIVE_RELOCATION_STATUSES:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="La reubicación ya fue completada o cancelada",
-        )
-    item = await require_item(db, access.company_id, relocation.inventory_item_id)
-    task = await db.scalar(select(Task).where(Task.id == relocation.task_id))
-    if task is None:
-        raise HTTPException(status_code=404, detail="La tarea vinculada ya no existe")
-    current = datetime.now(UTC).replace(tzinfo=None)
-    movement = InventoryMovement(
-        company_id=access.company_id,
-        item_id=item.id,
-        from_project_id=relocation.from_project_id,
-        to_project_id=relocation.to_project_id,
-        quantity=item.quantity,
-        notes=relocation.notes or f"Reubicación para tarea: {task.title}",
-        moved_by_user_id=access.user.id,
-        moved_at=current,
+    relocation = await require_relocation(
+        db, access.company_id, relocation_id, for_update=True
     )
-    db.add(movement)
-    relocation.status = "completed"
-    relocation.completed_at = current
-    item.current_project_id = relocation.to_project_id
-    item.status = "assigned"
-    await refresh_linked_requirement_availability(db, access.company_id)
+    require_relocation_actor(access, relocation)
+    item, _, _ = await complete_relocation(
+        db, access.company_id, relocation, actor_user_id=access.user.id
+    )
     add_activity(
         db,
         access,
@@ -465,19 +559,11 @@ async def cancel_inventory_relocation(
     access: CurrentCompanyAccess,
     db: DbSession,
 ) -> InventoryRelocationRequestResponse:
-    relocation = await require_relocation(db, access.company_id, relocation_id)
-    require_role(access, MOVEMENT_EDITOR_ROLES)
-    if relocation.status != "pending":
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Solo se puede cancelar una reubicación que aún no inició",
-        )
-    item = await require_item(db, access.company_id, relocation.inventory_item_id)
-    relocation.status = "cancelled"
-    relocation.cancelled_at = datetime.now(UTC).replace(tzinfo=None)
-    item.current_project_id = relocation.from_project_id
-    item.status = "assigned" if relocation.from_project_id else "available"
-    await refresh_linked_requirement_availability(db, access.company_id)
+    relocation = await require_relocation(
+        db, access.company_id, relocation_id, for_update=True
+    )
+    require_movement_manager(access)
+    item, _ = await cancel_relocation(db, access.company_id, relocation)
     add_activity(
         db,
         access,

@@ -14,6 +14,7 @@ from app.api.routes import (
     plans,
     platform,
     project_files,
+    push,
     reports,
     rubros,
     task_library,
@@ -87,4 +88,9 @@ api_router.include_router(
     task_library.router,
     prefix="/v1/companies/{company_id}",
     tags=["task-library"],
+)
+api_router.include_router(
+    push.router,
+    prefix="/v1/companies/{company_id}",
+    tags=["push"],
 )

@@ -60,6 +60,8 @@ class ActivityDefinitionResponse(ActivityDefinitionInput):
 class ActivityEntryInput(BaseModel):
     project_id: str
     activity_definition_id: str | None = None
+    assigned_user_id: str | None = Field(default=None, min_length=36, max_length=36)
+    task_id: str | None = Field(default=None, min_length=36, max_length=36)
     people_count: int = Field(ge=0, le=10000)
     note: str | None = Field(default=None, max_length=2000)
 
@@ -85,6 +87,11 @@ class ActivityEntryResponse(BaseModel):
     project_name: str
     activity_definition_id: str | None
     activity_title: str | None
+    assigned_user_id: str | None
+    assigned_user_name: str | None
+    task_id: str | None
+    task_status: str | None
+    custom_status_label: str | None
     people_count: int
     note: str | None
     verification: str

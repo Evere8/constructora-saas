@@ -58,3 +58,28 @@ def test_retry_does_not_silently_accept_an_unexpected_table():
         ddl = ResumableDDL(Operations(MigrationContext.configure(connection)))
         with pytest.raises(RuntimeError, match="estructura inesperada"):
             ddl.create_table("example", sa.Column("id", sa.Integer), sa.Column("missing", sa.Text))
+
+
+def test_task_status_check_is_replaced_once_and_supports_assignee_workflow():
+    output = StringIO()
+    context = MigrationContext.configure(
+        dialect_name="mysql",
+        opts={"as_sql": True, "output_buffer": output},
+    )
+    ddl = ResumableDDL(Operations(context))
+    ddl.inspector = lambda: SimpleNamespace(
+        get_check_constraints=lambda _: [
+            {
+                "name": "ck_tasks_status",
+                "sqltext": "status in ('pending','in_progress','review','completed','cancelled')",
+            }
+        ]
+    )
+    condition = (
+        "status in ('pending','received','in_progress','missing_tool','review',"
+        "'custom','completed','cancelled')"
+    )
+    ddl.replace_check_constraint("ck_tasks_status", "tasks", condition)
+    sql = output.getvalue()
+    assert "DROP CHECK ck_tasks_status" in sql
+    assert "received" in sql and "missing_tool" in sql and "custom" in sql
