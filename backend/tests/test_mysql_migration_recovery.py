@@ -24,6 +24,7 @@ from alembic.config import Config
 from alembic.operations import Operations
 from alembic.script import ScriptDirectory
 from app.core.config import get_settings
+from app.db.base import Base
 
 REV9 = "0009_task_library_daily_tasks_and_sectors"
 HEAD = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
@@ -135,6 +136,9 @@ class TestDatabase:
             assert "uq_project_level_name" not in indexes
             assert "uq_project_level_sector_name" not in indexes
             assert "uq_project_level_sector_id_name" in indexes
+            for table in Base.metadata.tables.values():
+                # Resolve every mapped column against the real MySQL schema.
+                connection.execute(sa.select(table).limit(0))
 
         self.run(check)
 

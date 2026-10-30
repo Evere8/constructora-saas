@@ -1,91 +1,152 @@
-# Carpetas de obra en Drive: configuración operativa separada
+# Drive operativo: documentos y carpetas de obra
 
-Los archivos de **Carpetas y documentos de la obra** no se guardan de forma
-permanente en `app_uploads`. Se cargan a Drive mediante un remoto cifrado de
-rclone con rutas opacas (ID de constructora/obra/archivo); MySQL conserva el
-nombre, la carpeta lógica, el tamaño original y el SHA-256. Antes de subir,
-se prueba compresión gzip sin pérdidas: se guarda comprimido **solo si ahorra
-al menos 1 KiB y 5 %**; si no, por ejemplo un DWG ya comprimido, se guarda
-íntegro con su peso. La descarga restaura los bytes originales y verifica
-su tamaño y hash. El tamaño guardado y la codificación quedan registrados.
-Los planos PDF interactivos existentes **no se migran ni se borran**: conservan
-su almacenamiento local, anotaciones y versiones actuales. Las carpetas nuevas
-no modifican el sistema de respaldos de `docs/BACKUPS_GOOGLE_DRIVE.md`.
+Los archivos nuevos de **Carpetas y documentos de la obra** se guardan en Drive,
+no permanentemente en el volumen del VPS. MySQL conserva carpetas, nombres,
+permisos, tamaños y hash. Los archivos se transmiten por la API; puede haber
+buffer temporal durante la transferencia, pero no un segundo almacén permanente.
 
-El Drive de respaldo `gdrive-crypt:` y `/root/.config/rclone/rclone.conf` no
-se montan ni se comparten con la API. No utilice el directorio `Backups` como
-destino operativo. La función queda en modo no configurado (HTTP 503 al subir)
-hasta crear un remoto independiente. El límite actual es 10 MB por archivo;
-se admiten extensiones arbitrarias, pero siempre se descargan como adjunto,
-nunca se ejecutan dentro de la aplicación.
+Límite por archivo: **10 MiB**. Se admiten PDF, imágenes, DWG/AutoCAD, planillas
+y otras extensiones. La descarga es un adjunto: nunca ejecuta HTML o scripts.
+La carga lee nuevamente el objeto desde Drive antes de confirmar su registro;
+la descarga verifica tamaño y SHA-256 del original.
 
-## Alta en el VPS, únicamente para Constructora
+## Separación de los respaldos
 
-1. Antes de desplegar el nuevo código, cree un respaldo verificado de MySQL y
-   confirme los servicios activos de `constructora`. No reinicie ni cambie otros
-   proyectos del mismo servidor.
-2. Configure un OAuth de Google Drive independiente y una ubicación exclusiva
-   `Obrixapy/ProjectFiles`. Puede ser la misma cuenta propietaria, pero use otro
-   archivo de configuración y, preferentemente, otro cliente/permiso OAuth.
-   Cree un remoto `gdrive-docs` y un remoto `project-docs` de tipo `crypt` cuyo
-   origen sea `gdrive-docs:Obrixapy/ProjectFiles`. El cifrado estándar de
-   nombres y contenido debe permanecer activo. Guarde contraseña y salt fuera
-   del VPS.
-3. Inicie una sesión con túnel OAuth desde PowerShell:
+La API NO recibe el remoto de respaldo `gdrive:`/`gdrive-crypt:` ni
+`/root/.config/rclone/rclone.conf`. Esos remotos están prohibidos en el servicio.
+Se puede usar la misma cuenta de Google, pero con una configuración operativa
+independiente y una carpeta exclusiva. No copie las credenciales del respaldo
+ni use `Backups` como almacén de documentos activos.
+
+## Configuración, una sola vez
+
+Si ya existe `/etc/constructora/drive-rclone.conf`, no lo sobrescriba ni copie
+a ciegas: compruebe con su administrador que es el archivo **operativo** anterior.
+Conserve una copia privada y configure la ruta nueva indicada abajo. Nunca
+comparta tokens, contraseñas ni la salida de `rclone config show`.
+
+1. En una segunda ventana PowerShell, abra un túnel SSH:
 
    ```powershell
-   ssh -L 53682:127.0.0.1:53682 everadmin@179.199.139.81
+   ssh -L 53682:127.0.0.1:53682 root@179.199.139.81
    ```
 
-4. En el VPS:
+2. En esa sesión del VPS, compruebe `rclone version`. Si falta, instale el
+   paquete con `sudo apt-get update` y `sudo apt-get install rclone`.
+   No ejecute una actualización general de Ubuntu.
+
+3. Prepare SOLO este directorio nuevo. No cambie permisos del directorio de
+   respaldos:
 
    ```bash
-   sudo install -d -m 750 -o root -g 10001 /etc/constructora
-   sudo touch /etc/constructora/drive-rclone.conf
-   sudo chmod 640 /etc/constructora/drive-rclone.conf
-   sudo RCLONE_CONFIG=/etc/constructora/drive-rclone.conf rclone config
-   sudo chown root:10001 /etc/constructora/drive-rclone.conf
-   sudo rclone --config /etc/constructora/drive-rclone.conf mkdir project-docs:obrixapy/project-files
-   sudo rclone --config /etc/constructora/drive-rclone.conf lsd project-docs:
+   sudo install -d -m 755 /etc/constructora
+   sudo install -d -m 700 -o 10001 -g 10001 /etc/constructora/project-docs
+   sudo rclone --config /etc/constructora/project-docs/rclone.conf config
    ```
 
-   Nunca imprima `rclone config show` en una terminal compartida. La API corre
-   como UID/GID 10001 y solo recibe lectura del config operativo.
-5. Compruebe que el remoto operativo permite subir/leer un archivo de prueba
-   y quite *solamente ese archivo de prueba* tras verificar su contenido. No
-   borre ninguna ruta del respaldo. Para activar el montaje, añada
-   `-f app/deploy/compose.drive-documents.yaml` **al final** de los archivos
-   Compose usados para `api` en los comandos de build, migración y `up`. Ejemplo
-   de estructura (ajuste rutas según la instalación real):
+4. En el asistente de rclone:
+   - `n` → remoto nuevo `gdrive-docs`.
+   - Tipo `drive` (Google Drive). No use números de menú: varían por versión.
+   - Si no tiene cliente OAuth propio, deje esos campos vacíos.
+   - Permiso `drive.file` para los archivos creados por esta conexión.
+   - Mantenga el túnel abierto. En autenticación con navegador elija `y`;
+     abra en su PC la URL local que indique rclone y autorice la cuenta correcta.
+     No publique esa URL ni el token.
+   - Confirme el remoto. No seleccione una unidad compartida si no la utiliza.
+   - Cree otro remoto `project-docs`, tipo `crypt`.
+   - Destino: `gdrive-docs:Obrixapy/ProjectFiles`.
+   - Cifrado de nombres: `standard`; cifrado de directorios: activado.
+   - Genere y guarde contraseña y salt en un gestor seguro, fuera del VPS.
+     Perderlos impide recuperar los documentos. Termine con `q`.
+
+5. Permita que la API renueve sus tokens sin abrir el archivo a otros usuarios:
+
+   ```bash
+   sudo chown 10001:10001 /etc/constructora/project-docs/rclone.conf
+   sudo chmod 600 /etc/constructora/project-docs/rclone.conf
+   sudo chmod 700 /etc/constructora/project-docs
+   ```
+
+   El montaje es de **un directorio dedicado escribible**, no de un archivo
+   solo lectura: OAuth necesita actualizar tokens y reemplazar el archivo
+   atómicamente. No cifre interactivamente todo el config con una clave que el
+   contenedor no pueda obtener; el acceso se protege con permisos del sistema,
+   y los objetos remotos con `crypt`.
+
+6. El script `deploy/update-operations.sh` detecta este archivo, añade
+   `compose.drive-documents.yaml` y ejecuta una prueba real de escritura,
+   lectura idéntica y borrado **de un único objeto temporal**. Si la prueba
+   falla, se detiene antes de pausar la aplicación o migrar la base.
+
+   Si la aplicación ya está actualizada, active solamente el montaje operativo:
 
    ```bash
    cd /opt/constructora
-   sudo docker compose --env-file frontend.env \
-     -f compose.yaml \
-     -f app/deploy/compose.backend.yaml \
-     -f app/deploy/compose.frontend.yaml \
-     -f app/deploy/compose.drive-documents.yaml \
-     config --quiet
+   docker compose --project-name constructora --env-file frontend.env \
+     -f compose.yaml -f app/deploy/compose.backend.yaml \
+     -f app/deploy/compose.frontend.yaml -f app/deploy/compose.drive-documents.yaml \
+     run --rm --no-deps -T api python -m app.services.verify_project_drive
    ```
 
-   No agregue este último archivo si todavía no existe el remoto o el archivo
-   `/etc/constructora/drive-rclone.conf`: el montaje opcional fallará. Después
-   de migrar, reconstruya y recree solo `api frontend`, y verifique
-   `/api/health/ready` y `/healthz`.
+   Debe mostrar `DRIVE_OK`. SOLO entonces:
 
-## Archivo de obras completadas/inactivas
+   ```bash
+   docker compose --project-name constructora --env-file frontend.env \
+     -f compose.yaml -f app/deploy/compose.backend.yaml \
+     -f app/deploy/compose.frontend.yaml -f app/deploy/compose.drive-documents.yaml \
+     up -d --no-deps --force-recreate --wait api
+   ```
 
-Un propietario o administrador dispone de un botón **Marcar inactiva**, con
-confirmación, en cada obra activa. La acción se audita y puede revertirse con
-**Reactivar obra**. Un ingeniero no puede inactivarla mediante el formulario
-ni mediante la API; crear una obra inactiva directamente tampoco está
-permitido. El cambio de estado **no borra, mueve ni recomprime** archivos.
+7. Pruebe desde Planos: carpeta → subcarpeta → subir un archivo de prueba →
+   descargarlo y abrirlo. La prueba real de Google/VPS es obligatoria: las
+   pruebas del repositorio usan un almacén aislado, no sus credenciales.
 
-La compresión condicional descrita arriba se aplica a **nuevos documentos de
-carpetas operativas en Drive**, sean de una obra activa, inactiva o completada.
-No se aplica retroactivamente a archivos ya cargados, ni al volumen local de
-planos PDF interactivos, versiones y anotaciones del VPS. Comprimir ese volumen
-sin un proceso verificado de restauración podría romper enlaces y copias de
-seguridad. Primero se necesita un inventario de originales, prueba de
-integridad/restauración y una política de retención aprobada. No interprete
-`Inactiva` o `Completada` como autorización para borrar planos existentes.
+## Inactivación y compresión reversible
+
+Solo propietario/administrador puede **Marcar inactiva**, con confirmación y
+auditoría, o **Reactivar obra**. El formulario no permite saltarse esa acción.
+
+Al inactivar, la interfaz recorre los archivos uno por uno. Prueba gzip sin
+pérdidas y lo conserva únicamente si ahorra al menos 1 KiB y 5 %. Si no mejora
+(por ejemplo un DWG ya comprimido), mantiene exactamente el archivo original.
+No hay conversión de AutoCAD ni pérdida de capas/calidad.
+
+Los archivos locales anteriores permanecen en su proveedor local; los documentos
+de carpetas permanecen en Drive. Se incluyen versiones de planos, documentos de
+rubros, adjuntos de puntos, evidencias y archivos de elongaciones, incluidos
+los exports referenciados por esos registros. No se borra información de MySQL,
+checklists, geometría, nombres ni estructura de carpetas.
+
+Antes de sustituir un original se verifica que la copia reconstruye los mismos
+bytes. Solo después se actualiza el índice. Los lectores temporales se limpian
+incluso si falla una vista previa. Una referencia auxiliar conserva la lectura
+para trabajos que hubieran empezado antes del archivado local.
+
+Si se cierra la pestaña, el archivado puede quedar pendiente: al entrar a la obra
+inactiva aparece **Reanudar compresión**. Cada archivo ya comprobado se salta.
+Un fallo mantiene el original. No se archivan automáticamente las completadas.
+Reactivar recupera el acceso normal; la descompresión para lectura es transparente.
+
+Los documentos nuevos de carpetas también usan compresión condicional al subir,
+sin cambiar el original descargado.
+
+## Copias y recuperación
+
+Conserve por separado:
+- respaldo MySQL (índice y referencias);
+- respaldo del volumen de archivos locales;
+- copia segura de la configuración y claves del Drive operativo;
+- una copia independiente de los objetos operativos de Drive.
+
+El respaldo local de despliegue **no descarga todo Drive**. No equivale a una
+segunda copia del almacén remoto. Configure esa política de copias antes de
+usar Drive como única ubicación de documentos críticos.
+
+Después de archivar no vuelva a código anterior que desconozca
+`packed:v1:`/`drive:v1:`. No ejecute downgrade automático. Recuperar una versión
+antigua exige coordinar base, volumen y objetos remotos, además de conservar
+los registros nuevos.
+
+Referencias oficiales: [configuración remota](https://rclone.org/remote_setup/),
+[Google Drive y scopes](https://rclone.org/drive/),
+[archivo de configuración y tokens](https://rclone.org/docs/#config-config-file).

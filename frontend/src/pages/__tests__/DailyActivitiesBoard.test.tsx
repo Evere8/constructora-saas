@@ -40,7 +40,7 @@ it('retains an edited draft and its original revision after another user updates
   const client = setup();
   await waitFor(() => expect(screen.getByRole('spinbutton')).toHaveValue(6));
   fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '8' } });
-  act(() => client.setQueryData(['daily-activity-plan', 'company', '2026-10-29'], { ...plan, revision: 'revision-2' }));
+  act(() => { client.setQueryData(['daily-activity-plan', 'company', '2026-10-29'], { ...plan, revision: 'revision-2' }); });
   expect(screen.getByRole('spinbutton')).toHaveValue(8);
   fireEvent.click(screen.getByRole('button', { name: 'Guardar borrador' }));
   await waitFor(() => expect(savePlan).toHaveBeenCalledWith('company', '2026-10-29', expect.arrayContaining([expect.objectContaining({ people_count: 8 })]), 'revision-1'));

@@ -43,6 +43,9 @@ class AsyncAdapter:
     def add(self, value):
         self.session.add(value)
 
+    def add_all(self, values):
+        self.session.add_all(values)
+
     async def execute(self, statement):
         return self.session.execute(statement)
 
@@ -366,6 +369,13 @@ async def test_pdf_color_defaults_annotation_idempotence_and_deletion(flow):
     f.session.add_all([document, color])
     f.session.commit()
     url = f.base + f"/projects/{f.project.id}/rubros/{rubro.id}"
+    renamed = await f.client.patch(
+        url + f"/perforation-colors/{color.id}",
+        json={"name": "Perforado y corte", "color_hex": "#22C55E"},
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["name"] == "Perforado y corte"
+    assert renamed.json()["color_hex"] == "#22C55E"
     point_input = {
         "document_id": document.id,
         "color_id": color.id,
@@ -408,6 +418,36 @@ async def test_pdf_color_defaults_annotation_idempotence_and_deletion(flow):
     assert (
         await f.client.delete(url + "/perforation-points/" + point.json()["id"])
     ).status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_rubros_can_remove_features_and_deleted_defaults_do_not_return(flow):
+    f = flow
+    url = f.base + f"/projects/{f.project.id}/rubros"
+    seeded = await f.client.get(url)
+    assert seeded.status_code == 200, seeded.text
+    postensado = next(item for item in seeded.json() if item["slug"] == "postensado")
+    assert postensado["features"]
+
+    without_features = await f.client.put(
+        url + f"/{postensado['id']}/features", json={"features": []}
+    )
+    assert without_features.status_code == 200, without_features.text
+    assert without_features.json()["features"] == []
+
+    assert (await f.client.delete(url + f"/{postensado['id']}")).status_code == 204
+    assert "postensado" not in {item["slug"] for item in (await f.client.get(url)).json()}
+
+    custom = await f.client.post(
+        url,
+        json={"name": "Rubro temporal", "feature_keys": ["interactive_pdf", "tasks"]},
+    )
+    assert custom.status_code == 201, custom.text
+    assert {item["feature_key"] for item in custom.json()["features"]} == {
+        "interactive_pdf",
+        "tasks",
+    }
+    assert (await f.client.delete(url + f"/{custom.json()['id']}")).status_code == 204
 
 
 def legacy_drive_file(f, content):
@@ -475,6 +515,20 @@ async def test_corrupt_replacement_cannot_delete_or_change_original(flow, monkey
     f.session.refresh(record)
     assert record.drive_key == key and not record.compression_checked
     assert f.remote[key] == content
+
+
+@pytest.mark.asyncio
+async def test_corrupt_original_drive_object_is_reported_without_replacement(flow):
+    f = flow
+    content = b"original " * 10000
+    record, key = legacy_drive_file(f, content)
+    f.remote[key] = content[:-7]
+
+    response = await f.client.post(f.base + f"/projects/{f.project.id}/archive-step")
+    assert response.status_code == 502
+    f.session.refresh(record)
+    assert record.drive_key == key and not record.compression_checked
+    assert set(f.remote) == {key}
 
 
 @pytest.mark.asyncio

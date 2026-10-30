@@ -162,7 +162,14 @@ async def archive_one(db, company_id, project_id):
     if record is None:
         return
     original_stored = await project_drive.download(record.drive_key)
-    content = project_file_codec.decode(original_stored, record.storage_encoding, record.size_bytes)
+    try:
+        content = project_file_codec.decode(
+            original_stored, record.storage_encoding, record.size_bytes
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=502, detail="El archivo original de Drive está dañado o incompleto"
+        ) from exc
     if hashlib.sha256(content).hexdigest() != record.sha256:
         raise HTTPException(
             status_code=502, detail="Falló la integridad del archivo original en Drive"
@@ -174,10 +181,13 @@ async def archive_one(db, company_id, project_id):
         replacement = f"{company_id.replace('-', '')}/{project_id.replace('-', '')}/{uuid4().hex}"
         await project_drive.upload(replacement, stored)
         verified = await project_drive.download(replacement)
-        if (
-            verified != stored
-            or project_file_codec.decode(verified, encoding, len(content)) != content
-        ):
+        try:
+            decoded_replacement = project_file_codec.decode(verified, encoding, len(content))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=502, detail="La copia comprimida no pasó la verificación"
+            ) from exc
+        if verified != stored or decoded_replacement != content:
             raise HTTPException(
                 status_code=502, detail="La copia comprimida no pasó la verificación"
             )
